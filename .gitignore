@@ -20,3 +20,6 @@ supabase/.branches/
 
 # local tooling
 .claude/
+
+# vercel (the CLI writes a short-lived OIDC token to .env.local; .env.* above already covers it)
+.vercel/

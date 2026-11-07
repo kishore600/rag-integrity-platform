@@ -42,6 +42,9 @@ documents, a pipeline that "succeeded" without writing vectors, stale versions, 
 half-indexed documents, retry duplicates, ACL drift, an old embedding model, vectors under the wrong tenant, and more.
 Click through *Issues -> Repairs -> Trigger -> Verify -> Approve cleanup* and watch health go from ~84% to 100%.
 
+A hosted copy of the demo runs on Vercel: **https://rag-integrity-platform.vercel.app** (see [docs/deploy-vercel.md](docs/deploy-vercel.md)
+for how it is wired and what changes on serverless).
+
 Other ways to run it:
 
 | | |

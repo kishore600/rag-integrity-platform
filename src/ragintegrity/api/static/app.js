@@ -514,7 +514,7 @@ async function boot() {
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#drawer').hidden) closeDrawer(); });
   $('#btn-audit').addEventListener('click', async (e) => {
     e.target.disabled = true;
-    try { await post('/api/audits'); toast('Audit started'); render(); } catch (err) { toast(err.message, true); e.target.disabled = false; }
+    try { const r = await post('/api/audits'); toast(r.status === 'completed' ? 'Audit finished' : 'Audit started'); render(); } catch (err) { toast(err.message, true); e.target.disabled = false; }
   });
   $('#btn-reset').addEventListener('click', async (e) => {
     if (!window.confirm('Regenerate the demo world and clear the ledger?')) return;

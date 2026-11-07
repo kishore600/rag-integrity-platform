@@ -81,9 +81,9 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
     async def lifespan(app: FastAPI):
         tasks: list[asyncio.Task] = []
         try:
-            await asyncio.to_thread(svc.bootstrap)
+            await asyncio.to_thread(svc.ensure_ready)
         except Exception:
-            log.exception("bootstrap audit failed")
+            log.exception("bootstrap audit failed")  # retried lazily on the first API request
         if settings.audit_interval_minutes > 0:
             tasks.append(asyncio.create_task(scheduler_loop(svc, settings.audit_interval_minutes * 60)))
         yield
@@ -95,6 +95,19 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
     app.state.service = svc
 
     # ------------------------------------------------------------------ cross-cutting
+    @app.middleware("http")
+    async def lazy_bootstrap(request: Request, call_next):
+        """One-time start-up work (demo seeding) happens on the first API request if the host never ran lifespan."""
+        path = request.url.path
+        if path.startswith("/api/") and path != "/api/auth":
+            try:
+                await asyncio.to_thread(svc.ensure_ready)
+            except Exception as exc:
+                log.exception("bootstrap failed")
+                return JSONResponse({"detail": f"Service is not ready ({type(exc).__name__}). Check the ledger connection."},
+                                    status_code=503)
+        return await call_next(request)
+
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         resp = await call_next(request)
@@ -175,7 +188,9 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
         if req.wait:
             r = svc.run_audit(scope=scope, trigger="api", probe=req.probe)
             return {"run_id": r.run_id, "status": "completed", "stats": r.stats}
-        return {"run_id": svc.start_audit_async(scope=scope, trigger="api", probe=req.probe), "status": "running"}
+        run_id = svc.start_audit_async(scope=scope, trigger="api", probe=req.probe)
+        run = svc.ledger.get_run(run_id)  # already "completed" on serverless hosts, where audits run inline
+        return {"run_id": run_id, "status": run["status"] if run else "running"}
 
     @app.get("/api/audits", dependencies=auth)
     def list_audits(limit: int = Query(30, ge=1, le=200)) -> list[dict[str, Any]]:

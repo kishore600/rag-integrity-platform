@@ -7,6 +7,7 @@ written to the ledger database.
 from __future__ import annotations
 
 import json
+import os
 import re
 from functools import lru_cache
 from typing import Any
@@ -44,6 +45,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/ragi.db"  # control plane / issue ledger (Supabase Postgres in prod)
     api_key: str | None = None  # if set, /api/* requires it (X-API-Key or Bearer)
     audit_interval_minutes: int = 0  # 0 disables the built-in scheduler
+    sync_audits: bool = False  # run API-started audits inside the request (automatic on Vercel/serverless)
     grace_minutes: int = 10  # don't flag documents that are probably still being ingested
     required_payload_fields: str = ""  # comma separated; default document_id,source_hash(+tenant_id if multi-tenant)
 
@@ -150,6 +152,12 @@ class Settings(BaseSettings):
     @property
     def is_demo(self) -> bool:
         return self.mode.lower() == "demo"
+
+    @property
+    def run_audits_inline(self) -> bool:
+        """Serverless platforms freeze or kill background threads once the response is sent, so audits must
+        finish inside the request there."""
+        return self.sync_audits or bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
 
 
 @lru_cache(maxsize=1)

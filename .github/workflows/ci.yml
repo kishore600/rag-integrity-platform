@@ -39,7 +39,7 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
       - run: pip install -e ".[dev]"
-      - run: ruff check src tests examples
+      - run: ruff check src tests examples api scripts
       - run: pytest -p no:warnings
 
   docker:

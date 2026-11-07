@@ -1,0 +1,10 @@
+# Runtime dependencies for the Vercel deployment (demo mode + Postgres/Supabase ledger).
+# Deliberately NOT the full list from pyproject.toml: boto3 and qdrant-client are only imported in live mode and would
+# push the serverless bundle toward its size limit. For live mode on Vercel add:  boto3  qdrant-client
+# (For local development use `pip install -e ".[dev]"` instead.)
+fastapi>=0.115
+pydantic>=2.7
+pydantic-settings>=2.3
+sqlalchemy>=2.0.30
+psycopg[binary]>=3.2
+httpx>=0.27

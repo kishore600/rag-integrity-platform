@@ -1,0 +1,19 @@
+# Keep the upload small and make requirements.txt the single source of truth for the serverless install.
+pyproject.toml
+tests
+docs
+scripts
+examples
+supabase
+.github
+.venv
+.claude
+data
+Dockerfile
+docker-compose.yml
+.dockerignore
+.env
+.env.*
+**/__pycache__
+.pytest_cache
+.ruff_cache

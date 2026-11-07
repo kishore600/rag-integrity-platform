@@ -49,6 +49,8 @@ class IntegrityService:
         self.ledger.init()
         self._connectors = connectors
         self._build_lock = threading.Lock()
+        self._ready = False
+        self._ready_lock = threading.Lock()
         self._lock = threading.Lock()  # one audit at a time
         self.repairs = RepairManager(self)
 
@@ -104,6 +106,8 @@ class IntegrityService:
             self._lock.release()
 
     def start_audit_async(self, scope: Scope | None = None, trigger: str = "manual", probe: bool | None = None) -> str:
+        if self.settings.run_audits_inline:  # serverless: a background thread would be frozen with the instance
+            return self.run_audit(scope=scope, trigger=trigger, probe=probe).run_id
         if not self._lock.acquire(blocking=False):
             raise AuditBusy("An audit is already running.")
         try:
@@ -129,6 +133,16 @@ class IntegrityService:
         return self._lock.locked()
 
     # ------------------------------------------------------------------ bootstrap / demo
+    def ensure_ready(self) -> None:
+        """Run the one-time bootstrap lazily, once per process. Serverless hosts may not run ASGI lifespan hooks,
+        and the first request after a cold start is the earliest moment we can rely on."""
+        if self._ready:
+            return
+        with self._ready_lock:
+            if not self._ready:
+                self.bootstrap()
+                self._ready = True
+
     def bootstrap(self) -> None:
         """In demo mode, make the first page load interesting: seed the query log and run a first audit."""
         if not self.settings.is_demo or self.ledger.list_runs(limit=1):
