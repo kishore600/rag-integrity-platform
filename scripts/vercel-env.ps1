@@ -63,19 +63,53 @@ if (-not $secret) {
   }
 }
 
+# Runs the Vercel CLI with the secret on STDIN and no trailing newline, and captures stdout/stderr separately.
+# (Piping a string through PowerShell appends a line ending that would end up inside the stored value, and Windows
+# PowerShell 5.1 turns any text a program writes to stderr into a terminating error: the CLI prints its banner there.)
+function Invoke-Vercel([string]$ArgLine, [string]$StdinValue) {
+  $tmp = $null
+  try {
+    $cmd = "npx --yes vercel $ArgLine"
+    if ($null -ne $StdinValue) {
+      # The value goes in as raw bytes: no BOM and no trailing newline. (.NET's redirected-stdin writer emits a UTF-8
+      # byte-order mark when the console is in UTF-8 mode, which would become an invisible first character of the
+      # stored value, and PowerShell's pipeline appends a line ending.) `type` passes the bytes through untouched.
+      $tmp = [System.IO.Path]::GetTempFileName()
+      [System.IO.File]::WriteAllBytes($tmp, (New-Object System.Text.UTF8Encoding($false)).GetBytes($StdinValue))
+      $cmd = "type `"$tmp`" | $cmd"
+    }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "cmd.exe"
+    $psi.Arguments = "/c $cmd"
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = ($null -eq $StdinValue)
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    if ($psi.RedirectStandardInput) { $p.StandardInput.Close() }
+    $so = $p.StandardOutput.ReadToEndAsync()
+    $se = $p.StandardError.ReadToEndAsync()
+    $p.WaitForExit()
+    return [pscustomobject]@{ ExitCode = $p.ExitCode; Output = ($so.Result + "`n" + $se.Result) }
+  }
+  finally {
+    if ($tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }  # the secret never stays on disk
+  }
+}
+
 $vars = [ordered]@{ "RAGI_DATABASE_URL" = $dbUrl; "RAGI_SECRET_KEY" = $secret }
-# One environment per call: PowerShell turns "a,b" into a list and the CLI then sees "a b", which it rejects.
-# Production is required; Preview is a convenience, so a failure there is only a warning.
+# One environment per call. Production is required; Preview is a convenience, so a failure there is only a warning.
 $targets = @(@{ Name = "production"; Required = $true }, @{ Name = "preview"; Required = $false })
 foreach ($name in $vars.Keys) {
   foreach ($t in $targets) {
     if ($DryRun) { Write-Host "(dry run) would set $name for $($t.Name) as a sensitive variable"; continue }
     Write-Host "Setting $name for $($t.Name) ..."
-    $out = $vars[$name] | & npx --yes vercel env add $name --environment $t.Name --sensitive --force --yes --scope $Scope 2>&1
-    if ($LASTEXITCODE -ne 0) {
-      $detail = ($out | Where-Object { $_ -match '\S' -and $_ -notmatch 'claude-code-hint' } | Select-Object -Last 3) -join "`n"
-      if ($t.Required) { throw "vercel env add $name ($($t.Name)) failed (exit $LASTEXITCODE):`n$detail`nIf it says you are not logged in, run: npx vercel login" }
-      Write-Warning "Could not set $name for $($t.Name) (exit $LASTEXITCODE); production is unaffected.`n$detail"
+    $r = Invoke-Vercel "env add $name --environment $($t.Name) --sensitive --force --yes --scope $Scope" $vars[$name]
+    if ($r.ExitCode -ne 0) {
+      $detail = (($r.Output -split "`r?`n") | Where-Object { $_ -match '\S' -and $_ -notmatch 'claude-code-hint' } | Select-Object -Last 4) -join "`n"
+      if ($t.Required) { throw "vercel env add $name ($($t.Name)) failed (exit $($r.ExitCode)):`n$detail`nIf it says you are not logged in, run: npx vercel login" }
+      Write-Warning "Could not set $name for $($t.Name) (exit $($r.ExitCode)); production is unaffected.`n$detail"
     }
   }
 }
