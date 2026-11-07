@@ -20,6 +20,10 @@ You can use one Supabase project for both, but a separate project for the ledger
    supabase db push            # applies supabase/migrations/20261107000000_ragi_ledger.sql
    ```
 
+   `supabase init` creates `supabase/config.toml` once; `supabase link` stores the project ref and pooler URL in
+   `supabase/.temp/` (git-ignored). On a machine without Docker running, `db push` prints a harmless warning about caching a
+   catalog image; confirm with `supabase migration list` that local and remote versions match.
+
 4. Configure and verify:
 
    ```bash
