@@ -42,13 +42,24 @@ documents, a pipeline that "succeeded" without writing vectors, stale versions, 
 half-indexed documents, retry duplicates, ACL drift, an old embedding model, vectors under the wrong tenant, and more.
 Click through *Issues -> Repairs -> Trigger -> Verify -> Approve cleanup* and watch health go from ~84% to 100%.
 
-A hosted copy of the demo runs on Vercel: **https://rag-integrity-platform.vercel.app** (see [docs/deploy-vercel.md](docs/deploy-vercel.md)
-for how it is wired and what changes on serverless).
+## The hosted product
+
+**https://rag-integrity-platform.vercel.app**: sign up, then connect **your own** S3 bucket, processing manifest (Postgres) and
+Qdrant in *Settings*. There is no sample data: a new workspace is empty until you connect it, and the demo above is for local
+exploration only. Each connection has a **Save & test** button that runs the real connector against your infrastructure and
+tells you what it found (how many sampled keys match your key pattern, whether objects carry a SHA-256, whether the manifest
+columns are mapped and the database role is read-only, which Qdrant collections exist and whether their payloads carry
+`document_id` and `source_hash`).
+
+* Accounts, sessions, rate limits, CSRF protection, per-user workspaces and encrypted connection secrets: [docs/security.md](docs/security.md)
+* Deployment on Vercel + Supabase, and what serverless changes: [docs/deploy-vercel.md](docs/deploy-vercel.md)
+* Run the same multi-user app yourself: `RAGI_MODE=app RAGI_DATABASE_URL=... RAGI_SECRET_KEY=... ragi serve` (or `ragi serve --app`)
 
 Other ways to run it:
 
 | | |
 |---|---|
+| `RAGI_MODE=app ragi serve` | the multi-user product (needs a Postgres `RAGI_DATABASE_URL` and a 32+ character `RAGI_SECRET_KEY`) |
 | `ragi demo` | seed + audit in the terminal, print a summary |
 | `docker run -p 8000:8000 ghcr.io/kishore600/rag-integrity-platform` | the demo, containerised (image published by CI) |
 | `docker compose up --build` | a **live** stack: MinIO (S3) + Postgres + Qdrant + seeded faults + reference worker + the app |
@@ -155,20 +166,32 @@ Interactive docs at `/docs` (OpenAPI). Set `RAGI_API_KEY` to require `X-API-Key`
   HMAC-SHA256 signed with a timestamp (replay window 5 min); a real webhook URL without a secret is refused.
 * **Dashboard is XSS-safe by construction**: every value (document ids are attacker-influenced S3 keys) is inserted as text; strict CSP
   (`script-src 'self'`), `X-Frame-Options: DENY`, `nosniff`.
-* Run it behind your own TLS/SSO proxy for anything beyond an internal tool; `RAGI_API_KEY` is a single shared key, not user auth.
+* **Multi-user app mode** adds: scrypt-hashed passwords, hashed session tokens in `HttpOnly` `SameSite` cookies, an `Origin` check on
+  cookie-authenticated writes, database-backed rate limits, per-workspace data isolation (every ledger statement is scoped to a
+  workspace), connection secrets encrypted at rest (write-only in the UI), and an SSRF guard that refuses private, loopback and
+  cloud-metadata targets for every host a user types in. Details and the honest list of what is *not* covered: [docs/security.md](docs/security.md).
+* In the single-user modes, run it behind your own TLS/SSO proxy for anything beyond an internal tool; `RAGI_API_KEY` is a single shared key, not user auth.
 
 ## Development
 
 ```bash
 pip install -e ".[dev]"
-ruff check src tests examples
-pytest                                   # 72 tests, ~35 s
-RAGI_TEST_PG_URL=postgresql://postgres:postgres@localhost:5432/postgres pytest   # + real-Postgres tests (CI does this)
+ruff check src tests examples api scripts
+pytest                                   # the core suite runs anywhere, no services needed (~1 min)
 ```
 
-What the suite proves: the engine finds **exactly** the injected faults (compared to ground truth, in both the in-memory
-demo and through the real connectors); the Supabase migration applies idempotently on real Postgres and stays in lock-step with the
-models; the full repair loop - including a worker that lies - works over signed HTTP.
+Some tests need real services and skip themselves unless pointed at them (CI provides all of them):
+
+| Variable | Enables |
+|---|---|
+| `RAGI_TEST_PG_URL=postgresql://postgres:postgres@localhost:5432/postgres` | the Supabase migrations, the Postgres ledger, the manifest connector, and the end-to-end app-mode tests |
+| `RAGI_TEST_QDRANT_URL=http://localhost:6333` (+ `RAGI_TEST_QDRANT_KEY`) | the Qdrant connector against a **real** Qdrant server |
+| `RAGI_TEST_S3_ENDPOINT=http://127.0.0.1:5556` | the S3 connector over real HTTP with a custom endpoint (`moto_server -p 5556`, MinIO, ...) |
+
+What the suite proves: the engine finds **exactly** the injected faults (compared to ground truth, in the in-memory demo and through the
+real connectors); users can register, sign in, configure and test their own connections and audit them, and **one workspace can never
+read or change another's data** (the tests attack this directly); the Supabase migrations apply in order on a real Postgres and stay in
+lock-step with the models; the full repair loop - including a worker that lies - works over signed HTTP.
 
 ## Known limits (honest list)
 
@@ -178,7 +201,10 @@ models; the full repair loop - including a worker that lies - works over signed 
   writing a sha256 into object metadata at upload time, or use S3 inventory-based listing (not built yet).
 * A document is expected in **at least one** configured Qdrant collection; per-collection expectations are not modelled.
 * The retrieval probe replays an affected chunk's own vector, not real user traffic; it proves searchability and rank, not user impact.
-* One workspace per deployment; auth is a single API key.
+* **Accounts are deliberately minimal**: one user owns one workspace; no email verification or password reset (there is no mail
+  provider), no two-factor authentication, no teams or roles. Close sign-up with `RAGI_ALLOW_REGISTRATION=false` once your team has accounts.
+* **Serverless audit time limit**: audits on Vercel must finish within ~50 s and say so clearly when they do not (audit one tenant at a time,
+  or run `ragi audit`). Only the S3, Postgres and Qdrant integrations exist.
 * The "no competitor does this exactly" claim in the product brief is a hypothesis to validate with customer interviews, not something this repo proves.
 
 ## License
