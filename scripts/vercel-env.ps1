@@ -64,11 +64,20 @@ if (-not $secret) {
 }
 
 $vars = [ordered]@{ "RAGI_DATABASE_URL" = $dbUrl; "RAGI_SECRET_KEY" = $secret }
+# One environment per call: PowerShell turns "a,b" into a list and the CLI then sees "a b", which it rejects.
+# Production is required; Preview is a convenience, so a failure there is only a warning.
+$targets = @(@{ Name = "production"; Required = $true }, @{ Name = "preview"; Required = $false })
 foreach ($name in $vars.Keys) {
-  if ($DryRun) { Write-Host "(dry run) would set $name on Vercel (production, preview) as a sensitive variable"; continue }
-  Write-Host "Setting $name ..."
-  $vars[$name] | & npx --yes vercel env add $name --environment production,preview --sensitive --force --yes --scope $Scope | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "vercel env add $name failed (exit $LASTEXITCODE). Are you logged in? Run: npx vercel login" }
+  foreach ($t in $targets) {
+    if ($DryRun) { Write-Host "(dry run) would set $name for $($t.Name) as a sensitive variable"; continue }
+    Write-Host "Setting $name for $($t.Name) ..."
+    $out = $vars[$name] | & npx --yes vercel env add $name --environment $t.Name --sensitive --force --yes --scope $Scope 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      $detail = ($out | Where-Object { $_ -match '\S' -and $_ -notmatch 'claude-code-hint' } | Select-Object -Last 3) -join "`n"
+      if ($t.Required) { throw "vercel env add $name ($($t.Name)) failed (exit $LASTEXITCODE):`n$detail`nIf it says you are not logged in, run: npx vercel login" }
+      Write-Warning "Could not set $name for $($t.Name) (exit $LASTEXITCODE); production is unaffected.`n$detail"
+    }
+  }
 }
 
 if (-not $DryRun) {
