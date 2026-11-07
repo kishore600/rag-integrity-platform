@@ -66,23 +66,30 @@ const pill = (txt, cls) => h('span', { class: 'pill ' + (cls || txt) }, String(t
 // ---------------------------------------------------------------- state, api
 let apiKey = '';
 try { apiKey = sessionStorage.getItem('ragi_key') || ''; } catch (_) { /* storage may be blocked */ }
-const state = { ov: null, polling: false, issueFilters: { status: 'open', severity: '', type: '', q: '', offset: 0 },
+const state = { ov: null, polling: false, session: null, issueFilters: { status: 'open', severity: '', type: '', q: '', offset: 0 },
   docFilters: { status: '', q: '', offset: 0 } };
+const isApp = () => !!(state.session && state.session.app);
 
 async function api(path, opts = {}, retried = false) {
   const headers = { Accept: 'application/json' };
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (apiKey) headers['X-API-Key'] = apiKey;
-  const res = await fetch(path, { method: opts.method || 'GET', headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
-  if (res.status === 401 && !retried) { await askKey(); return api(path, opts, true); }
+  const res = await fetch(path, { method: opts.method || 'GET', headers, credentials: 'same-origin',
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
+  if (res.status === 401 && !opts.anon) {
+    if (isApp()) { showAuth('Your session ended. Please sign in again.'); throw new Error('Signed out'); }
+    if (!retried) { await askKey(); return api(path, opts, true); }
+  }
   if (!res.ok) {
-    let detail = res.statusText;
-    try { const j = await res.json(); detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail); } catch (_) { /* not json */ }
-    throw new Error(detail);
+    let detail = res.statusText, body = null;
+    try { body = await res.json(); detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail); } catch (_) { /* not json */ }
+    const err = new Error(detail); err.status = res.status; err.body = body; throw err;
   }
   return (res.headers.get('content-type') || '').includes('json') ? res.json() : res.text();
 }
 const post = (path, body) => api(path, { method: 'POST', body: body === undefined ? {} : body });
+const put = (path, body) => api(path, { method: 'PUT', body });
+const del = (path) => api(path, { method: 'DELETE' });
 
 function toast(msg, err) {
   const t = $('#toast');
@@ -163,20 +170,50 @@ function dl(obj, skip = []) {
 const jsonBlock = (o, summary) => h('details', {}, h('summary', {}, summary || 'Raw evidence'), h('pre', {}, JSON.stringify(o, null, 2)));
 
 // ---------------------------------------------------------------- views
-const VIEWS = [
+const BASE_VIEWS = [
   { id: 'overview', label: 'Overview', sub: 'Is the vector index consistent with the latest source data?' },
   { id: 'issues', label: 'Issues', sub: 'Everything the reconciliation engine found, with evidence.' },
   { id: 'documents', label: 'Documents', sub: 'Document-level integrity: which documents are inconsistent.' },
   { id: 'repairs', label: 'Repairs', sub: 'Plan, hand to your worker, verify, then clean up safely.' },
   { id: 'impact', label: 'Impact & cost', sub: 'Safe reindex recommendations and blast-radius analysis.' },
   { id: 'history', label: 'Audit history', sub: 'Every audit, issue change and repair step.' },
-  { id: 'connections', label: 'Connections', sub: 'Read-only connectors to your infrastructure.' },
 ];
+const CONNECTIONS_VIEW = { id: 'connections', label: 'Connections', sub: 'Read-only connectors to your infrastructure.' };
+const SETTINGS_VIEW = { id: 'settings', label: 'Settings', sub: 'Connect your infrastructure. Every connection is read-only and its secrets are encrypted.' };
+const views = () => [...BASE_VIEWS, isApp() ? SETTINGS_VIEW : CONNECTIONS_VIEW];
+
+async function runAudit() {
+  const b = $('#btn-audit');
+  b.disabled = true; b.textContent = 'Auditing…';
+  try {
+    const r = await post('/api/audits');
+    toast(r.status === 'completed' ? 'Audit finished' : 'Audit started');
+  } catch (err) {
+    if (err.message === 'Signed out') return;
+    toast(err.message, true);
+    if (err.body && err.body.setup_incomplete) go('settings');
+  }
+  render();
+}
+
+function onboarding() {
+  const steps = [['s3', 'Source documents (S3)'], ['manifest', 'Processing manifest (Postgres)'], ['qdrant', 'Vector index (Qdrant)']];
+  const missing = (state.settingsView && state.settingsView.missing) || (state.session && state.session.ready ? [] : steps.map((s) => s[0]));
+  const ready = missing.length === 0;
+  return h('div', { class: 'card stack' },
+    h('h2', {}, ready ? 'You are connected. Run your first audit.' : 'Connect your infrastructure'),
+    h('p', { class: 'muted' }, ready
+      ? 'RAG Integrity will read your documents, your manifest and your index (read-only), compare them, and show every inconsistency with evidence.'
+      : 'This workspace is empty: nothing is shown until you connect your own systems. Everything is read-only and encrypted.'),
+    h('ol', { class: 'steps' }, steps.map(([k, t]) => h('li', { class: missing.includes(k) ? '' : 'done' }, missing.includes(k) ? t : t + ' - connected'))),
+    h('div', { class: 'row' }, ready ? h('button', { class: 'btn primary', onclick: runAudit }, 'Run first audit') : null,
+      h('button', { class: ready ? 'btn' : 'btn primary', onclick: () => go('settings') }, ready ? 'Review settings' : 'Open settings')));
+}
 
 async function viewOverview(root) {
   const ov = state.ov;
   const d = ov.documents, iss = ov.issues, run = ov.latest_full_run;
-  if (!run) { append(root, h('div', { class: 'card' }, empty('No audit has completed yet. Run your first audit.'))); return; }
+  if (!run) { append(root, isApp() ? onboarding() : h('div', { class: 'card' }, empty('No audit has completed yet. Run your first audit.'))); return; }
   const broken = (d.by_status.broken || 0) + (d.by_status.orphaned || 0);
   append(root, h('div', { class: 'stack' },
     h('div', { class: 'grid g3' },
@@ -457,44 +494,224 @@ async function viewConnections(root) {
       h('p', { class: 'small muted', style: { marginTop: '10px' } }, 'Connectors are read-only. Credentials come from the server environment and are never stored in the ledger.'))));
 }
 
+// ---------------------------------------------------------------- settings (app mode): connect your own infrastructure
+const lbl = (text, input, hint) => h('label', { class: 'field' }, h('span', { class: 'lab' }, text), input, hint ? h('span', { class: 'hint' }, hint) : null);
+const CHECK_ICON = { ok: '✓', warn: '!', fail: '✕' };
+
+function renderChecks(result, remembered) {
+  if (!result) return null;
+  return h('div', { class: 'checks-box' },
+    h('p', { class: 'small muted' }, `${remembered ? 'Last test' : 'Test'} ${fmtTime(result.tested_at)}: ${result.ok ? 'passed' : 'failed'}`),
+    h('ul', { class: 'chklist' }, result.checks.map((c) => h('li', { class: 'chk ' + c.status },
+      h('span', { class: 'ico', 'aria-label': c.status }, CHECK_ICON[c.status] || '?'), h('span', {}, h('strong', {}, c.name), ' - ', c.detail)))));
+}
+
+function settingsForm(k, openByDefault) {
+  const inputs = {}, clearSet = new Set();
+  const grid = h('div', { class: 'form-grid' });
+  for (const f of k.fields) {
+    const id = `f-${k.kind}-${f.name}`;
+    let el;
+    if (f.type === 'bool') el = h('input', { type: 'checkbox', id, checked: !!f.value });
+    else if (f.type === 'enum') el = h('select', { id }, h('option', { value: '' }, '(default)'), f.choices.map((c) => h('option', { value: c, selected: f.value === c }, c)));
+    else if (f.type === 'json') el = h('textarea', { id, rows: 2, placeholder: f.placeholder || '{}', spellcheck: 'false' }, f.value || '');
+    else if (f.type === 'int' || f.type === 'float') el = h('input', { type: 'number', id, value: f.value ?? '', step: f.type === 'float' ? 'any' : '1' });
+    else el = h('input', { type: f.secret ? 'password' : 'text', id, value: f.secret ? '' : (f.value ?? ''), autocomplete: 'off', spellcheck: 'false',
+      placeholder: f.secret && f.has_value ? '•••••••• saved (type to replace)' : (f.placeholder || '') });
+    inputs[f.name] = el;
+    const extra = [];
+    if (f.secret && f.has_value) {
+      const note = h('span', { class: 'saved-chip' }, 'saved');
+      const clr = h('button', { type: 'button', class: 'btn sm ghost', onclick: () => {
+        if (clearSet.has(f.name)) { clearSet.delete(f.name); note.textContent = 'saved'; clr.textContent = 'Remove'; }
+        else { clearSet.add(f.name); note.textContent = 'will be removed when you save'; clr.textContent = 'Undo'; }
+      } }, 'Remove');
+      extra.push(note, clr);
+    }
+    const wrap = h('label', { class: 'field' + (f.type === 'json' || f.type === 'regex' ? ' wide' : ''), for: id },
+      h('span', { class: 'lab' }, f.label, f.required ? h('b', { class: 'req', title: 'required' }, ' *') : null), el,
+      extra.length ? h('span', { class: 'row' }, extra) : null, f.help ? h('span', { class: 'hint' }, f.help) : null);
+    grid.append(wrap);
+  }
+  const values = () => {
+    const v = {};
+    for (const f of k.fields) {
+      const el = inputs[f.name];
+      if (f.type === 'bool') v[f.name] = el.checked;
+      else if (f.secret) { if (clearSet.has(f.name)) v[f.name] = ''; else if (el.value.trim()) v[f.name] = el.value.trim(); }
+      else v[f.name] = el.value.trim();
+    }
+    return v;
+  };
+  const out = h('div', {});
+  const withBusy = (btn, fn) => async () => {
+    const all = [...form.querySelectorAll('button')]; all.forEach((b) => { b.disabled = true; });
+    const prev = btn.textContent; btn.textContent = 'Working…';
+    try { await fn(); } catch (err) { if (err.message !== 'Signed out') { clear(out).append(h('p', { class: 'form-error' }, err.message)); toast(err.message, true); } }
+    all.forEach((b) => { b.disabled = false; }); btn.textContent = prev;
+  };
+  const testable = ['s3', 'manifest', 'qdrant'].includes(k.kind);
+  const saveBtn = h('button', { type: 'button', class: 'btn primary' }, testable ? 'Save & test' : 'Save');
+  saveBtn.onclick = withBusy(saveBtn, async () => {
+    const view = await put(`/api/settings/${k.kind}`, { values: values() });
+    state.settingsView = view;
+    toast('Saved');
+    if (testable) await post(`/api/settings/${k.kind}/test`, {});  // the saved connection is tested and the result remembered
+    state.keepOpen = k.kind;
+    render();
+  });
+  const testBtn = testable ? h('button', { type: 'button', class: 'btn' }, 'Test without saving') : null;
+  if (testBtn) testBtn.onclick = withBusy(testBtn, async () => {
+    const r = await post(`/api/settings/${k.kind}/test`, { values: values() });
+    clear(out).append(renderChecks(r, false));
+  });
+  const form = h('div', { class: 'stack' }, h('p', { class: 'muted small' }, k.description), grid, h('div', { class: 'row' }, saveBtn, testBtn), out);
+  if (k.last_test) out.append(renderChecks(k.last_test, true));
+  const status = k.configured ? (k.last_test ? (k.last_test.ok ? 'healthy' : 'failed') : 'triggered') : (k.required_for_audit ? 'failed' : 'pending');
+  const statusText = k.configured ? (k.last_test ? (k.last_test.ok ? 'connected' : 'test failed') : 'saved, not tested') : (k.required_for_audit ? 'required' : 'optional');
+  return h('details', { class: 'card setting', open: openByDefault }, h('summary', {}, h('span', { class: 'sum-title' }, k.title), pill(statusText, status)), form);
+}
+
+async function viewSettings(root) {
+  const [data, keys] = await Promise.all([api('/api/settings'), api('/api/keys')]);
+  state.settingsView = data;
+  const firstOpen = state.keepOpen || (data.kinds.find((k) => k.required_for_audit && !k.configured) || {}).kind || null;
+  state.keepOpen = null;
+  const req = data.kinds.filter((k) => k.required_for_audit);
+  const newKey = h('div', {});
+  const keyName = h('input', { type: 'text', placeholder: 'e.g. github-actions', 'aria-label': 'API key name', maxlength: 80 });
+  const origin = location.origin;
+  append(root, h('div', { class: 'stack' },
+    h('div', { class: 'card' }, h('h2', {}, data.ready ? 'Ready to audit' : 'Finish setup'),
+      h('ol', { class: 'steps' }, req.map((k) => h('li', { class: k.configured ? 'done' : '' }, k.title + (k.configured ? (k.last_test ? (k.last_test.ok ? ' - connected' : ' - saved, test failed') : ' - saved, not tested yet') : ' - not connected')))),
+      data.ready ? h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: runAudit }, 'Run audit now')) : h('p', { class: 'small muted' }, 'Fill in the three required connections below. Nothing is read from them until you run an audit.')),
+    data.kinds.map((k) => settingsForm(k, k.kind === firstOpen)),
+    h('div', { class: 'card stack' }, h('h2', {}, 'API keys'),
+      h('p', { class: 'muted small' }, 'For scheduled audits from CI or cron and for sending retrieval logs. A key can run audits and read your results; it cannot change settings or create keys.'),
+      keys.length ? h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, ['Name', 'Key', 'Created', 'Last used', ''].map((x) => h('th', {}, x)))),
+        h('tbody', {}, keys.map((k) => h('tr', {}, h('td', {}, k.name), h('td', { class: 'mono' }, k.prefix + '…'), h('td', { class: 'small muted' }, fmtTime(k.created_at)),
+          h('td', { class: 'small muted' }, k.last_used_at ? ago(k.last_used_at) : 'never'),
+          h('td', {}, h('button', { class: 'btn sm', onclick: async () => { if (!window.confirm(`Revoke the key "${k.name}"? Anything using it stops working immediately.`)) return; await del('/api/keys/' + k.id); render(); } }, 'Revoke'))))))) : h('p', { class: 'small muted' }, 'No API keys yet.'),
+      h('div', { class: 'row' }, keyName, h('button', { class: 'btn', onclick: async (e) => {
+        e.target.disabled = true;
+        try {
+          const r = await post('/api/keys', { name: keyName.value });
+          clear(newKey).append(h('div', { class: 'notice good stack' }, h('strong', {}, 'Copy this key now. It is shown only once.'), h('code', { class: 'secret-token' }, r.token),
+            h('button', { class: 'btn sm', onclick: () => navigator.clipboard && navigator.clipboard.writeText(r.token).then(() => toast('Copied')) }, 'Copy'),
+            h('pre', {}, `curl -X POST ${origin}/api/audits \\\n  -H "Authorization: Bearer ${r.token}" \\\n  -H "Content-Type: application/json" -d '{"wait": true}'`)));
+          keyName.value = '';
+        } catch (err) { toast(err.message, true); }
+        e.target.disabled = false;
+      } }, 'Create key')), newKey)));
+}
+
+// ---------------------------------------------------------------- authentication screens (app mode)
+const brand = () => h('div', { class: 'brand auth-brand' }, h('span', { class: 'logo', 'aria-hidden': 'true' }), h('span', {}, 'RAG Integrity'));
+function showShell(on) { $('.app').hidden = !on; $('#auth').hidden = on; }
+
+function showSetup(problems) {
+  showShell(false);
+  append(clear($('#auth')), h('div', { class: 'auth-card stack' }, brand(), h('h1', {}, 'Setup required'),
+    h('p', { class: 'muted' }, 'This deployment is not fully configured yet:'), h('ul', {}, problems.map((p) => h('li', {}, p))),
+    h('p', { class: 'small muted' }, 'Set RAGI_DATABASE_URL (a Postgres / Supabase connection string) and RAGI_SECRET_KEY (32+ random characters) in the environment, then redeploy. See docs/deploy-vercel.md.')));
+}
+
+function showAuth(message, start = 'login') {
+  showShell(false);
+  closeDrawer();
+  const canRegister = !!(state.session && state.session.registration_open);
+  let mode = start === 'register' && canRegister ? 'register' : 'login';
+  const card = h('div', { class: 'auth-card stack' });
+  append(clear($('#auth')), card);
+  const draw = (note) => {
+    const email = h('input', { type: 'email', required: true, autocomplete: 'username', placeholder: 'you@company.com', 'aria-label': 'Email', maxlength: 254 });
+    const pw = h('input', { type: 'password', required: true, autocomplete: mode === 'login' ? 'current-password' : 'new-password', 'aria-label': 'Password', maxlength: 256,
+      minlength: mode === 'register' ? 10 : 1 });
+    const err = h('p', { class: 'form-error', role: 'alert' }, note || '');
+    const submit = h('button', { type: 'submit', class: 'btn primary' }, mode === 'login' ? 'Sign in' : 'Create account');
+    const form = h('form', { class: 'stack', onsubmit: async (e) => {
+      e.preventDefault(); submit.disabled = true; err.textContent = '';
+      try {
+        await api(mode === 'login' ? '/api/auth/login' : '/api/auth/register', { method: 'POST', body: { email: email.value, password: pw.value }, anon: true });
+        location.hash = '#/overview';
+        await startApp();
+      } catch (ex) { err.textContent = ex.message; submit.disabled = false; pw.value = ''; pw.focus(); }
+    } }, lbl('Email', email), lbl('Password', pw, mode === 'register' ? 'At least 10 characters. A passphrase you use nowhere else is ideal.' : null), err, submit);
+    const switchLink = canRegister ? h('p', { class: 'small muted center' }, mode === 'login' ? 'New here? ' : 'Already have an account? ',
+      h('a', { href: '#', onclick: (ev) => { ev.preventDefault(); mode = mode === 'login' ? 'register' : 'login'; draw(); } }, mode === 'login' ? 'Create an account' : 'Sign in')) : h('p', { class: 'small muted center' }, 'Registration is closed on this server.');
+    clear(card); append(card, brand(), h('h1', {}, mode === 'login' ? 'Sign in' : 'Create your account'),
+      h('p', { class: 'muted' }, mode === 'login' ? 'Know when your RAG index is wrong, before your users do.' : 'Connect your own S3, manifest database and Qdrant. Everything stays read-only.'),
+      form, switchLink, h('p', { class: 'small muted center' }, 'Connections are read-only and their secrets are encrypted at rest.'));
+    email.focus();
+  };
+  draw(message);
+}
+
+function openAccount() {
+  const cur = h('input', { type: 'password', autocomplete: 'current-password', 'aria-label': 'Current password', required: true });
+  const next = h('input', { type: 'password', autocomplete: 'new-password', 'aria-label': 'New password', required: true, minlength: 10 });
+  const msg = h('p', { class: 'form-error', role: 'alert' });
+  openDrawer('Account',
+    h('dl', { class: 'kv' }, h('dt', {}, 'Signed in as'), h('dd', {}, (state.session.user || {}).email || '')),
+    h('form', { class: 'stack', onsubmit: async (e) => {
+      e.preventDefault(); msg.textContent = '';
+      try { await post('/api/auth/password', { current_password: cur.value, new_password: next.value }); cur.value = ''; next.value = ''; toast('Password changed. Other devices were signed out.'); closeDrawer(); }
+      catch (err) { msg.textContent = err.message; }
+    } }, h('h3', {}, 'Change password'), lbl('Current password', cur), lbl('New password', next, 'At least 10 characters.'), msg,
+    h('button', { class: 'btn', type: 'submit' }, 'Change password')),
+    h('button', { class: 'btn danger', onclick: async () => { try { await post('/api/auth/logout'); } catch (_) { /* already signed out */ }
+      state.session = await api('/api/session', { anon: true }); state.ov = null; state.settingsView = null; showAuth(); } }, 'Sign out'));
+}
+
 // ---------------------------------------------------------------- shell
 function go(view) { location.hash = '#/' + view; }
-function route() { const [, view = 'overview', arg] = location.hash.split('/'); return { view: VIEWS.some((v) => v.id === view) ? view : 'overview', arg }; }
+function route() { const [, view = 'overview', arg] = location.hash.split('/'); return { view: views().some((v) => v.id === view) ? view : 'overview', arg }; }
 
 async function refreshOverview() { state.ov = await api('/api/overview'); return state.ov; }
 function renderNav() {
   const { view } = route(), nav = clear($('#nav'));
-  for (const v of VIEWS) {
+  for (const v of views()) {
     const badge = v.id === 'issues' && state.ov && state.ov.issues.open ? h('span', { class: 'count' }, num(state.ov.issues.open)) : null;
-    nav.append(h('a', { href: '#/' + v.id, 'aria-current': v.id === view ? 'page' : null }, h('span', {}, v.label), badge));
+    const todo = v.id === 'settings' && state.session && !state.session.ready ? h('span', { class: 'count todo' }, '!') : null;
+    nav.append(h('a', { href: '#/' + v.id, 'aria-current': v.id === view ? 'page' : null }, h('span', {}, v.label), badge, todo));
   }
 }
 let renderToken = 0;
 async function render() {
+  if (isApp() && $('.app').hidden) return;  // the sign-in screen is showing
   const token = ++renderToken, { view, arg } = route(), root = clear($('#view'));
-  const meta = VIEWS.find((v) => v.id === view);
+  const meta = views().find((v) => v.id === view);
   $('#view-title').textContent = meta.label; $('#view-sub').textContent = meta.sub; document.title = meta.label + ' · RAG Integrity';
   root.append(h('div', { class: 'card' }, h('div', { class: 'skeleton' })));
   try {
+    if (isApp()) state.session = await api('/api/session', { anon: true });
+    if (isApp() && !state.session.authenticated) { showAuth('Your session ended. Please sign in again.'); return; }
     await refreshOverview();
     if (token !== renderToken) return;
     renderChrome(); clear(root);
-    await ({ overview: viewOverview, issues: viewIssues, documents: viewDocuments, repairs: viewRepairs, impact: viewImpact, history: viewHistory, connections: viewConnections }[view])(root, arg);
-    if (state.ov.audit_running) pollAudit();
+    await ({ overview: viewOverview, issues: viewIssues, documents: viewDocuments, repairs: viewRepairs, impact: viewImpact, history: viewHistory, connections: viewConnections, settings: viewSettings }[view])(root, arg);
+    if (state.ov.audit_running && !isApp()) pollAudit();
   } catch (err) {
-    if (token !== renderToken) return;
+    if (token !== renderToken || err.message === 'Signed out') return;
     clear(root).append(h('div', { class: 'card' }, h('h2', {}, 'Something went wrong'), h('p', {}, err.message)));
   }
 }
 function renderChrome() {
   renderNav();
   const ov = state.ov;
-  const badge = $('#mode-badge'); badge.textContent = ov.demo ? 'Demo' : 'Live'; badge.className = 'badge ' + (ov.demo ? 'demo' : 'live');
+  const app = isApp();
+  const badge = $('#mode-badge');
+  badge.textContent = app ? 'Workspace' : (ov.demo ? 'Demo' : 'Live'); badge.className = 'badge ' + (ov.demo ? 'demo' : 'live');
   $('#btn-reset').hidden = !ov.demo;
-  const banner = $('#banner');
-  banner.hidden = !ov.demo; banner.className = 'banner';
-  if (ov.demo) banner.textContent = 'Demo mode: a synthetic multi-tenant corpus with deliberately injected faults. Nothing here touches real infrastructure.';
-  $('#btn-audit').disabled = ov.audit_running; $('#btn-audit').textContent = ov.audit_running ? 'Auditing…' : 'Run audit';
+  const user = $('#btn-user'); user.hidden = !app; if (app && state.session.user) user.textContent = state.session.user.email;
+  const banner = clear($('#banner'));
+  banner.className = 'banner';
+  if (ov.demo) { banner.hidden = false; banner.textContent = 'Demo mode: a synthetic multi-tenant corpus with deliberately injected faults. Nothing here touches real infrastructure.'; }
+  else if (app && state.session && !state.session.ready && route().view !== 'settings') {
+    banner.hidden = false; append(banner, 'Finish setup to see your data: connect your S3 bucket, processing manifest and Qdrant. ', h('a', { href: '#/settings' }, 'Open settings'));
+  } else banner.hidden = true;
+  const btn = $('#btn-audit');
+  btn.disabled = ov.audit_running; btn.textContent = ov.audit_running ? 'Auditing…' : 'Run audit';
 }
 async function pollAudit() {
   if (state.polling) return; state.polling = true;
@@ -512,10 +729,8 @@ async function boot() {
   $('#drawer-close').addEventListener('click', closeDrawer);
   $('#scrim').addEventListener('click', closeDrawer);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#drawer').hidden) closeDrawer(); });
-  $('#btn-audit').addEventListener('click', async (e) => {
-    e.target.disabled = true;
-    try { const r = await post('/api/audits'); toast(r.status === 'completed' ? 'Audit finished' : 'Audit started'); render(); } catch (err) { toast(err.message, true); e.target.disabled = false; }
-  });
+  $('#btn-audit').addEventListener('click', runAudit);
+  $('#btn-user').addEventListener('click', openAccount);
   $('#btn-reset').addEventListener('click', async (e) => {
     if (!window.confirm('Regenerate the demo world and clear the ledger?')) return;
     e.target.disabled = true;
@@ -523,9 +738,25 @@ async function boot() {
     e.target.disabled = false; render();
   });
   $('#btn-key').addEventListener('click', () => askKey().then(render).catch(() => {}));
-  try { const a = await api('/api/auth'); $('#btn-key').hidden = !a.required; } catch (_) { /* ignore */ }
-  try { const hz = await api('/healthz'); $('#version').textContent = 'v' + hz.version; } catch (_) { /* ignore */ }
   window.addEventListener('hashchange', render);
+  try { const hz = await api('/healthz', { anon: true }); $('#version').textContent = 'v' + hz.version; } catch (_) { /* ignore */ }
+  try { state.session = await api('/api/session', { anon: true }); } catch (err) {
+    append(clear($('#auth')), h('div', { class: 'auth-card stack' }, brand(), h('h1', {}, 'Cannot reach the server'), h('p', { class: 'muted' }, err.message)));
+    showShell(false); return;
+  }
+  if (isApp()) {
+    if (state.session.setup && state.session.setup.required) { showSetup(state.session.setup.problems || []); return; }
+    if (!state.session.authenticated) { showAuth(); return; }
+  } else {
+    try { const a = await api('/api/auth', { anon: true }); $('#btn-key').hidden = !a.required; } catch (_) { /* ignore */ }
+  }
+  showShell(true);
+  render();
+}
+
+async function startApp() {  // after a successful sign-in or registration
+  state.session = await api('/api/session', { anon: true });
+  showShell(true);
   render();
 }
 boot();

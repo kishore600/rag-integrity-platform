@@ -30,8 +30,18 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+      # A real Qdrant server enforcing an API key: tests the connector over HTTP (paging, filters, auth, probes).
+      qdrant:
+        image: qdrant/qdrant:v1.20.0
+        env:
+          QDRANT__SERVICE__API_KEY: ci-test-api-key
+          QDRANT__TELEMETRY_DISABLED: "true"
+        ports: ["6333:6333"]
     env:
       RAGI_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      RAGI_TEST_QDRANT_URL: http://localhost:6333
+      RAGI_TEST_QDRANT_KEY: ci-test-api-key
+      RAGI_TEST_S3_ENDPOINT: http://127.0.0.1:5556
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,6 +50,14 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
       - run: ruff check src tests examples api scripts
+      - name: Start an S3 API over real HTTP (moto) and wait for Qdrant
+        run: |
+          nohup moto_server -H 127.0.0.1 -p 5556 > moto.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:5556/moto-api/ > /dev/null && curl -fsS -H "api-key: ci-test-api-key" http://localhost:6333/collections > /dev/null && exit 0
+            sleep 2
+          done
+          echo "services did not come up"; cat moto.log; exit 1
       - run: pytest -p no:warnings
 
   docker:

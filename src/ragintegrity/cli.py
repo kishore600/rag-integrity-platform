@@ -38,6 +38,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     if args.demo:
         os.environ["RAGI_MODE"] = "demo"
+    elif args.app:
+        os.environ["RAGI_MODE"] = "app"
     print(f"RAG Integrity dashboard -> http://{args.host}:{args.port}")
     uvicorn.run("ragintegrity.api.main:app", host=args.host, port=args.port, log_level="info")
     return 0
@@ -113,6 +115,33 @@ def cmd_init_db(_: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_users(args: argparse.Namespace) -> int:
+    """Operator tools for the multi-user app (RAGI_DATABASE_URL and RAGI_SECRET_KEY must be set)."""
+    from .accounts import Accounts
+    from .config import get_settings
+    from .ledger import Ledger
+    from .security import Vault
+
+    s = get_settings()
+    ledger = Ledger(s.database_url)
+    ledger.init()
+    accounts = Accounts(ledger, Vault(s.secret_key) if s.secret_key else None)
+    if args.action == "delete":
+        if not args.yes:
+            print(f"This permanently deletes {args.email} and EVERYTHING in their workspace (issues, documents, settings, keys).")
+            print("Re-run with --yes to confirm.")
+            return 2
+        print("deleted" if accounts.delete_user(args.email) else "no such user")
+    else:
+        u = ledger.t["users"]
+        from sqlalchemy import select
+
+        with ledger.engine.connect() as c:
+            for r in c.execute(select(u.c.email, u.c.created_at, u.c.last_login_at).order_by(u.c.created_at)):
+                print(f"{r[0]:<40} created {r[1]:%Y-%m-%d}  last login {r[2] or '-'}")
+    return 0
+
+
 def cmd_repair(args: argparse.Namespace) -> int:
     svc = _service()
     if args.action == "plan":
@@ -140,6 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--demo", action="store_true", help="use the built-in synthetic world")
+    s.add_argument("--app", action="store_true", help="multi-user mode: sign-up / login, each workspace connects its own infrastructure")
     s.set_defaults(fn=cmd_serve)
 
     d = sub.add_parser("demo", help="seed the demo world and audit it")
@@ -173,6 +203,12 @@ def build_parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init-db", help="create the ledger tables (idempotent) and check connectivity")
     init.set_defaults(fn=cmd_init_db)
 
+    us = sub.add_parser("users", help="list or delete users of the multi-user app")
+    us.add_argument("action", choices=["list", "delete"])
+    us.add_argument("email", nargs="?")
+    us.add_argument("--yes", action="store_true", help="confirm a delete")
+    us.set_defaults(fn=cmd_users)
+
     rp = sub.add_parser("repair", help="plan / trigger / verify / approve-cleanup")
     rp.add_argument("action", choices=["plan", "trigger", "verify", "approve-cleanup"])
     rp.add_argument("plan_id", nargs="?")
@@ -186,6 +222,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.cmd == "repair" and args.action != "plan" and not args.plan_id:
         print("plan_id is required", file=sys.stderr)
+        return 2
+    if args.cmd == "users" and args.action == "delete" and not args.email:
+        print("an email is required", file=sys.stderr)
         return 2
     try:
         return args.fn(args)

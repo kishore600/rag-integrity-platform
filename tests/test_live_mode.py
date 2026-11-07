@@ -91,7 +91,7 @@ def test_unconfigured_live_mode_names_each_broken_connector(tmp_path):
     assert not by_name["Vector index (Qdrant)"]["ok"] and "RAGI_QDRANT_URL" in by_name["Vector index (Qdrant)"]["detail"]
     with pytest.raises(ConnectorError):
         svc.run_audit()  # and an audit fails loudly instead of reporting a clean index
-    assert svc.ledger.list_runs(limit=1)[0]["status"] == "failed"
+    assert svc.ledger.list_runs(limit=1) == []  # ...before any run row is created: nothing to clean up, nothing misleading
 
 
 def test_live_scoped_verification_and_inspection(live):

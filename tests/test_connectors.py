@@ -88,6 +88,24 @@ def test_s3_health_reports_missing_bucket(bucket):
     assert not status.ok and "NoSuchBucket" in status.detail
 
 
+def test_s3_connection_errors_are_explained_plainly():
+    from botocore.exceptions import EndpointConnectionError, NoCredentialsError
+
+    from ragintegrity.connectors.s3 import _explain_s3
+
+    assert "Could not connect" in _explain_s3(EndpointConnectionError(endpoint_url="http://x:1/bucket?secret=1"))
+    assert "http://x" not in _explain_s3(EndpointConnectionError(endpoint_url="http://x:1/bucket?secret=1"))
+    assert "access key" in _explain_s3(NoCredentialsError())
+
+
+def test_s3_diagnostics_use_a_fast_client(bucket):
+    src = S3Source(settings(s3_bucket="docs", s3_region="us-east-1"), fast=True)
+    cfg = src.client.meta.config
+    assert cfg.retries["total_max_attempts"] == 1 and cfg.connect_timeout == 4  # one attempt, no retries
+    normal = S3Source(settings(s3_bucket="docs", s3_region="us-east-1")).client.meta.config
+    assert normal.retries["total_max_attempts"] == 4 and normal.connect_timeout == 10
+
+
 def test_s3_requires_bucket():
     with pytest.raises(ConnectorError):
         S3Source(settings())

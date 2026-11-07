@@ -92,8 +92,9 @@ class RepairManager:
             "safety": {"delete_policy": "never_before_verified",
                        "note": "Reindex phase must only add/replace vectors. Removal is requested separately, after verification."},
         }
-        if s.public_base_url:
-            body["callback_url"] = f"{s.public_base_url.rstrip('/')}/api/repairs/{plan['id']}/callback"
+        base = self.svc.callback_base or s.public_base_url
+        if base and s.repair_webhook_secret:  # a callback is only useful (and only accepted) when it can be signed
+            body["callback_url"] = f"{base.rstrip('/')}/api/repairs/{plan['id']}/callback"
         if phase == "reindex":
             body["target_fingerprint"] = target.to_dict() if target else {}
             body["items"] = [

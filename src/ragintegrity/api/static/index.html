@@ -9,7 +9,8 @@
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <div class="app">
+  <div id="auth" class="auth" hidden></div>
+  <div class="app" hidden>
     <aside class="nav" aria-label="Primary">
       <div class="brand">
         <span class="logo" aria-hidden="true"></span>
@@ -29,6 +30,7 @@
           <p id="view-sub" class="muted"></p>
         </div>
         <div class="actions">
+          <button id="btn-user" class="btn ghost" hidden aria-haspopup="dialog" title="Account"></button>
           <button id="btn-key" class="btn ghost" hidden>API key</button>
           <button id="btn-reset" class="btn ghost" hidden title="Regenerate the synthetic demo world">Reset demo</button>
           <button id="btn-audit" class="btn primary">Run audit</button>

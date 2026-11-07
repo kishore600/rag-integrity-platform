@@ -6,24 +6,56 @@ import hashlib
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
 from . import alerts, report
 from .config import Settings, get_settings
-from .connectors.base import ConnectorError
+from .connectors.base import ConnectorError, UpstreamError
 from .connectors.factory import Connectors, build_connectors
 from .demo.world import DemoWorld
 from .engine.audit import AuditOptions, inspect_document, run_reconciliation
 from .engine.blast import blast_radius
 from .engine.planning import estimate_workload, plan_items
 from .engine.reconcile import parse_ts
-from .ledger import Ledger, RunDiff
+from .ledger import Ledger, RunDiff, RunInProgress
 from .models import ConnectionStatus, DocSummary, Finding, Scope
 from .repair import RepairManager
+from .security import scrub
 
 log = logging.getLogger("ragintegrity")
+
+# errors raised by the libraries that talk to the customer's infrastructure
+_IO_MODULES = ("botocore", "boto3", "sqlalchemy", "psycopg", "httpx", "httpcore", "qdrant_client", "urllib3")
+
+
+def friendly_error(exc: BaseException) -> str:
+    """A specific, actionable message for a failure talking to the user's infrastructure, with passwords scrubbed."""
+    mod = type(exc).__module__
+    try:
+        if mod.startswith(("botocore", "boto3")):
+            from .connectors.s3 import _explain_s3
+
+            return _explain_s3(exc)  # type: ignore[arg-type]
+        if mod.startswith(("sqlalchemy", "psycopg")):
+            from .connectors.postgres import _explain_pg
+
+            return _explain_pg(exc)  # type: ignore[arg-type]
+        if mod.startswith(("qdrant_client", "httpx", "httpcore", "urllib3")):
+            from .connectors.qdrant import _explain_qdrant
+
+            return _explain_qdrant(exc)  # type: ignore[arg-type]
+    except Exception:  # an explainer must never hide the original problem
+        pass
+    return f"{type(exc).__name__}: {scrub(str(exc), 300)}"
+
+
+def as_upstream(exc: BaseException) -> UpstreamError | None:
+    if isinstance(exc, ConnectorError) or not type(exc).__module__.startswith(_IO_MODULES):
+        return None
+    return UpstreamError(friendly_error(exc))
 
 
 class AuditBusy(RuntimeError):
@@ -43,15 +75,20 @@ class AuditResult:
 
 class IntegrityService:
     def __init__(self, settings: Settings | None = None, ledger: Ledger | None = None,
-                 connectors: Connectors | None = None) -> None:
+                 connectors: Connectors | None = None, *,
+                 connector_factory: Callable[[Settings], Connectors] | None = None, init_schema: bool = True) -> None:
         self.settings = settings or get_settings()
         self.ledger = ledger or Ledger(self.settings.database_url)
-        self.ledger.init()
+        if init_schema:
+            self.ledger.init()
         self._connectors = connectors
+        self._connector_factory = connector_factory or build_connectors  # app mode injects an SSRF-guarded factory
+        self._guard: Callable[[Settings, str], None] | None = None  # set by the workspace manager in app mode
+        self.callback_base: str | None = None  # origin the worker should call back to (set per request in app mode)
         self._build_lock = threading.Lock()
         self._ready = False
         self._ready_lock = threading.Lock()
-        self._lock = threading.Lock()  # one audit at a time
+        self._lock = threading.Lock()  # one audit at a time per process (the database enforces it across processes)
         self.repairs = RepairManager(self)
 
     # ------------------------------------------------------------------ connectors
@@ -60,16 +97,18 @@ class IntegrityService:
         if self._connectors is None:
             with self._build_lock:
                 if self._connectors is None:
-                    self._connectors = build_connectors(self.settings)
+                    self._connectors = self._connector_factory(self.settings)
         return self._connectors
 
     def options(self, probe: bool | None = None) -> AuditOptions:
         s = self.settings
+        limit = s.audit_seconds_limit
         return AuditOptions(
             target=s.target_fingerprint(), default_tenant=s.default_tenant, required_fields=s.required_fields,
             known_tenants=self.ledger.known_tenants(), grace_minutes=s.grace_minutes,
             check_vectors=s.qdrant_check_vectors or s.is_demo,
             probe=s.probe_retrieval if probe is None else probe, probe_max=s.probe_max, probe_top_k=s.probe_top_k,
+            deadline=(time.monotonic() + limit) if limit else None,
         )
 
     # ------------------------------------------------------------------ audits
@@ -86,8 +125,11 @@ class IntegrityService:
             self.ledger.finish_run(run_id, "completed", stats)
             return AuditResult(run_id, kind, stats, diff, result.findings, result.summaries, alert)
         except Exception as exc:
+            up = as_upstream(exc)
             self.ledger.finish_run(run_id, "failed", {"duration_seconds": round(time.perf_counter() - t0, 3)},
-                                   error=f"{type(exc).__name__}: {str(exc)[:500]}")
+                                   error=str(up) if up else f"{type(exc).__name__}: {scrub(str(exc), 500)}")
+            if up is not None:
+                raise up from exc
             raise
 
     @staticmethod
@@ -100,7 +142,11 @@ class IntegrityService:
             raise AuditBusy("An audit is already running.")
         try:
             kind = self._kind(scope, kind)
-            run_id = self.ledger.start_run(kind, trigger, scope)
+            _ = self.connectors  # a misconfigured or incomplete setup fails here, before a run row is created
+            try:
+                run_id = self.ledger.start_run(kind, trigger, scope)
+            except RunInProgress as exc:
+                raise AuditBusy(str(exc)) from exc
             return self._execute(run_id, kind, trigger, scope, probe)
         finally:
             self._lock.release()
@@ -112,7 +158,11 @@ class IntegrityService:
             raise AuditBusy("An audit is already running.")
         try:
             kind = self._kind(scope, None)
+            _ = self.connectors  # fail early (and without a run row) when setup is incomplete
             run_id = self.ledger.start_run(kind, trigger, scope)
+        except RunInProgress as exc:
+            self._lock.release()
+            raise AuditBusy(str(exc)) from exc
         except Exception:
             self._lock.release()
             raise
@@ -130,7 +180,9 @@ class IntegrityService:
 
     @property
     def audit_running(self) -> bool:
-        return self._lock.locked()
+        if self._lock.locked():
+            return True
+        return bool(self.ledger.list_runs(limit=1, status="running"))  # another process may be running one
 
     # ------------------------------------------------------------------ bootstrap / demo
     def ensure_ready(self) -> None:
@@ -198,9 +250,11 @@ class IntegrityService:
             from .connectors.qdrant import QdrantIndex
             from .connectors.s3 import S3Source
 
-            for name, kind, factory in (("S3 source", "s3", S3Source), ("Manifest (Postgres)", "postgres", PostgresManifest),
-                                        ("Vector index (Qdrant)", "qdrant", QdrantIndex)):
+            for name, kind, key, factory in (("S3 source", "s3", "s3", S3Source), ("Manifest (Postgres)", "postgres", "manifest", PostgresManifest),
+                                             ("Vector index (Qdrant)", "qdrant", "qdrant", QdrantIndex)):
                 try:
+                    if self._guard is not None:
+                        self._guard(self.settings, key)  # app mode: refuse private/loopback targets before connecting
                     out.append(factory(self.settings).health())
                 except Exception as exc:
                     out.append(ConnectionStatus(name, kind, False, f"{type(exc).__name__}: {str(exc)[:200]}"))
@@ -208,7 +262,13 @@ class IntegrityService:
 
     def inspect(self, tenant: str, document_id: str) -> dict[str, Any]:
         c = self.connectors
-        return inspect_document(c.source, c.manifest, c.index, self.options(probe=False), tenant, document_id)
+        try:
+            return inspect_document(c.source, c.manifest, c.index, self.options(probe=False), tenant, document_id)
+        except Exception as exc:
+            up = as_upstream(exc)
+            if up is not None:
+                raise up from exc
+            raise
 
     def recommendations(self, min_severity: str | None = None) -> dict[str, Any]:
         issues = self.ledger.open_issues(min_severity=min_severity)

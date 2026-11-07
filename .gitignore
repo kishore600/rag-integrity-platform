@@ -23,3 +23,6 @@ supabase/.branches/
 
 # vercel (the CLI writes a short-lived OIDC token to .env.local; .env.* above already covers it)
 .vercel/
+
+# local Qdrant test server marker
+.qdrant-initialized

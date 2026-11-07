@@ -41,7 +41,14 @@ class Settings(BaseSettings):
     )
 
     # --- general -------------------------------------------------------------------------
-    mode: str = "demo"  # demo = built-in synthetic world | live = S3 + Postgres + Qdrant
+    mode: str = "demo"  # demo = synthetic world | live = one S3+Postgres+Qdrant set from env | app = multi-user, per-workspace
+
+    # --- multi-user app mode (RAGI_MODE=app) -------------------------------------------------------
+    secret_key: str | None = None  # encrypts connection secrets at rest; >=32 random chars; comma-separate to rotate
+    allow_registration: bool = True  # False closes sign-up (existing users can still log in)
+    allow_private_hosts: bool = False  # True lets users point connectors at private/loopback hosts (self-hosting only)
+    session_days: int = 7
+    max_audit_seconds: int = 0  # abort an audit that runs longer (0 = no limit; 50 s is implied on serverless)
     database_url: str = "sqlite:///./data/ragi.db"  # control plane / issue ledger (Supabase Postgres in prod)
     api_key: str | None = None  # if set, /api/* requires it (X-API-Key or Bearer)
     audit_interval_minutes: int = 0  # 0 disables the built-in scheduler
@@ -53,7 +60,9 @@ class Settings(BaseSettings):
     s3_bucket: str | None = None
     s3_prefix: str = ""
     s3_region: str | None = None
-    s3_endpoint_url: str | None = None  # MinIO / localstack
+    s3_endpoint_url: str | None = None  # MinIO / localstack / Supabase Storage S3 endpoint
+    s3_access_key_id: str | None = None  # explicit credentials (app mode); otherwise the standard AWS chain is used
+    s3_secret_access_key: str | None = None
     s3_hash_mode: str = "metadata"  # metadata | compute | etag
     s3_sha256_metadata_key: str = "sha256"
     s3_key_pattern: str = r"^(?P<tenant_id>[^/]+)/(?P<document_id>.+)$"
@@ -152,6 +161,15 @@ class Settings(BaseSettings):
     @property
     def is_demo(self) -> bool:
         return self.mode.lower() == "demo"
+
+    @property
+    def is_app(self) -> bool:
+        return self.mode.lower() == "app"
+
+    @property
+    def audit_seconds_limit(self) -> int:
+        """Wall-clock budget for one audit. Serverless functions are killed at their max duration, so stop gracefully first."""
+        return self.max_audit_seconds or (50 if self.run_audits_inline else 0)
 
     @property
     def run_audits_inline(self) -> bool:

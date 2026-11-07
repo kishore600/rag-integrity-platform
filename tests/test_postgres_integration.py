@@ -49,16 +49,71 @@ def clean_pg():
     eng.dispose()
 
 
-def test_supabase_migration_applies_and_matches_the_models(clean_pg):
-    run_sql_file(clean_pg, ROOT / "supabase" / "migrations" / "20261107000000_ragi_ledger.sql")
-    run_sql_file(clean_pg, ROOT / "supabase" / "migrations" / "20261107000000_ragi_ledger.sql")  # idempotent
+MIGRATIONS = sorted((ROOT / "supabase" / "migrations").glob("*.sql"))
+
+
+def apply_all_migrations(eng) -> None:
+    for path in MIGRATIONS:
+        run_sql_file(eng, path)
+
+
+def test_supabase_migrations_apply_in_order_and_match_the_models(clean_pg):
+    apply_all_migrations(clean_pg)
+    apply_all_migrations(clean_pg)  # re-running is safe: the ledger tables are empty, so the guard passes
     ledger = Ledger(PG_URL, engine=clean_pg)
     ledger.init()  # create_all must find nothing to add
+    assert ledger.schema_ready() == (True, "ok")
     with clean_pg.connect() as c:
         rls = {r[0]: r[1] for r in c.execute(text(
             "select relname, relrowsecurity from pg_class c join pg_namespace n on n.oid = c.relnamespace "
             "where n.nspname = 'ragi' and relkind = 'r'"))}
-    assert rls and all(rls.values()), rls
+    assert len(rls) == 13 and all(rls.values()), rls
+
+
+def test_the_destructive_migration_refuses_to_drop_a_ledger_that_has_data(clean_pg):
+    run_sql_file(clean_pg, MIGRATIONS[0])  # v1 tables
+    with clean_pg.begin() as c:
+        c.execute(text("insert into ragi.audit_runs (id, kind, \"trigger\", status, started_at) values ('x','full','t','completed', now())"))
+    with pytest.raises(DBAPIError, match="refusing to recreate"):
+        run_sql_file(clean_pg, MIGRATIONS[1])
+    with clean_pg.connect() as c:  # nothing was dropped
+        assert c.execute(text("select count(*) from ragi.audit_runs")).scalar_one() == 1
+
+
+def test_workspace_isolation_accounts_and_audit_lock_on_real_postgres(clean_pg):
+    from ragintegrity.accounts import Accounts
+    from ragintegrity.ledger import RunInProgress
+    from ragintegrity.models import Action, DocSummary, Finding, IssueType, Severity
+    from ragintegrity.security import Vault
+
+    apply_all_migrations(clean_pg)
+    led = Ledger(PG_URL, engine=clean_pg)
+    acc = Accounts(led, Vault("k" * 40))
+    a = acc.register("pg-a@example.com", "a-long-unusual-passphrase")
+    b = acc.register("pg-b@example.com", "a-long-unusual-passphrase")
+    assert acc.authenticate("PG-A@example.com", "a-long-unusual-passphrase")["id"] == a["id"]
+    token, _ = acc.create_session(a["id"], a["workspace_id"], "1.2.3.4", "pytest")
+    assert acc.session_user(token)["workspace_id"] == a["workspace_id"]
+    acc.save_settings(a["workspace_id"], "s3", {"bucket": "b"}, {"secret_access_key": "SECRET-ON-PG"})
+    with clean_pg.connect() as c:
+        assert "SECRET-ON-PG" not in str(c.execute(text("select secrets from ragi.workspace_settings")).all())
+    assert acc.load_settings(a["workspace_id"])["s3"]["secrets"] == {"secret_access_key": "SECRET-ON-PG"}
+    assert acc.hit("k", 2, 60) and acc.hit("k", 2, 60) and not acc.hit("k", 2, 60)
+
+    la, lb = led.for_workspace(a["workspace_id"]), led.for_workspace(b["workspace_id"])
+    f = Finding(IssueType.STALE_EMBEDDING, Severity.HIGH, "t", "same.md", None, "t", "d", {}, Action.REINDEX_FULL)
+    s = DocSummary("t", "same.md", "broken", ["stale_embedding"], "high", True, True, True)
+    ra, rb = la.start_run("full", "t", None), lb.start_run("full", "t", None)  # two workspaces may run at once
+    la.apply_run(ra, [f], [s], None)
+    lb.apply_run(rb, [], [], None)
+    assert la.issue_counts()["open"] == 1 and lb.issue_counts()["open"] == 0
+    assert lb.get_issue(f.issue_id) is None and lb.set_issue_status(f.issue_id, "ignored") is False
+
+    with pytest.raises(RunInProgress):  # the partial unique index, enforced by Postgres itself
+        la.start_run("full", "t", None)
+    la.finish_run(ra, "completed", {})
+    la.start_run("full", "t", None)
+    assert acc.delete_user("pg-a@example.com") and la.issue_counts()["open"] == 0 and acc.load_settings(a["workspace_id"]) == {}
 
 
 def test_full_service_cycle_on_postgres(clean_pg):

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from collections import defaultdict
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TypeVar
 
 from ..connectors.base import IndexConnector, ManifestConnector, SourceConnector
 from ..models import ChunkRow, DocKey, Fingerprint, ManifestRow, Scope, SourceDoc
@@ -18,6 +20,8 @@ from .reconcile import (
     refresh_after_escalation,
 )
 from .retrieval import probe_findings
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -32,6 +36,21 @@ class AuditOptions:
     probe_max: int = 25
     probe_top_k: int = 10
     now: datetime | None = None
+    deadline: float | None = None  # time.monotonic() value after which the audit stops
+
+
+class AuditTimeout(RuntimeError):
+    pass
+
+
+def _guard(items: Iterable[T], deadline: float | None, what: str) -> Iterator[T]:
+    """Pass items through, but give up with a clear message once the time budget is spent."""
+    for i, item in enumerate(items):
+        if deadline is not None and i % 200 == 0 and time.monotonic() > deadline:
+            raise AuditTimeout(
+                f"The audit ran out of time while reading {what}. This corpus is too large to audit in one go here: "
+                "audit one tenant at a time, or run `ragi audit` on a machine without a request time limit.")
+        yield item
 
 
 @dataclass
@@ -47,18 +66,19 @@ def collect(
     source: SourceConnector, manifest: ManifestConnector, index: IndexConnector, opts: AuditOptions,
     scope: Scope | None = None,
 ) -> Collected:
-    src = {d.key: d for d in source.inventory(scope)}  # the source inventory first: the index scan classifies against it
-    man = {r.key: r for r in manifest.documents(scope)}
+    dl = opts.deadline
+    src = {d.key: d for d in _guard(source.inventory(scope), dl, "the source bucket")}  # first: the index scan classifies against it
+    man = {r.key: r for r in _guard(manifest.documents(scope), dl, "the processing manifest")}
     chunk_rows: dict[DocKey, dict[str, ChunkRow]] | None = None
     if manifest.has_chunk_manifest:
         chunk_rows = defaultdict(dict)
-        for c in manifest.chunks(scope):
+        for c in _guard(manifest.chunks(scope), dl, "the chunk manifest"):
             chunk_rows[(c.tenant_id, c.document_id)][c.chunk_id] = c
     required = derive_required_fields(opts.required_fields, {k[0] for k in src} | opts.known_tenants)
     ctx = AggContext(source=src, manifest=man, target=opts.target, default_tenant=opts.default_tenant,
                      required_fields=required)
     agg = IndexAggregator(ctx)
-    agg.add_all(index.scan(scope, with_vectors=opts.check_vectors))
+    agg.add_all(_guard(index.scan(scope, with_vectors=opts.check_vectors), dl, "the vector index"))
     return Collected(src, man, chunk_rows, agg, required)
 
 

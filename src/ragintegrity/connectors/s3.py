@@ -30,7 +30,8 @@ DIRECT_HEAD_LIMIT = 500  # scoped runs for <= this many documents HEAD objects d
 
 
 class S3Source:
-    def __init__(self, settings: Settings, client: Any = None) -> None:
+    def __init__(self, settings: Settings, client: Any = None, fast: bool = False) -> None:
+        """``fast`` is for diagnostics: fail within a few seconds instead of retrying with backoff."""
         if not settings.s3_bucket:
             raise ConnectorError("RAGI_S3_BUCKET is not set")
         self.s = settings
@@ -42,8 +43,17 @@ class S3Source:
             raise ConnectorError("RAGI_S3_KEY_PATTERN must contain a (?P<document_id>...) group")
         if client is None:
             import boto3
+            from botocore.config import Config
 
-            client = boto3.client("s3", region_name=settings.s3_region, endpoint_url=settings.s3_endpoint_url)
+            kwargs: dict[str, Any] = {"region_name": settings.s3_region, "endpoint_url": settings.s3_endpoint_url}
+            if settings.s3_access_key_id and settings.s3_secret_access_key:  # per-workspace credentials (app mode)
+                kwargs.update(aws_access_key_id=settings.s3_access_key_id, aws_secret_access_key=settings.s3_secret_access_key)
+            cfg = Config(connect_timeout=4 if fast else 10, read_timeout=10 if fast else 30,
+                         retries={"max_attempts": 0 if fast else 3, "mode": "standard"},  # (botocore counts *retries*)
+                         signature_version="s3v4",
+                         # S3-compatible stores (Supabase Storage, MinIO, R2) generally need path-style addressing
+                         s3={"addressing_style": "path"} if settings.s3_endpoint_url else {})
+            client = boto3.client("s3", config=cfg, **kwargs)
         self.client = client
 
     # --------------------------------------------------------------------------------- keys
@@ -154,6 +164,79 @@ class S3Source:
             return ConnectionStatus("S3 source", "s3", True, detail, ms, {"sample_keys": sample})
         except Exception as exc:
             return ConnectionStatus("S3 source", "s3", False, _short(exc))
+
+
+    def diagnose(self) -> list[dict[str, str]]:
+        """Specific, actionable checks for the 'Test connection' button."""
+        checks: list[dict[str, str]] = []
+        try:
+            resp = self.client.list_objects_v2(Bucket=self.bucket, Prefix=self.prefix, MaxKeys=200)
+        except Exception as exc:
+            return [_check("Bucket reachable", "fail", _explain_s3(exc))]
+        keys = [o["Key"] for o in resp.get("Contents", []) if not o["Key"].endswith("/")]
+        more = "+" if resp.get("IsTruncated") else ""
+        checks.append(_check("Bucket reachable", "ok", f"listed {len(keys)}{more} object(s) under prefix '{self.prefix}'"))
+        if not keys:
+            checks.append(_check("Documents found", "warn", "No objects under this bucket/prefix yet. The audit will report an empty source."))
+            return checks
+        parsed = [(k, self.parse_key(k)) for k in keys]
+        good = [(k, p) for k, p in parsed if p]
+        if good:
+            k, (tenant, doc) = good[0]
+            checks.append(_check("Key pattern", "ok" if len(good) == len(keys) else "warn",
+                                 f"{len(good)} of {len(keys)} sampled keys match; e.g. {k} -> tenant '{tenant}', document '{doc}'"))
+        else:
+            checks.append(_check("Key pattern", "fail", f"None of the sampled keys (e.g. {keys[0]}) match the key pattern. "
+                                 "Adjust 'Key pattern' so it captures document_id (and optionally tenant_id)."))
+            return checks
+        sample = [k for k, _ in good[:5]]
+        with_hash = 0
+        try:
+            for k in sample:
+                head = self.client.head_object(Bucket=self.bucket, Key=k, ChecksumMode="ENABLED")
+                meta = {m.lower(): v for m, v in (head.get("Metadata") or {}).items()}
+                if meta.get(self.s.s3_sha256_metadata_key.lower()) or head.get("ChecksumSHA256"):
+                    with_hash += 1
+        except Exception as exc:
+            checks.append(_check("Object metadata", "fail", _explain_s3(exc)))
+            return checks
+        mode = self.s.s3_hash_mode
+        if mode == "metadata":
+            status = "ok" if with_hash == len(sample) else "warn"
+            detail = f"{with_hash} of {len(sample)} sampled objects carry a SHA-256 (metadata key '{self.s.s3_sha256_metadata_key}' or S3 checksum)"
+            if with_hash < len(sample):
+                detail += "; the others fall back to the ETag, which is flagged unreliable for multipart uploads"
+            checks.append(_check("Content hashes", status, detail))
+        elif mode == "compute":
+            checks.append(_check("Content hashes", "ok", "hash mode 'compute': objects are streamed and hashed during each audit (egress cost)"))
+        else:
+            checks.append(_check("Content hashes", "warn", "hash mode 'etag': ETags are not content hashes for multipart uploads"))
+        return checks
+
+
+def _check(name: str, status: str, detail: str) -> dict[str, str]:
+    return {"name": name, "status": status, "detail": detail}
+
+
+def _explain_s3(exc: Exception) -> str:
+    name = type(exc).__name__
+    if name in ("EndpointConnectionError", "ConnectTimeoutError", "ReadTimeoutError", "ConnectionClosedError"):
+        return ("Could not connect to the S3 endpoint. Check the endpoint URL (leave it empty for AWS S3) and that it is "
+                "reachable from the internet.")
+    if name == "NoCredentialsError" or name == "PartialCredentialsError":
+        return "No usable credentials: fill in both the access key ID and the secret access key."
+    code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+    hints = {
+        "NoSuchBucket": "The bucket does not exist (check the name and region/endpoint).",
+        "AccessDenied": "Access denied: the key needs s3:ListBucket on the bucket (and s3:GetObject only for 'compute' hashing).",
+        "InvalidAccessKeyId": "The access key ID is not recognised by this endpoint.",
+        "SignatureDoesNotMatch": "The secret access key is wrong, or the region does not match the bucket.",
+        "403": "Access denied: check the access key permissions.",
+        "404": "Not found: check the bucket name.",
+    }
+    if code in hints:
+        return hints[code]
+    return f"{type(exc).__name__}: {str(exc)[:240]}"
 
 
 def _short(exc: Exception) -> str:

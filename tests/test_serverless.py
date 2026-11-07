@@ -110,8 +110,10 @@ def test_vercel_entrypoint_serves_the_dashboard_and_api(tmp_path, monkeypatch):
 def test_serverless_install_is_lean():
     lines = [ln.strip().lower() for ln in (ROOT / "requirements.txt").read_text().splitlines()]
     deps = {ln.split(">=")[0].split("[")[0] for ln in lines if ln and not ln.startswith("#")}
-    assert {"fastapi", "sqlalchemy", "pydantic"} <= deps
-    assert not deps & {"boto3", "qdrant-client", "numpy", "grpcio"}
+    # the hosted product runs the real connectors, so it needs their client libraries and the vault's crypto
+    assert {"fastapi", "sqlalchemy", "pydantic", "psycopg", "boto3", "qdrant-client", "cryptography"} <= deps
+    # ...but nothing it does not use (the bundle must stay well under Vercel's 250 MB function limit)
+    assert not deps & {"numpy", "grpcio", "pandas", "scipy", "torch", "uvicorn"}
     # starting the web app must not import the live-mode libraries (they are not installed on Vercel)
     code = ("import sys, ragintegrity.api.app as a; "
             "print(sorted(m for m in ('boto3', 'botocore', 'qdrant_client', 'grpc', 'numpy', 'uvicorn') if m in sys.modules))")

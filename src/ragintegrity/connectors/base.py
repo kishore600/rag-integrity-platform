@@ -51,3 +51,11 @@ class IndexConnector(Protocol):
 
 class ConnectorError(RuntimeError):
     pass
+
+
+class UpstreamError(ConnectorError):
+    """A connection to the user's own infrastructure (S3, their database, Qdrant) failed; the message is safe to show."""
+
+
+class SetupIncomplete(ConnectorError):
+    """A required connection has not been configured yet (a 409 for the user, not a server fault)."""

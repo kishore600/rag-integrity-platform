@@ -1,60 +1,75 @@
-# Deploying to Vercel
+# Deploying to Vercel (multi-user app)
 
-The dashboard and API run as a single FastAPI serverless function. Live demo: https://rag-integrity-platform.vercel.app
+The dashboard and API run as one FastAPI serverless function. Users sign up, then connect **their own** S3, processing manifest
+(Postgres) and Qdrant in *Settings*. There is no sample data: a new workspace is empty until it is connected.
 
-## How it is wired
+## What you need
 
-| File | Purpose |
+| | |
 |---|---|
-| `api/index.py` | entrypoint: adds `src/` to the path, defaults to `RAGI_MODE=demo` and an ephemeral SQLite ledger in `/tmp`, exposes `app` |
-| `requirements.txt` | the *only* install source on Vercel (`.vercelignore` hides `pyproject.toml`): FastAPI, SQLAlchemy, psycopg, httpx. `boto3` and `qdrant-client` are deliberately left out (live mode only) |
-| `vercel.json` | `maxDuration: 60`, bundles `src/**`. **No rewrites**, see below |
+| A Postgres database | Supabase is the intended home: accounts, sessions, encrypted connection secrets and the ledger live there. Apply `supabase/migrations/` (`supabase db push`). |
+| `RAGI_DATABASE_URL` | its connection string. On serverless use Supabase's **transaction pooler** (port 6543, `postgres.<ref>` user). |
+| `RAGI_SECRET_KEY` | 32+ random characters. Encrypts the secrets users store. Keep a copy: without it, stored secrets cannot be decrypted. |
+
+Until both variables are set the app shows a **Setup required** screen that says exactly what is missing. It never falls back to a
+temporary database: serverless storage is ephemeral, so accounts created there would silently disappear.
+
+## One-time setup
 
 ```bash
-npx vercel login                       # once
+npx vercel login
 npx vercel link --project rag-integrity-platform
-npx vercel deploy                      # preview
-npx vercel curl /healthz --deployment <url>        # test it even behind Deployment Protection
-npx vercel promote <url>               # promote the build you just tested to production
+supabase link --project-ref <ref> && supabase db push        # creates the 13 tables (row level security on, anon locked out)
 ```
 
-`vercel link` also connects the GitHub repository, so every push to `main` deploys to production automatically.
+Then put your connection string in `.env` as `RAGI_DATABASE_URL=...` (git-ignored) and run **yourself**:
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\vercel-env.ps1
+```
+
+It reads `RAGI_DATABASE_URL` from `.env`, generates `RAGI_SECRET_KEY` if you have none (and saves it to `.env`), and sets both
+on the Vercel project as *sensitive* (write-only) variables without ever printing them. `-DryRun` shows what it would do.
+Then deploy: `npx vercel deploy --prod` (or push to `main`: the GitHub repo is connected, so every push deploys).
+
+## Other environment variables
+
+| Variable | Default | |
+|---|---|---|
+| `RAGI_ALLOW_REGISTRATION` | `true` | set `false` to close sign-up once your team has accounts (there is no email verification) |
+| `RAGI_ALLOW_PRIVATE_HOSTS` | `false` | leave off on a public deployment: it is the SSRF guard |
+| `RAGI_SESSION_DAYS` | `7` | |
+| `RAGI_MAX_AUDIT_SECONDS` | 50 on Vercel | an audit that runs longer stops with a clear message |
 
 ## Serverless behaviour you should know about
 
-* **No rewrite rule.** Vercel recognises FastAPI and routes every path to the app. A catch-all rewrite to `/api/index`
-  makes the app see `/api/index` as the path, so *every* route returns 404. `tests/test_serverless.py` guards this.
-* **Audits run inside the request** (implied by the `VERCEL` environment variable, or `RAGI_SYNC_AUDITS=true`). A background
-  thread is frozen once the response is sent. The dashboard handles both modes.
-* **Start-up is lazy.** The first `/api/*` request seeds the demo (`ensure_ready`) instead of relying on ASGI lifespan hooks.
-  `/healthz` stays cheap and never triggers it. A failed bootstrap returns a 503 *without* leaking the connection string, and retries.
-* **The demo's state is per instance.** The default ledger is SQLite in `/tmp` and the synthetic world lives in memory, so both
-  reset together on a cold start and a second concurrent instance has its own copy. For a single viewer that is invisible; it
-  is not a database.
-* **The scheduler (`RAGI_AUDIT_INTERVAL_MINUTES`) does nothing on Vercel**, because there is no long-lived process. Schedule
-  audits from outside: `ragi audit --fail-on high` in cron/CI, or a scheduled workflow that calls `POST /api/audits`.
+* **No rewrite rule in `vercel.json`.** Vercel recognises FastAPI and routes every path to the app. A catch-all rewrite to
+  `/api/index` makes the app see `/api/index` as the path, so every route 404s. `tests/test_serverless.py` guards this.
+* **Audits run inside the request.** A background thread is frozen once the response is sent, so audits finish (or stop with a
+  time-budget message) within the function's limit (`maxDuration` 60 s). Thousands of documents are fine; for very large corpora
+  audit one tenant at a time (`POST /api/audits {"tenant": "..."}`) or run `ragi audit` elsewhere.
+* **Only one audit per workspace at a time**, enforced by a database index, so it holds across concurrent function instances.
+* **Scheduled audits**: there is no long-lived process, so schedule from outside. Create an API key in Settings, then call
+  `POST /api/audits` from GitHub Actions, cron or any scheduler (the Settings page shows the exact `curl`).
+* **Cold start** imports the app only; `boto3`, `qdrant-client` and the database driver are loaded when first needed.
+* The Linux bundle is ~160 MB of the 250 MB function limit; keep `requirements.txt` lean.
 
-## Making it persistent (live mode)
+## Pointing it at your infrastructure
 
-A Postgres/Supabase ledger on Vercel only makes sense together with **live mode**, where S3, the manifest and Qdrant are the
-persistent source of truth. (With the synthetic demo world, a persistent ledger would disagree with a world that resets on every
-cold start.) Set these in *Project Settings -> Environment Variables*, never in the repo:
+In *Settings* each connection has a **Save & test** button that runs the real connector and reports what it found: the bucket and how
+many sampled keys match your key pattern, how many objects carry a SHA-256, whether the manifest table and columns are mapped and the
+database role is read-only, which Qdrant collections exist and whether their payloads carry `document_id` and `source_hash`.
 
+* **Supabase Storage as the source:** endpoint `https://<ref>.supabase.co/storage/v1/s3`, region of the project, access keys from
+  *Project Settings -> Storage -> S3 Connection*.
+* **Supabase / Postgres manifest:** use a role that can only `SELECT` (template in `supabase/examples/manifest_example.sql`).
+* Targets must be reachable from the internet: private and loopback addresses are refused (see [security.md](security.md)).
+
+## Operating it
+
+```bash
+ragi users list                       # who has signed up (needs RAGI_DATABASE_URL and RAGI_SECRET_KEY locally)
+ragi users delete someone@example.com --yes   # removes the user and everything in their workspace
 ```
-RAGI_MODE=live
-RAGI_DATABASE_URL=postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
-RAGI_S3_BUCKET=...   RAGI_MANIFEST_DATABASE_URL=...   RAGI_QDRANT_URL=...   (see configuration.md)
-RAGI_API_KEY=<long random string>
-```
 
-then add `boto3` and `qdrant-client` to `requirements.txt`, and put the function next to the database to keep latency low
-(e.g. `"regions": ["icn1"]` in `vercel.json` for a Seoul Supabase project; Hobby allows one region). Large corpora will not
-finish an audit inside the 60 s function limit: run those audits from cron/CI and use Vercel for the dashboard.
-
-## Access control
-
-* Vercel's default *Standard Protection* leaves the production domain public but puts a Vercel login in front of the unique
-  per-deployment URLs.
-* The demo ships **without an API key**, so anyone with the production URL can click through it. That is fine for synthetic,
-  ephemeral data. For anything real, set `RAGI_API_KEY` (the dashboard then asks for it) and/or enable *Vercel Authentication*
-  for production in the project settings.
+Roll back a bad deploy with `npx vercel promote <previous-deployment-url>`.

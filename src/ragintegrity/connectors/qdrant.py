@@ -23,8 +23,25 @@ def _coerce_id(point_id: str) -> Any:
     return int(point_id) if point_id.isdigit() else point_id
 
 
+def _explain_qdrant(exc: Exception) -> str:
+    msg = str(exc)
+    low = msg.lower()
+    if "403" in msg or "forbidden" in low or "401" in msg or "unauthorized" in low:
+        return "Qdrant rejected the API key (a read-capable key is required)."
+    if "timed out" in low or "timeout" in low:
+        return "Connection timed out: check the URL and port (Qdrant Cloud uses https://<cluster>:6333)."
+    if "name or service not known" in low or "getaddrinfo" in low or "nodename nor servname" in low:
+        return "The host name could not be resolved."
+    if "connection refused" in low or "connecterror" in low:
+        return "Connection refused: check the URL and port."
+    if "not found" in low or "doesn't exist" in low:
+        return "Not found: check the collection name."
+    return f"{type(exc).__name__}: {msg[:160]}"
+
+
 class QdrantIndex:
-    def __init__(self, settings: Settings, client: Any = None) -> None:
+    def __init__(self, settings: Settings, client: Any = None, fast: bool = False) -> None:
+        """``fast`` is for diagnostics: give up on an unreachable server within seconds."""
         self.s = settings
         self.pmap = build_payload_map(settings.payload_map)
         self.vector_name = settings.qdrant_vector_name
@@ -33,7 +50,9 @@ class QdrantIndex:
                 raise ConnectorError("RAGI_QDRANT_URL is not set")
             from qdrant_client import QdrantClient
 
-            client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key, timeout=60)
+            # check_compatibility=False: no extra round trip (and no warning) just to read the server version
+            client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key, timeout=8 if fast else 60,
+                                  check_compatibility=False)
         self.client = client
         self._names = settings.collections
 
@@ -124,6 +143,54 @@ class QdrantIndex:
         for p in res.points:
             doc = (p.payload or {}).get(self.pmap["document_id"]) if "." not in self.pmap["document_id"] else None
             out.append((str(p.id), float(p.score), doc))
+        return out
+
+    # --------------------------------------------------------------------------------- diagnostics
+    def diagnose(self) -> list[dict[str, str]]:
+        """Specific, actionable checks for the 'Test connection' button."""
+        def chk(name: str, status: str, detail: str) -> dict[str, str]:
+            return {"name": name, "status": status, "detail": detail}
+
+        try:
+            existing = sorted(c.name for c in self.client.get_collections().collections)
+        except Exception as exc:
+            return [chk("Qdrant reachable", "fail", _explain_qdrant(exc))]
+        out = [chk("Qdrant reachable", "ok", f"{len(existing)} collection(s): {', '.join(existing[:8]) or 'none yet'}")]
+        wanted = self._names or existing
+        missing = [c for c in wanted if c not in existing]
+        if missing:
+            out.append(chk("Collections", "fail", f"not found: {', '.join(missing)}. Existing: {', '.join(existing) or 'none'}."))
+            return out
+        if not wanted:
+            out.append(chk("Collections", "warn", "this Qdrant has no collections yet."))
+            return out
+        out.append(chk("Collections", "ok", f"auditing {', '.join(wanted)}"))
+        for name in wanted[:5]:
+            try:
+                n = self.client.count(collection_name=name, exact=False).count
+                size = self.vector_sizes().get(name)
+                out.append(chk(f"Collection {name}", "ok" if n else "warn", f"~{n} point(s), vector size {size}" if n else "the collection is empty"))
+                if not n:
+                    continue
+                pts, _ = self.client.scroll(collection_name=name, limit=20, with_payload=True, with_vectors=False)
+                have: set[str] = set()
+                for p in pts:
+                    for canonical, path in self.pmap.items():
+                        cur: Any = p.payload or {}
+                        for part in path.split("."):
+                            cur = cur.get(part) if isinstance(cur, dict) else None
+                        if cur not in (None, ""):
+                            have.add(canonical)
+                needed = [f for f in ("document_id", "source_hash") if f not in have]
+                if "document_id" not in have:
+                    out.append(chk(f"Payload of {name}", "fail", "sampled points carry no document_id. Map the payload field names with the payload map."))
+                elif needed:
+                    out.append(chk(f"Payload of {name}", "warn", f"sampled points lack {', '.join(needed)}: freshness checks will be limited."))
+                else:
+                    extras = [f for f in ("tenant_id", "chunk_id", "chunk_index", "embedding_model") if f in have]
+                    out.append(chk(f"Payload of {name}", "ok", f"found document_id and source_hash; also {', '.join(extras) or 'no other mapped fields'}"))
+            except Exception as exc:
+                out.append(chk(f"Collection {name}", "fail", _explain_qdrant(exc)))
         return out
 
     # --------------------------------------------------------------------------------- health

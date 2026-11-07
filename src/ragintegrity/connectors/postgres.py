@@ -13,6 +13,7 @@ from typing import Any
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.pool import NullPool
 
 from ..config import Settings, check_identifier, normalize_db_url
 from ..models import ChunkRow, ConnectionStatus, Fingerprint, ManifestRow, Scope
@@ -28,14 +29,38 @@ CHUNK_COLUMNS = ("tenant_id", "document_id", "chunk_id", "chunk_index", "chunk_h
 KEYS_IN_LIMIT = 400
 
 
-def make_engine(url: str) -> Engine:
+def make_engine(url: str, null_pool: bool = False) -> Engine:
+    """``null_pool`` opens a fresh connection per use and never keeps one: right for short-lived connections to a
+    *customer's* database from a serverless function, where pooled connections would just leak."""
     url = normalize_db_url(url)
-    kwargs: dict[str, Any] = {"pool_pre_ping": True, "pool_size": 3, "max_overflow": 2}
+    kwargs: dict[str, Any] = {"pool_pre_ping": True, "pool_size": 2, "max_overflow": 3, "pool_recycle": 300}
     if url.startswith("sqlite"):
         kwargs = {}
-    elif "+psycopg" in url:
-        kwargs["connect_args"] = {"prepare_threshold": None}  # safe behind Supabase's transaction pooler
+    else:
+        if null_pool:
+            kwargs = {"poolclass": NullPool}
+        if "+psycopg" in url:
+            kwargs["connect_args"] = {"prepare_threshold": None, "connect_timeout": 10}  # safe behind Supabase's pooler
     return create_engine(url, **kwargs)
+
+
+def _explain_pg(exc: Exception) -> str:
+    """A connection error message that helps, without echoing the connection string or password."""
+    msg = str(getattr(exc, "orig", exc)).strip().splitlines()[0] if str(exc) else type(exc).__name__
+    low = msg.lower()
+    if "password authentication failed" in low or "authentication failed" in low:
+        return "Authentication failed: check the user name and password in the connection string."
+    if "timeout" in low or "timed out" in low:
+        return "Connection timed out: the host is unreachable from the internet or a firewall blocks this server."
+    if "could not translate host" in low or "name or service not known" in low or "nodename nor servname" in low:
+        return "The host name could not be resolved."
+    if "ssl" in low:
+        return "SSL negotiation failed: try adding ?sslmode=require to the connection string."
+    if "does not exist" in low:
+        return msg[:200]
+    if "permission denied" in low:
+        return "Permission denied: the role cannot read this table."
+    return f"{type(exc).__name__}: {msg[:160]}"
 
 
 def _iso(v: Any) -> str | None:
@@ -65,7 +90,7 @@ class PostgresManifest:
         if engine is None:
             if not settings.manifest_database_url:
                 raise ConnectorError("RAGI_MANIFEST_DATABASE_URL is not set")
-            engine = make_engine(settings.manifest_database_url)
+            engine = make_engine(settings.manifest_database_url, null_pool=True)
         self.engine = engine
         self.s = settings
         self.schema = check_identifier(settings.manifest_schema, "RAGI_MANIFEST_SCHEMA") if engine.dialect.name != "sqlite" else None
@@ -101,6 +126,7 @@ class PostgresManifest:
         with self.engine.connect() as conn:
             if self.engine.dialect.name == "postgresql":
                 conn.execute(text("SET TRANSACTION READ ONLY"))
+                conn.execute(text("SET LOCAL statement_timeout = '45s'"))  # a customer's slow table must not hang an audit
             result = conn.execution_options(stream_results=True).execute(text(sql), params)
             yield from result.mappings()
 
@@ -175,6 +201,66 @@ class PostgresManifest:
                 continue
             yield ChunkRow(tenant, str(r["document_id"]), str(r["chunk_id"]), _i(r.get("chunk_index")),
                            _s(r.get("chunk_hash")))
+
+    def diagnose(self) -> list[dict[str, str]]:
+        """Specific, actionable checks for the 'Test connection' button."""
+        def chk(name: str, status: str, detail: str) -> dict[str, str]:
+            return {"name": name, "status": status, "detail": detail}
+
+        out: list[dict[str, str]] = []
+        try:
+            with self.engine.connect() as c:
+                c.execute(text("SELECT 1"))
+        except Exception as exc:
+            return [chk("Database reachable", "fail", _explain_pg(exc))]
+        out.append(chk("Database reachable", "ok", f"connected ({self.engine.dialect.name})"))
+        try:
+            present = self._existing(self.table, self.doc_map)
+        except Exception as exc:
+            out.append(chk("Manifest table", "fail", f"could not inspect {self.table}: {type(exc).__name__}. Check schema/table names and that the role can read them."))
+            return out
+        if not present:
+            out.append(chk("Manifest table", "fail", f"table {self.schema + '.' if self.schema else ''}{self.table} was not found or has no mapped columns."))
+            return out
+        if "document_id" not in present:
+            out.append(chk("Manifest table", "fail", f"no column for document_id (looked for '{self.doc_map['document_id']}'). Map it with the column map."))
+            return out
+        important = [c for c in ("source_hash", "processing_status", "expected_chunk_count", "indexed_chunk_count") if c not in present]
+        out.append(chk("Manifest table", "ok", f"{len(present)} of {len(self.doc_map)} columns mapped"))
+        if important:
+            out.append(chk("Columns used for checks", "warn", f"missing {', '.join(important)}: the related checks (stale / partial / false-success detection) are reduced."))
+        rows: Any = None
+        try:
+            with self.engine.connect() as c:
+                if self.engine.dialect.name == "postgresql":
+                    c.execute(text("SET TRANSACTION READ ONLY"))
+                rows = c.execute(text(f"SELECT count(*) FROM (SELECT 1 FROM {self._qualified(self.table)} LIMIT 100001) s")).scalar_one()
+            out.append(chk("Rows", "ok" if rows else "warn",
+                           (f"{rows if rows <= 100000 else '100000+'} manifest row(s)" if rows else "the manifest table is empty")))
+        except Exception as exc:
+            out.append(chk("Rows", "fail", _explain_pg(exc)))
+        if self.engine.dialect.name == "postgresql":
+            try:
+                with self.engine.connect() as c:
+                    qn = f"{self.schema}.{self.table}"
+                    writes = c.execute(text("SELECT has_table_privilege(current_user, :t, 'INSERT') OR has_table_privilege(current_user, :t, 'UPDATE') "
+                                            "OR has_table_privilege(current_user, :t, 'DELETE')"), {"t": qn}).scalar_one()
+                out.append(chk("Role is read-only", "warn" if writes else "ok",
+                               "this database role CAN write to the manifest table. RAG Integrity only reads (every query is READ ONLY), "
+                               "but a SELECT-only role is safer." if writes else "this role has no write privileges on the manifest table"))
+            except Exception:
+                pass
+        if self.chunk_table:
+            try:
+                cp = self._existing(self.chunk_table, self.chunk_map)
+                ok = "document_id" in cp and "chunk_id" in cp
+                out.append(chk("Chunk manifest", "ok" if ok else "fail",
+                               f"{self.chunk_table}: {len(cp)} columns mapped" if ok else f"{self.chunk_table} needs document_id and chunk_id columns"))
+            except Exception as exc:
+                out.append(chk("Chunk manifest", "fail", _explain_pg(exc)))
+        else:
+            out.append(chk("Chunk manifest", "warn", "not configured: partial indexes are detected from chunk counts and index gaps instead of exact chunk ids."))
+        return out
 
     def health(self) -> ConnectionStatus:
         t0 = time.perf_counter()
