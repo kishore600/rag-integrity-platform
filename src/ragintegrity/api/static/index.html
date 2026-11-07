@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAG Integrity</title>
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f766e'/%3E%3Cpath d='M9 16.5l4.5 4.5L23 11' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="nav" aria-label="Primary">
+      <div class="brand">
+        <span class="logo" aria-hidden="true"></span>
+        <span>RAG Integrity</span>
+      </div>
+      <nav id="nav"></nav>
+      <div class="nav-foot">
+        <span id="mode-badge" class="badge"></span>
+        <span id="version" class="muted"></span>
+      </div>
+    </aside>
+
+    <main>
+      <header class="top">
+        <div>
+          <h1 id="view-title">Overview</h1>
+          <p id="view-sub" class="muted"></p>
+        </div>
+        <div class="actions">
+          <button id="btn-key" class="btn ghost" hidden>API key</button>
+          <button id="btn-reset" class="btn ghost" hidden title="Regenerate the synthetic demo world">Reset demo</button>
+          <button id="btn-audit" class="btn primary">Run audit</button>
+        </div>
+      </header>
+      <div id="banner" class="banner" hidden></div>
+      <section id="view" aria-live="polite"></section>
+    </main>
+  </div>
+
+  <div id="scrim" class="scrim" hidden></div>
+  <aside id="drawer" class="drawer" hidden role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+    <div class="drawer-head">
+      <h2 id="drawer-title"></h2>
+      <button id="drawer-close" class="btn ghost" aria-label="Close">Close</button>
+    </div>
+    <div id="drawer-body" class="drawer-body"></div>
+  </aside>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,91 @@
+# A complete LIVE stack on your laptop: the customer's infrastructure (S3 = MinIO, manifest = Postgres,
+# index = Qdrant), a demo corpus with injected faults, the reference repair worker, and RAG Integrity itself.
+#
+#   docker compose up --build          # then open http://localhost:8000
+#
+# For the zero-dependency demo instead:   docker run -p 8000:8000 rag-integrity   (RAGI_MODE=demo is the default)
+#
+# Credentials below are throwaway, local-only defaults and all ports are bound to 127.0.0.1.
+
+x-live-env: &live-env
+  RAGI_MODE: live
+  RAGI_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres   # the ledger (ragi schema)
+  RAGI_S3_BUCKET: docs
+  RAGI_S3_ENDPOINT_URL: http://minio:9000
+  RAGI_S3_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: minioadmin
+  AWS_SECRET_ACCESS_KEY: minioadmin
+  RAGI_MANIFEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+  RAGI_MANIFEST_CHUNK_TABLE: rag_chunk_manifest
+  RAGI_QDRANT_URL: http://qdrant:6333
+  RAGI_QDRANT_COLLECTIONS: kb_main
+  RAGI_QDRANT_CHECK_VECTORS: "true"
+  RAGI_GRACE_MINUTES: "0"          # the seeded objects were uploaded seconds ago
+  RAGI_TARGET_PARSER_VERSION: parser-2.1
+  RAGI_TARGET_CHUNKING_VERSION: recursive-v2
+  RAGI_TARGET_CHUNK_SIZE: "400"
+  RAGI_TARGET_CHUNK_OVERLAP: "40"
+  RAGI_TARGET_EMBEDDING_MODEL: demo-embed-v2
+  RAGI_TARGET_EMBEDDING_DIM: "16"
+  RAGI_TARGET_PREPROCESSING: clean-v1
+  RAGI_REPAIR_WEBHOOK_URL: http://worker:9000/ragi-webhook
+  RAGI_REPAIR_WEBHOOK_SECRET: local-demo-secret
+  RAGI_PUBLIC_BASE_URL: http://app:8000
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      retries: 20
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports: ["127.0.0.1:6333:6333"]
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+
+  seed:
+    build: .
+    command: ["python", "scripts/seed_live.py"]
+    environment:
+      <<: *live-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      qdrant: { condition: service_started }
+      minio: { condition: service_started }
+    restart: "no"
+
+  worker:
+    build: .
+    command: ["uvicorn", "examples.reference_worker.worker:app", "--host", "0.0.0.0", "--port", "9000"]
+    environment:
+      RAGI_WORKER_AUTOSTART: "1"
+      S3_BUCKET: docs
+      S3_ENDPOINT_URL: http://minio:9000
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      QDRANT_URL: http://qdrant:6333
+      MANIFEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      RAGI_REPAIR_WEBHOOK_SECRET: local-demo-secret
+    depends_on:
+      seed: { condition: service_completed_successfully }
+
+  app:
+    build: .
+    environment:
+      <<: *live-env
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      seed: { condition: service_completed_successfully }
