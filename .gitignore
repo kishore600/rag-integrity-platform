@@ -26,3 +26,8 @@ supabase/.branches/
 
 # local Qdrant test server marker
 .qdrant-initialized
+
+# frontend tooling (the built UI in src/ragintegrity/api/static IS committed, so deploys need no Node build)
+frontend/node_modules/
+frontend/*.tsbuildinfo
+frontend/.vite/

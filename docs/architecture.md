@@ -16,8 +16,9 @@ src/ragintegrity/
   service.py           the one object API/CLI/scheduler use: audits, locking, overview, inspection
   repair.py            plan -> signed webhook -> verify -> approved cleanup -> verify
   alerts.py report.py  Slack-compatible alerts · markdown/CSV/JSON report
-  api/                 FastAPI app + dependency-free dashboard (static/)
+  api/                 FastAPI app; static/ holds the BUILT web interface (committed, so deploys need no Node step)
   demo/                synthetic world with injected faults, toy pipeline, seeding for live infrastructure
+frontend/                    the web interface source (React + TypeScript + Vite + Tailwind); `npm run build` writes api/static/
 examples/reference_worker/   the customer-side receiver of the repair webhook
 supabase/migrations/         ledger schema (kept in sync with ledger.py by a test)
 ```

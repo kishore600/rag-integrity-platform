@@ -57,7 +57,7 @@ audits and read results, but it cannot read settings, create keys or change pass
 ## Web hardening
 
 Strict `Content-Security-Policy` (`script-src 'self'`), `X-Frame-Options: DENY`, `nosniff`, no referrer, `no-store` on API
-responses. The dashboard renders every value as text (document ids come from S3 keys, so they are attacker-influenced).
+responses. The web interface renders every value as text (document ids come from S3 keys, so they are attacker-influenced).
 
 ## Not covered (be aware)
 

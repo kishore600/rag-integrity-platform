@@ -258,6 +258,7 @@ class DocSummary:
     manifest_status: str | None = None
     manifest_updated_at: str | None = None
     collections: list[str] = field(default_factory=list)
+    indexed_version: str | None = None  # the source version the index actually holds (manifest claim as a fallback)
 
     @property
     def key(self) -> DocKey:

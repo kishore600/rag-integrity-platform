@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 
 import pytest
@@ -33,12 +34,39 @@ def client(tmp_path):
 
 def test_dashboard_and_security_headers(client):
     r = client.get("/")
-    assert r.status_code == 200 and "RAG Integrity" in r.text
+    assert r.status_code == 200 and "RAGGuard" in r.text
     assert "script-src 'self'" in r.headers["content-security-policy"]
     assert r.headers["x-frame-options"] == "DENY" and r.headers["x-content-type-options"] == "nosniff"
-    assert client.get("/static/app.js").status_code == 200
+    assert r.headers["cache-control"] == "no-store"  # the shell must never be cached: it names the hashed asset files
+    # the built single-page app: the shell references hashed script and style files, and they are really served
+    scripts = re.findall(r'src="(/static/assets/[^"]+\.js)"', r.text)
+    styles = re.findall(r'href="(/static/assets/[^"]+\.css)"', r.text)
+    assert scripts and styles, "index.html does not reference the built assets: run `npm run build` in frontend/"
+    for path in scripts + styles:
+        assert client.get(path).status_code == 200
     assert client.get("/api/overview").headers["cache-control"] == "no-store"
     assert client.get("/healthz").json()["ok"] is True
+
+
+@pytest.mark.parametrize("path", ["/issues", "/issues/abc123", "/documents", "/documents?tenant=t&doc=x", "/audit-history/run-1", "/data-sources", "/settings"])
+def test_client_side_routes_get_the_app_shell(client, path):
+    """Opening or refreshing a deep link must load the app, not a 404 (the browser router handles the rest)."""
+    r = client.get(path)
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html") and "RAGGuard" in r.text
+
+
+@pytest.mark.parametrize("path", ["/api/nope", "/api/issues/", "/static/missing.js", "/static/assets/missing.css", "/docs/x", "/redoc/x"])
+def test_unknown_api_and_asset_paths_stay_404(client, path):
+    """Only real page routes fall back to the app shell: a missing API route or asset must stay a clean 404, never HTML."""
+    r = client.get(path)
+    assert r.status_code == 404 and "text/html" not in r.headers["content-type"]
+
+
+def test_documents_carry_the_indexed_version(client):
+    items = client.get("/api/documents", params={"limit": 200}).json()["items"]
+    assert items and all("indexed_version" in d for d in items)
+    # a document that is indexed shows which version its vectors were built from
+    assert any(d["indexed_version"] for d in items if d["index_present"])
 
 
 def test_overview_issues_documents(client):

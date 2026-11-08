@@ -60,6 +60,32 @@ jobs:
           echo "services did not come up"; cat moto.log; exit 1
       - run: pytest -p no:warnings
 
+  frontend:
+    name: Web interface (typecheck and build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      # The built interface is committed (so Vercel and Docker need no Node step). It must match the source.
+      - name: Built files are up to date
+        working-directory: .
+        run: |
+          if [ -n "$(git status --porcelain -- src/ragintegrity/api/static)" ]; then
+            git status --short -- src/ragintegrity/api/static
+            echo "The committed build in src/ragintegrity/api/static is out of date. Run 'npm run build' in frontend/ and commit the result."
+            exit 1
+          fi
+
   docker:
     name: Docker image
     runs-on: ubuntu-latest

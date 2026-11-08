@@ -215,6 +215,7 @@ def build_tables(schema: str | None) -> tuple[MetaData, dict[str, Table]]:
         Column("index_present", Integer, nullable=False),
         Column("last_verified_at", ts(), nullable=False),
         Column("last_run_id", String(36), nullable=False),
+        Column("indexed_version", Text),  # added by migration 20261109000000 (appended: ALTER TABLE ... ADD COLUMN)
     )
     Index("ix_documents_status", t["documents"].c.workspace_id, t["documents"].c.status)
     t["repair_plans"] = Table(
@@ -310,6 +311,7 @@ class Ledger:
             with self.engine.connect() as c:
                 c.execute(select(self.t["issues"].c.workspace_id).limit(1))
                 c.execute(select(self.t["users"].c.id).limit(1))
+                c.execute(select(self.t["documents"].c.indexed_version).limit(1))  # migration 20261109000000
             return True, "ok"
         except Exception as exc:
             return False, f"{type(exc).__name__}: apply the latest supabase/migrations"
@@ -481,7 +483,8 @@ class Ledger:
                 source_version=s.source_version, size_bytes=s.size_bytes, expected_chunks=s.expected_chunks,
                 indexed_chunks=s.indexed_chunks, manifest_status=s.manifest_status, manifest_updated_at=s.manifest_updated_at,
                 collections=s.collections, source_present=int(s.source_present), manifest_present=int(s.manifest_present),
-                index_present=int(s.index_present), last_verified_at=now, last_run_id=run_id)
+                index_present=int(s.index_present), last_verified_at=now, last_run_id=run_id,
+                indexed_version=s.indexed_version)
 
         new_rows = [{"workspace_id": self.ws, "tenant_id": s.tenant_id, "document_id": s.document_id, **row(s)}
                     for s in summaries if s.key not in have]

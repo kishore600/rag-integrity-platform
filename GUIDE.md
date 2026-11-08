@@ -9,7 +9,7 @@ and `tests/test_docs.py` fails if this file drifts from the code.
 1. [What it is](#1-what-it-is)
 2. [What was built](#2-what-was-built)
 3. [How it thinks: the mental model](#3-how-it-thinks-the-mental-model)
-4. [The dashboard, tab by tab](#4-the-dashboard-tab-by-tab)
+4. [The interface, page by page](#4-the-interface-page-by-page)
 5. [Settings: every group and every field](#5-settings-every-group-and-every-field)
 6. [Issue types: what each one means](#6-issue-types-what-each-one-means)
 7. [The repair workflow](#7-the-repair-workflow)
@@ -94,7 +94,8 @@ Your S3 bucket, manifest table and Qdrant cluster are **not** part of the produc
 | `accounts.py` | 242 | users, sessions, rate limits, API keys, encrypted per-workspace settings |
 | `workspaces.py` | 374 | the declarative Settings specification, validation, per-workspace service, connection tests |
 | `api/app.py` | 548 | the HTTP API and authentication |
-| `api/static/` | 968 | the dashboard (`index.html`, `app.js` 729 lines, `styles.css`), no framework, no build step |
+| `api/static/` | built | the committed build of the web interface (`index.html` and hashed files in `assets/`): deploys need no Node step |
+| `frontend/` (outside `src/`) | 10,326 | the web interface source: React, TypeScript, Vite, Tailwind, TanStack Query and Table, Recharts; `npm run build` writes `api/static/` |
 | `cli.py` | 194 | the `ragi` command |
 | `demo/` | 501 | a synthetic world with 47 injected faults, a toy pipeline, seeding for real infrastructure (local exploration and tests only) |
 
@@ -102,13 +103,13 @@ Also: `api/index.py` (the Vercel entrypoint), `examples/reference_worker/worker.
 `supabase/migrations/` (2 migrations, 328 lines of SQL), `scripts/vercel-env.ps1` and `scripts/seed_live.py`, `Dockerfile`,
 `docker-compose.yml`, `.github/workflows/ci.yml`, and `docs/`.
 
-**Size:** about 5,500 lines of Python in `src`, 2,050 lines of tests, 729 lines of dashboard JavaScript, 328 lines of SQL.
+**Size:** about 5,500 lines of Python in `src`, 2,050 lines of tests, 10,326 lines of interface TypeScript and CSS, 328 lines of SQL.
 
 ### 2.3 The three ways it can run
 
 | Mode (`RAGI_MODE`) | Who it is for | Accounts | Connections come from |
 |---|---|---|---|
-| `app` | **the hosted product**, or self-hosting it for several users | sign-up / login | each user's own *Settings* (encrypted in the database) |
+| `app` | **the hosted product**, or self-hosting it for several users | sign-up / login | each user's own *Data Sources* (encrypted in the database) |
 | `live` | one team, one set of infrastructure | none (optional `RAGI_API_KEY`) | environment variables |
 | `demo` | exploring locally | none | a built-in synthetic corpus with injected faults |
 
@@ -183,78 +184,147 @@ embedding`; **failed** - `failed, error, errored, failure`; **deleted** - `delet
 
 ---
 
-## 4. The dashboard, tab by tab
+## 4. The interface, page by page
 
-After signing in, the left menu has seven tabs. The header has **Run audit**, your email (opens *Account*), and a **Workspace**
-badge. When setup is incomplete a banner says so and links to Settings, and Settings shows a `!`.
+The web interface is a React and TypeScript app (source in `frontend/`, built into `src/ragintegrity/api/static/`). It shows only real
+data from the API: nothing is sample data, and anything the product does not do yet is shown as a card marked **Not available yet**.
+
+**The frame around every page.**
+- **Left menu** (dark, 250 px; a slide-out drawer on a phone): *Overview, Data Sources, Reconciliation, Integrity Issues* (with the number
+  of open issues), *Documents, Audit History, Integrations, Alerts, Settings*. At the bottom a card says **LIVE** (your own systems) or
+  **DEMO** (synthetic data), the workspace name and the version.
+- **Top bar**: a search box (type, then choose *Documents* or *Integrity issues*; press `/` anywhere to focus it), **Run audit**, a bell
+  (open issues by severity and when the last audit ran), and your account menu (email, workspace, Settings, **Sign out**).
+- **Run audit** is disabled, with the reason in a tooltip, until all three connections exist, and while an audit is already running. When
+  a background audit finishes you get a notice on whatever page you are on.
+- On the demo server a banner on every page says the data is synthetic.
+- Every list can be searched, filtered, sorted (click a column header) and paged; filters are kept in the address, so a view can be
+  shared or refreshed. Every page has a loading state, an empty state that says what to do next, and an error state with **Try again**.
 
 ### Sign-in and Create account
 One screen with two modes. Email plus password; the password must be at least 10 characters, not a common password, not one
 repeated character, and must not contain your email name. Errors never reveal whether an email is registered (except that sign-up
-says an email is taken). Closed sign-up shows "Registration is closed on this server."
+says an email is taken). Closed sign-up shows "New sign-ups are closed on this server." If the server is missing required
+configuration, a "This server isn't fully set up yet" screen lists what the operator must fix.
 
 ### Overview
 The answer to "is my index consistent with the source?"
-- **Index health**: the health score ring and "N of M documents match the latest source exactly", the time of the last full audit,
-  vectors scanned and duration. Buttons: *Review issues*, *Plan a repair*.
-- **Health trend**: the score over the last 30 completed full audits.
-- **Four counters**: open issues, critical, documents broken or orphaned, issues resolved so far.
-- **Open issues by severity** and **by type** (bar charts).
-- **Tenants**: documents, healthy count and a health bar per tenant. Clicking a tenant opens Documents filtered to it.
-- With no audit yet it shows the **onboarding card** ("Connect your infrastructure" with the three required steps, or "Run your first audit" once connected).
+- Until the three connections exist it shows **Connect your data**: three steps (source, manifest, index), each with *To do* or *Done*
+  and a **Set up** button.
+- **Four cards**: *Health score* (the share of documents that match the latest source exactly), *Documents* (and how many tenants),
+  *Open issues* (and how many are critical or high; click to open the list), *Last audit* (how long ago, and how long it took).
+- **Health over time**: the score after each full audit (it needs two audits before it can draw a line).
+- **Open issues by severity** (a donut with counts and shares) and **Issues by type** (each bar opens the issue list filtered to that type).
+- **Document status**: healthy, degraded, broken, pending, orphaned, each opening Documents filtered to that status.
+- **Top open issues**: the six worst, each opening its detail panel. **Tenant health**: documents, healthy count and score per tenant.
+  **Last audit**: issues opened, reopened, escalated, resolved, unchanged, and retrieval probes run. **Connection health**: one line per
+  system, checked live, with response time.
 
-### Issues
-Every finding, worst first. Filters: **Status** (Open, Resolved, Ignored, All), **severity**, **type**, and search by document or title
-(press Enter). Columns: *Severity, Issue, Document, Detail, Last seen*; 50 per page. Click a row for the detail panel:
-- the severity, status and type, and the document (tenant plus path);
-- the plain-language **detail** and the **Recommended action** (see section 6);
-- a warning when **the pipeline reported success** for this document (job status alone would not have caught it);
-- the **Retrieval probe**: whether the content is returned for a matching query, at what rank and score, with the top results and which are stale content;
-- the **Problems** list for metadata findings; **Evidence** key/values; the **missing chunk** ids; the number of vectors that are removal candidates;
-- the raw evidence (collapsible) and a **Timeline** (opened, severity changed, resolved, reopened, ignored);
-- buttons: **Inspect document live**, **Ignore** (asks for a reason, kept in the audit trail) or **Reopen**.
+### Data Sources
+The three systems that are compared: **Amazon S3** (the documents), **PostgreSQL** (the manifest) and **Qdrant** (the vector index), plus a
+read-only **Issue ledger** status. Until all three are configured a guide at the top walks through *1 Source, 2 Manifest, 3 Index*.
+- Each card shows its state (*Connected*, *Not connected*, *Error*), what the server measured just now (for example "bucket reachable,
+  hash mode metadata", response time), the key non-secret settings, and when it was saved and last tested.
+- **Configure** / **Edit** opens a form for that group (the fields are listed in section 5). **Test connection** checks what is typed
+  without saving it and shows one line per check (for example "Qdrant reachable: 1 collection", "Payload: found `document_id` and
+  `source_hash`"); **Save** stores it (secrets are encrypted and never shown again); **Test** on the card checks what is saved and
+  remembers the result.
+- A **Refresh status** button re-checks all connections. On a single-user server the cards are read-only and say the connections come
+  from the server's `RAGI_*` environment variables.
+
+### Reconciliation
+The three-way comparison and its results.
+- **Run full audit**, **Scoped audit** (choose one tenant, and whether to probe retrieval for the worst findings) and **Export report**
+  (Markdown, CSV or JSON).
+- **Three-way comparison**: source documents, manifest rows and index vectors from the latest full audit, with the real differences in
+  one line each.
+- **Results of the latest full run**: findings in total, by severity and by type (each opening the issue list), and what changed since
+  the previous run.
+- **Documents**: every document the last audit compared, with tabs *All, Healthy, Needs attention, Orphaned, Pending*, search and a
+  tenant filter. Three icons show whether the document is present in the source, the manifest and the index. Click a row to open it.
+
+### Integrity Issues
+Three tabs: **Issues**, **Repair plans**, **Impact analysis**.
+
+**Issues.** Severity chips (click to filter), then search, **Status** (Open, Resolved, Ignored, All), **Severity**, **Type** and **Tenant**.
+Columns: *Severity, Issue, Document, Status, First seen, Last seen, Seen*. Tick rows to **Create repair plan** or **Ignore** several at
+once. Click a row for the detail panel:
+- **What's wrong** (the plain-language detail) and **Why it matters** (what the finding means for your users);
+- **Expected vs actual** side by side, written from the stored evidence;
+- **Affected systems** (S3, PostgreSQL, Qdrant) and a link to the document;
+- **Evidence**: the values the audit read, the retrieval probe (whether the content is returned for a matching query, at what rank and
+  score, which results are stale), the problems list for metadata findings, the missing chunk ids and the number of removal
+  candidates; the raw evidence is available in a collapsible section;
+- **Recommended fix** (section 6) and a **Timeline** (opened, severity changed, resolved, reopened, ignored);
+- buttons: **Create repair plan**, **Ignore** (asks for a reason, kept in the audit trail) or **Reopen**, and **View document**.
+
+**Repair plans** (how problems get fixed safely: section 7).
+- **Recommended work**: documents to reprocess, chunks to regenerate, estimated tokens and cost, the saving compared with re-embedding
+  everything, and superseded vectors that can be removed later, with the pricing assumptions in small type. Pick a minimum severity and
+  press **Create plan from recommendations**.
+- **Repair plans** lists every plan with its status. A plan opens in a panel with a summary, **Where this stands** (what happens next,
+  and a warning with a **Set up the repair webhook** link when none is configured), the documents with what will happen to each and
+  whether it was verified, and a **History**. The buttons follow the plan's state: **Trigger repair** (sends the signed webhook),
+  **Verify now** (re-checks the real index), **Send repair again** (for a partial or failed plan), **Approve cleanup** (a confirmation
+  states exactly how many vectors will be removed, and that it cannot be undone) and **View payload** (the exact signed body).
+
+**Impact analysis** (section 8): choose *Open issues*, *Pipeline change* (the parser, chunking or embedding model you plan to move to) or
+*Ingestion failure* (when it started), then **Analyze impact**. It returns documents and tenants affected, the work and cost to fix, and
+the queries that touched them (from your retrieval log, last 14 days).
 
 ### Documents
-Document-level integrity. Filters: status (Broken, Degraded, Orphaned, Pending, Healthy), a tenant chip, and search by document id.
-Columns: *Status, Document, Issues, Chunks (indexed / expected), Embedding model, Verified*. Buttons **Download report (.md)** and **CSV**
-produce the document-level integrity report. Click a document for the live three-way view:
-- three columns, fetched live from your systems: **Source (S3)**, **Manifest (Postgres)**, **Index (Qdrant)**;
-- the **chunk grid**: one box per chunk, coloured *fresh, stale, outdated, unknown, orphan*, or a dashed red box for a chunk that is *missing from the index*; a number after the index means that chunk exists more than once;
-- the **Findings** for this document and the pipeline fingerprints found in the index.
+Every document with its state. Cards count *Total, Healthy, Needs attention, Orphaned, Pending* (each filters the table). Filters:
+search by document id, status, tenant. Columns: *Document, Tenant, Embedding status* (Healthy, Stale, Missing embeddings,
+Processing, Failed), *Source* and *Indexed* version (a warning when the index was built from a different version), *Chunks* (indexed
+over expected), *Size*, *Issues*, *Verified*. Click a row for the panel, which has the buttons **Re-audit document** and **Create repair
+plan**, and three tabs:
+- **Overview**: status, source URI, hashes and versions, collections, manifest status, the pipeline fingerprint, and whether the
+  document is present in the source, the manifest and the index;
+- **Chunks**: press **Inspect live** to re-read the document right now from S3, the manifest and Qdrant, and see each expected chunk
+  with its class (*fresh, stale, outdated, unknown, orphan*) and how many copies exist;
+- **Issues**: this document's findings, each opening its own panel.
 
-### Repairs
-How problems get fixed safely (section 7). The top card creates a plan with a **Scope** (all open issues, medium and above, high and above, critical only) and an optional **Tenant**. Below is the list of plans. A plan page shows:
-- a five-step stepper: **Plan, Reindex, Verify, Cleanup, Done**;
-- four numbers: documents in the plan, chunks to regenerate, estimated embedding cost, and the saving compared with re-embedding everything;
-- context buttons: **Trigger repair worker**, **Verify now**, **Re-trigger failed documents**, **Approve cleanup**, and **Preview payload** (the exact signed webhook body);
-- a documents table with *Severity, Document, Actions, Status* and five verification boxes: *All expected chunks present, Embeddings present, Latest version indexed, Metadata correct, Old vectors inactive*;
-- an **Activity** timeline.
+### Audit History
+Two tabs. **Audit runs**: every audit with when it started, its type (full, scoped, verify), trigger, scope, status, duration, documents,
+issues, health and what changed; click a run for its page (stats, what it opened and resolved, alert delivery, the error if it failed).
+**Activity log**: one chronological trail of issue events, repair events and audits, filterable by kind and searchable.
 
-### Impact & cost
-- **Safe reindex recommendation**: how many documents need a full reindex, a chunk-level reindex, a metadata fix only (no embedding), and how many superseded vectors can be removed later; the targeted token cost compared with re-embedding the whole corpus, and the percentage saved.
-- **Blast radius**: pick a scenario and press **Analyse**: *Current open issues*; *Pipeline config change* (enter an embedding model, chunking version or chunk size you plan to move to); or *Ingestion failure window* (the time the failure started). It returns documents and tenants affected, queries that touched them (from your retrieval log, last 14 days), the top affected documents by queries, and the re-embedding cost.
+### Integrations
+- **Repair webhook** (the *Repair worker* group): where RAGGuard sends signed repair requests, with the flow explained and the exact
+  headers your worker receives.
+- **API keys**: create (the token is shown once, with a copy button), see when each was last used, and revoke. Keys work only inside
+  their workspace: they can run audits and read results, but cannot read settings, create keys or change passwords.
+- **REST API**: the base address and a link to the interactive documentation at `/docs`.
+- **Connected systems**: the three connections at a glance.
+- *Slack*, *Jira* and *PagerDuty* are marked **Not available yet** (use the alert webhook to forward findings today).
 
-### Audit history
-One chronological trail of audits (completed or failed, with trigger, findings and health), issue events, and repair events.
+### Alerts
+The *Alerts* group (webhook address and minimum severity), an explanation of when alerts are sent and what they contain, and **Recent
+deliveries** from your audits (issues included, whether it was delivered, the reason or error). *Email alerts*, *per-issue-type rules*
+and *digest and quiet hours* are marked **Not available yet**.
 
 ### Settings
-Section 5. It starts with a checklist of the three required connections, then seven expandable groups, then API keys.
+Tabs: **General** (workspace, account email, server mode and version, and **Change password**, which signs out your other devices; on
+the demo server a **Reset demo data** button), **Pipeline** (the *Target pipeline* group), **Policy** (the *Audit policy* group),
+**Security** (how secrets are handled, with *two-factor authentication* and *single sign-on* marked **Not available yet**), **Team** and
+**Billing** (both **Not available yet**).
 
-### Account (your email in the header)
-Shows who you are signed in as, a **Change password** form (this signs out your other devices), and **Sign out**.
-
-*Single-user modes (demo / live) replace Settings with a read-only **Connections** tab, show a demo banner and a **Reset demo** button in demo mode, and need no sign-in.*
+*Single-user modes (demo / live) need no sign-in; their Data Sources, Integrations, Alerts and Settings pages are read-only because
+the configuration comes from the server's environment.*
 
 ---
 
 ## 5. Settings: every group and every field
 
 Three groups are **required** before the first audit: S3, Manifest and Qdrant. The other four are optional tuning.
-Every group is saved separately with **Save** (the three connections say **Save & test**: they save, then run the real connector and
-remember the result). **Test without saving** checks what is typed in the form without storing it.
+**Where each group lives in the interface:** S3, Manifest and Qdrant are on **Data Sources**; Repair worker is on **Integrations**;
+Alerts is on **Alerts**; Target pipeline and Audit policy are on **Settings** (tabs *Pipeline* and *Policy*); API keys are on
+**Integrations**. Every group is saved separately with **Save**. **Test connection** checks what is typed in the form without storing it
+(for the Repair worker and Alerts groups the button is **Check settings**: it validates the values and sends nothing), and **Test** on a
+Data Sources card re-runs the real connector against what is saved and remembers the result.
 
 How secrets behave: a field marked **secret** is encrypted at rest, is **write-only** (after saving it shows "saved" and the value never
-comes back), leaving it empty keeps the stored value, and **Remove** deletes it. Empty non-secret fields fall back to the default shown.
+comes back), leaving it empty keeps the stored value, and **Remove saved value** deletes it. Empty non-secret fields fall back to the default shown.
 Every host or URL you enter must be a **public** address (section 13).
 
 ### 5.1 Source documents (S3)
@@ -263,18 +333,18 @@ stores (Supabase Storage, MinIO, Cloudflare R2).
 
 **Permissions.** On AWS, `HeadObject` is authorised by the `s3:GetObject` permission, so the key needs **both** `s3:ListBucket` (on the
 bucket) and `s3:GetObject` (on its objects). Both are read-only and nothing is ever written. Only an `etag`-mode audit can run on
-`s3:ListBucket` alone, and even then "Save & test" and repair verification still send HEAD requests.
+`s3:ListBucket` alone, and even then "Test connection" and repair verification still send HEAD requests.
 
 **How to connect S3, step by step**
 1. In AWS: *IAM > Users > Create user*, then attach this policy (replace `YOUR-BUCKET`):
    `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:ListBucket","Resource":"arn:aws:s3:::YOUR-BUCKET"},{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::YOUR-BUCKET/*"}]}`
 2. Open that user's *Security credentials* tab, press *Create access key*, and copy the **Access key ID** and **Secret access key** (shown once).
 3. Note the bucket's **region** (for example `ap-south-1`) from the S3 console.
-4. In the app: sign in, open **Settings**, expand **Source documents (S3)** and fill **Bucket**, **Region**, **Access key ID** and **Secret access key**.
+4. In the app: sign in, open **Data Sources**, press **Configure** on **Amazon S3** and fill **Bucket**, **Region**, **Access key ID** and **Secret access key**.
    Leave **Custom endpoint** empty for AWS.
 5. Check how your keys look. The default **Key pattern** expects `tenant/path/to/document.pdf`. For a flat bucket with no tenants set it to
    `^(?P<document_id>.+)$`; to audit only a folder set **Key prefix**.
-6. Press **Save & test**. Every line should say OK; a warning or failure names exactly what to change.
+6. Press **Test connection**, then **Save**. Every line should say OK; a warning or failure names exactly what to change.
 7. Make sure your pipeline records the **same SHA-256** that **Content hash** reads (the `sha256` user-metadata key by default) as
    `source_hash` in the manifest and in each Qdrant payload.
 
@@ -297,7 +367,7 @@ and use that provider's region and access keys.
 **Important:** whatever hash you use here, your pipeline must record the **same value** as `source_hash` in the manifest and in each
 Qdrant payload, otherwise every document will look stale.
 
-**What "Save & test" checks (S3):** *Bucket reachable* (lists up to 200 keys under the prefix and explains common errors: no such bucket,
+**What "Test connection" checks (S3):** *Bucket reachable* (lists up to 200 keys under the prefix and explains common errors: no such bucket,
 access denied, bad access key, wrong secret or region, unreachable endpoint); *Documents found*; *Key pattern* (how many sampled keys
 match, with an example); *Object metadata* and *Content hashes* (how many of 5 sampled objects carry a SHA-256).
 
@@ -332,7 +402,7 @@ statement timeout. Use a database role that can only `SELECT`.
 
 **Chunk table columns:** `tenant_id`, `document_id`, `chunk_id`, `chunk_index`, `chunk_hash`.
 
-**What "Save & test" checks (manifest):** *Database reachable* (explains bad password, timeout, unresolved host, SSL); *Manifest table* (found, how many of the 21 columns are mapped); *Columns used for checks* (warns when `source_hash`, `processing_status`, `expected_chunk_count` or `indexed_chunk_count` are missing); *Rows* (up to 100,000+); *Role is read-only* (warns if your role can write); *Chunk manifest*.
+**What "Test connection" checks (manifest):** *Database reachable* (explains bad password, timeout, unresolved host, SSL); *Manifest table* (found, how many of the 21 columns are mapped); *Columns used for checks* (warns when `source_hash`, `processing_status`, `expected_chunk_count` or `indexed_chunk_count` are missing); *Rows* (up to 100,000+); *Role is read-only* (warns if your role can write); *Chunk manifest*.
 
 ### 5.3 Vector index (Qdrant)
 Your vector store. Read-only: `scroll`, `retrieve` and `query`; nothing is written or deleted.
@@ -350,7 +420,7 @@ Your vector store. Read-only: `scroll`, `retrieve` and `query`; nothing is writt
 `parser_version`, `chunking_version`, `chunk_size`, `chunk_overlap`, `embedding_model`, `embedding_model_version`, `embedding_dim`,
 `preprocessing`, `acl_hash`. At minimum put `document_id` and `source_hash` in every payload (plus `tenant_id` if you have several tenants).
 
-**What "Save & test" checks (Qdrant):** *Qdrant reachable* (explains a rejected API key, timeout, unresolved host, refused connection);
+**What "Test connection" checks (Qdrant):** *Qdrant reachable* (explains a rejected API key, timeout, unresolved host, refused connection);
 *Collections* (names any missing one); *Collection <name>* (approximate point count and vector size) and *Payload of <name>* (samples
 20 points and tells you whether `document_id` and `source_hash` are present), for up to the first 5 collections.
 
@@ -520,7 +590,7 @@ Interactive docs are at `/docs`. Authentication: **public**; **session** (signed
 
 | Method | Path | Auth | What it does |
 |---|---|---|---|
-| GET | `/` | public | the dashboard |
+| GET | `/` | public | the web interface (any other page address that is not under `/api`, `/static`, `/docs` or `/redoc` also returns it, so deep links and refresh work) |
 | GET | `/healthz` | public | liveness plus ledger reachability and whether setup is required |
 | GET | `/api/session` | public | who you are, whether sign-up is open, whether setup is required, whether your workspace is ready |
 | GET | `/api/auth` | public | legacy: whether a single-user API key is required |
@@ -572,7 +642,7 @@ Install with `pip install -e ".[dev]"`; the command is `ragi`.
 
 | Command | What it does |
 |---|---|
-| `ragi serve [--host H] [--port P] [--demo] [--app]` | run the API and dashboard (default `127.0.0.1:8000`); `--demo` the synthetic world, `--app` the multi-user mode |
+| `ragi serve [--host H] [--port P] [--demo] [--app]` | run the API and web interface (default `127.0.0.1:8000`); `--demo` the synthetic world, `--app` the multi-user mode |
 | `ragi demo [--seed N]` | seed the demo world and audit it, print a summary |
 | `ragi audit [--tenant T] [--no-probe] [--json] [--fail-on SEVERITY]` | run an audit now; with `--fail-on` it exits **2** if open issues at or above that severity remain (cron/CI gating) |
 | `ragi issues [--status S] [--severity S] [--type T] [--tenant T] [--limit N]` | list issues from the ledger |
@@ -627,7 +697,7 @@ hashes, versions, counts and evidence about them. Row-level security is on for e
 | `audit_runs` | id, workspace_id, kind, trigger, scope, status, started_at, finished_at, stats, error | each audit; a unique index allows one `running` per workspace |
 | `issues` | workspace_id, id, type, severity, status, tenant_id, document_id, collection, title, detail, evidence, action, first_seen_at, last_seen_at, first_run_id, last_run_id, resolved_at, resolved_run_id, occurrences, reopened_count, ignored_reason | the issue ledger |
 | `issue_events` | id, workspace_id, issue_id, run_id, ts, event, details | issue lifecycle trail |
-| `documents` | workspace_id, tenant_id, document_id, status, issue_count, worst_severity, issue_types, fingerprint, source_uri, source_hash, source_version, size_bytes, expected_chunks, indexed_chunks, manifest_status, manifest_updated_at, collections, source_present, manifest_present, index_present, last_verified_at, last_run_id | the latest verified state of every document |
+| `documents` | workspace_id, tenant_id, document_id, status, issue_count, worst_severity, issue_types, fingerprint, source_uri, source_hash, source_version, size_bytes, expected_chunks, indexed_chunks, manifest_status, manifest_updated_at, collections, source_present, manifest_present, index_present, last_verified_at, last_run_id, indexed_version | the latest verified state of every document |
 | `repair_plans` | id, workspace_id, status, created_at, updated_at, items, summary | repair plans |
 | `repair_events` | id, workspace_id, plan_id, ts, event, details | repair trail |
 | `query_log` | id, workspace_id, ts, tenant_id, query_hash, retrieved_doc_ids | retrieval logs (query text hashed, never stored) |
@@ -649,7 +719,7 @@ The full threat model, with what is and is not covered, is in [docs/security.md]
 - **SSRF guard**: every host a user supplies (S3 endpoint, Qdrant URL, manifest database, repair and alert webhooks) must be public. Loopback, private, link-local (including the cloud metadata address), carrier-grade NAT, IPv4-mapped IPv6, multicast and reserved ranges are refused; hostnames are resolved and every address must be public; checked when saved **and again before every connection**. URLs may not contain credentials; databases must be `postgresql://` with only `sslmode`, `connect_timeout`, `application_name` options.
 - **Read-only connectors**: S3 list/head (get only in `compute` mode); manifest queries in `READ ONLY` transactions; Qdrant scroll/retrieve/query.
 - **API keys** are hashed, revocable, and cannot read settings or mint keys.
-- **Web hardening**: strict `Content-Security-Policy` (`script-src 'self'`), `X-Frame-Options: DENY`, `nosniff`, no referrer, `no-store` on API responses; the dashboard renders every value as text (document ids come from S3 keys, so they are untrusted).
+- **Web hardening**: strict `Content-Security-Policy` (`script-src 'self'`), `X-Frame-Options: DENY`, `nosniff`, no referrer, `no-store` on API responses; the web interface renders every value as text (React escapes it; there is no raw HTML anywhere) (document ids come from S3 keys, so they are untrusted).
 
 **Not covered:** no email verification or password reset (no mail provider), no two-factor authentication, no teams or roles, and the DNS-rebinding window between validation and connection is narrow but not zero.
 
@@ -690,7 +760,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 - **Users**: `ragi users list`, `ragi users delete someone@example.com --yes`.
 - **Close sign-up**: set `RAGI_ALLOW_REGISTRATION=false`.
 - **Rotate the secret key**: set `RAGI_SECRET_KEY` to `new,old`, redeploy; stored secrets keep working and new saves use the new key.
-- **Scheduled audits**: serverless has no scheduler. Create an API key in Settings and call `POST /api/audits` from GitHub Actions or cron.
+- **Scheduled audits**: serverless has no scheduler. Create an API key on Integrations and call `POST /api/audits` from GitHub Actions or cron.
 - **Large corpora**: audit per tenant, or run `ragi audit` outside serverless.
 
 ---

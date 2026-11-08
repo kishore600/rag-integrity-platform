@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 import threading
@@ -96,8 +97,11 @@ def test_vercel_entrypoint_serves_the_dashboard_and_api(tmp_path, monkeypatch):
     spec.loader.exec_module(mod)
     try:
         c = TestClient(mod.app)
-        assert "RAG Integrity" in c.get("/").text
-        assert c.get("/static/app.js").status_code == 200
+        page = c.get("/").text
+        assert "RAGGuard" in page
+        assets = re.findall(r'(?:src|href)="(/static/assets/[^"]+\.(?:js|css))"', page)
+        assert assets and all(c.get(a).status_code == 200 for a in assets)  # the built UI ships with the function
+        assert c.get("/issues").status_code == 200 and "RAGGuard" in c.get("/issues").text  # deep links load the app
         assert c.get("/api/overview").json()["demo"] is True
         run = c.post("/api/audits", json={}).json()
         assert run["status"] == "completed"

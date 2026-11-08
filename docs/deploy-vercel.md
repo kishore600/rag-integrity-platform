@@ -1,6 +1,6 @@
 # Deploying to Vercel (multi-user app)
 
-The dashboard and API run as one FastAPI serverless function. Users sign up, then connect **their own** S3, processing manifest
+The web interface and API run as one FastAPI serverless function. Users sign up, then connect **their own** S3, processing manifest
 (Postgres) and Qdrant in *Settings*. There is no sample data: a new workspace is empty until it is connected.
 
 ## What you need

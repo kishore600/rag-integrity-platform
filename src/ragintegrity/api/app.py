@@ -365,8 +365,9 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
         out = {**base, "authenticated": p is not None, "registration_open": settings.allow_registration,
                "setup": {"required": False}, "user": None}
         if p is not None and p.via == "session":
-            assert state.manager is not None
+            assert state.manager is not None and state.accounts is not None
             out["user"] = {"email": p.email}
+            out["workspace"] = {"name": state.accounts.workspace_name(p.workspace_id) or "Workspace"}
             out["ready"] = state.manager.is_ready(p.workspace_id)
         return out
 
@@ -639,5 +640,16 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
             raise HTTPException(404, "Not available outside demo mode")
         s.demo_reset(seed=(req.seed if req else None))
         return {"ok": True}
+
+    # ------------------------------------------------------------------ single-page app fallback (must stay LAST)
+    RESERVED_PREFIXES = ("api/", "static/", "docs/", "redoc/")  # note: NOT "docs": that would swallow the /documents page
+    RESERVED_EXACT = {"api", "static", "docs", "redoc", "openapi.json", "healthz"}
+
+    @app.get("/{spa_path:path}", include_in_schema=False)
+    def spa_fallback(spa_path: str) -> FileResponse:
+        """Client-side routes (/issues, /documents/...) are served the app shell; real API/static misses stay 404s."""
+        if spa_path.startswith(RESERVED_PREFIXES) or spa_path in RESERVED_EXACT:
+            raise HTTPException(404, "Not found")
+        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
 
     return app

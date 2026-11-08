@@ -11,15 +11,22 @@ MIGRATIONS = sorted((Path(__file__).parent.parent / "supabase" / "migrations").g
 
 
 def parse_migrations() -> dict[str, list[str]]:
-    """Replay every migration in order: `create table` defines a table, `drop table` removes it."""
+    """Replay every migration in order: `create table` defines a table, `drop table` removes it, `add column` appends."""
     tables: dict[str, list[str]] = {}
     for path in MIGRATIONS:
         sql = re.sub(r"--[^\n]*", "", path.read_text(encoding="utf-8"))
         # statements in file order
-        for m in re.finditer(r"drop table if exists ([^;]+?)\s+cascade;|create table if not exists ragi\.(\w+) \((.*?)\n\);", sql, re.S):
+        pattern = (r"drop table if exists ([^;]+?)\s+cascade;"
+                   r"|create table if not exists ragi\.(\w+) \((.*?)\n\);"
+                   r"|alter table ragi\.(\w+) add column if not exists (\w+)")
+        for m in re.finditer(pattern, sql, re.S):
             if m.group(1):
                 for name in re.findall(r"ragi\.(\w+)", m.group(1)):
                     tables.pop(name, None)
+                continue
+            if m.group(4):
+                if m.group(5) not in tables[m.group(4)]:
+                    tables[m.group(4)].append(m.group(5))
                 continue
             cols = []
             for line in m.group(3).splitlines():

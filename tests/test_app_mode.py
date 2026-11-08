@@ -62,6 +62,9 @@ def test_register_sets_a_hardened_cookie_and_signs_in(client):
     assert f"{COOKIE}=" in cookie and "httponly" in cookie and "samesite=lax" in cookie and "path=/" in cookie
     s = client.get("/api/session").json()
     assert s["authenticated"] is True and s["user"]["email"] == "alice@example.com" and s["ready"] is False
+    assert s["workspace"]["name"]  # the sidebar names the signed-in workspace
+    client.post("/api/auth/logout")
+    assert "workspace" not in client.get("/api/session").json()  # nothing about a workspace leaks to a signed-out visitor
 
 
 def test_register_validation_and_duplicates(client):

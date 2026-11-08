@@ -66,6 +66,12 @@ class Accounts:
         with self.engine.begin() as c:
             c.execute(delete(self.t["rate_limits"]).where(self.t["rate_limits"].c.key == key))
 
+    def workspace_name(self, workspace_id: str) -> str | None:
+        w = self.t["workspaces"]
+        with self.engine.connect() as c:
+            row = c.execute(select(w.c.name).where(w.c.id == workspace_id)).first()
+        return row[0] if row else None
+
     # ------------------------------------------------------------------ users
     def register(self, email: str, password: str) -> dict[str, Any]:
         try:

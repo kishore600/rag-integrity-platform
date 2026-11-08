@@ -585,6 +585,8 @@ def _summarize(
         manifest_status=m.processing_status if m else None,
         manifest_updated_at=m.updated_at if m else None,
         collections=sorted(ix.collections) if ix else [],
+        # what the index really holds beats what the manifest claims; the claim is the fallback when payloads carry no version
+        indexed_version=(ix.versions.most_common(1)[0][0] if ix and ix.versions else (m.indexed_version if m else None)),
     )
 
 

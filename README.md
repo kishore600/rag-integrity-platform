@@ -12,7 +12,7 @@ It does **not** replace your ingestion pipeline. It reads your source documents 
 every inconsistency with evidence in an issue ledger, and - when you ask it to - hands a repair plan to **your own**
 worker and independently verifies the result.
 
-> **Want the complete picture?** [GUIDE.md](GUIDE.md) explains everything that was built: every dashboard tab, every
+> **Want the complete picture?** [GUIDE.md](GUIDE.md) explains everything that was built: every page of the web interface, every
 > Settings group and field, every issue type, the repair workflow, the API, the CLI, the data model, security,
 > deployment and what has (and has not) been verified.
 
@@ -26,7 +26,7 @@ worker and independently verifies the result.
                       ▼
         Reconciliation engine  (source  vs  manifest  vs  index)
                       ▼
-        Issue ledger (Supabase/Postgres)  ──►  dashboard · API · CLI · alerts
+        Issue ledger (Supabase/Postgres)  ──►  web interface · API · CLI · alerts
                       ▼
         Repair plan ──signed webhook──►  YOUR worker (the only thing that writes)
                       ▲                          │
@@ -168,7 +168,7 @@ Interactive docs at `/docs` (OpenAPI). Set `RAGI_API_KEY` to require `X-API-Key`
   the query text, never the text.
 * **Webhooks and alert URLs come from server config, not from API requests** (no SSRF through the API); payloads are
   HMAC-SHA256 signed with a timestamp (replay window 5 min); a real webhook URL without a secret is refused.
-* **Dashboard is XSS-safe by construction**: every value (document ids are attacker-influenced S3 keys) is inserted as text; strict CSP
+* **The web interface is XSS-safe by construction**: every value (document ids are attacker-influenced S3 keys) is inserted as text; strict CSP
   (`script-src 'self'`), `X-Frame-Options: DENY`, `nosniff`.
 * **Multi-user app mode** adds: scrypt-hashed passwords, hashed session tokens in `HttpOnly` `SameSite` cookies, an `Origin` check on
   cookie-authenticated writes, database-backed rate limits, per-workspace data isolation (every ledger statement is scoped to a
@@ -182,6 +182,17 @@ Interactive docs at `/docs` (OpenAPI). Set `RAGI_API_KEY` to require `X-API-Key`
 pip install -e ".[dev]"
 ruff check src tests examples api scripts
 pytest                                   # the core suite runs anywhere, no services needed (~1 min)
+```
+
+The web interface is a React + TypeScript app in [`frontend/`](frontend/). Its **built output is committed** to `src/ragintegrity/api/static/`
+(so `pip install`, Docker and Vercel need no Node step). After changing anything in `frontend/`, rebuild and commit the result:
+
+```bash
+cd frontend
+npm ci
+npm run dev        # hot-reload UI on :5173, proxying /api to a backend on :8000 (e.g. `ragi serve --demo`)
+npm run typecheck
+npm run build      # writes ../src/ragintegrity/api/static (CI fails if the committed build is stale)
 ```
 
 Some tests need real services and skip themselves unless pointed at them (CI provides all of them):
