@@ -143,6 +143,10 @@ SPECS: dict[str, Spec] = {
             Field("default_tenant", "default_tenant", "Default tenant", help="Assumed when a payload or row has no tenant.", max_len=64),
             Field("required_payload_fields", "required_payload_fields", "Required payload fields", type="csv",
                   help="Default: document_id, source_hash (plus tenant_id once there are several tenants)."),
+            Field("source_documents_only", "source_documents_only", "Only audit documents found in the source (S3)", type="bool",
+                  help="The S3 key pattern decides which files count. Manifest rows and vectors for any other document are ignored, "
+                       "and only the matching Qdrant points are read (fast on large shared collections). "
+                       "Left-over vectors and manifest rows for deleted files are then not reported."),
             Field("embedding_price_per_mtok", "embedding_price_per_mtok", "Embedding price (USD per 1M tokens)", type="float", min=0, max=10_000),
             Field("chunk_size_tokens", "chunk_size_tokens", "Tokens per chunk (for estimates)", type="int", min=1, max=100_000),
         ),

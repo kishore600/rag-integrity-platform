@@ -38,9 +38,13 @@ chunking_version, chunk_size, chunk_overlap, embedding_model, embedding_model_ve
 expected_chunk_count, indexed_chunk_count, indexed_version, processing_status, last_verified_at, updated_at, acl_hash`.
 
 Add `RAGI_MANIFEST_CHUNK_TABLE` (columns `tenant_id, document_id, chunk_id, chunk_index, chunk_hash`) to learn *which*
-chunks are missing. Status values recognised: success-like (`success, indexed, completed, done, ready, ok, processed`),
-in-flight (`pending, queued, processing, running, indexing, ...`), failed-like (`failed, error`), deleted (`deleted,
-tombstoned`).
+chunks are missing. Status values recognised: success-like (`success, indexed, completed, done, ready, ok, processed, true`;
+`true` lets a boolean `is_indexed` column be mapped as the status), in-flight (`pending, queued, processing, running,
+indexing, ...`), failed-like (`failed, error`), deleted (`deleted, tombstoned`).
+
+Set `RAGI_SOURCE_DOCUMENTS_ONLY=true` when the manifest or the vector index is shared with more than the bucket covers: the
+S3 inventory (chosen by `RAGI_S3_KEY_PATTERN`) then defines the corpus, other manifest rows and vectors are ignored, and only
+the matching points are read from Qdrant with a server-side filter. Left-over-vector findings are not produced in this mode.
 
 Use a database role that can only `SELECT`; the connector additionally opens every transaction `READ ONLY`.
 

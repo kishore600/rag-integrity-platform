@@ -70,9 +70,17 @@ class S3Source:
     def to_key(self, tenant: str, doc: str) -> str:
         return f"{self.prefix}{tenant}/{doc}" if self.has_tenant_group else f"{self.prefix}{doc}"
 
+    def _addressable(self, keys: Any) -> bool:
+        """Exact-key lookups only work when the key pattern can be reversed (``<tenant>/<doc>`` or just ``<doc>``).
+
+        With a layout such as ``bills/<bill>/<file>.pdf`` the object key cannot be rebuilt from the document id, so scoped
+        runs list the prefix and filter instead of guessing keys (a wrong guess would look like a deleted file)."""
+        return all(self.parse_key(self.to_key(t, d)) == (t, d) for t, d in keys)
+
     # --------------------------------------------------------------------------------- inventory
     def inventory(self, scope: Scope | None = None) -> Iterator[SourceDoc]:
-        if scope is not None and scope.keys is not None and len(scope.keys) <= DIRECT_HEAD_LIMIT:
+        if (scope is not None and scope.keys is not None and len(scope.keys) <= DIRECT_HEAD_LIMIT
+                and self._addressable(scope.keys)):
             yield from self._direct(scope)
             return
         prefix = self.prefix

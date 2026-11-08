@@ -35,7 +35,8 @@ from .index_state import (
     IndexAggregator,
 )
 
-SUCCESS_STATUSES = frozenset({"success", "succeeded", "indexed", "completed", "complete", "done", "ready", "ok", "processed"})
+SUCCESS_STATUSES = frozenset({"success", "succeeded", "indexed", "completed", "complete", "done", "ready", "ok", "processed",
+                              "true"})  # "true": a boolean is_indexed column mapped as the status
 INFLIGHT_STATUSES = frozenset({"pending", "queued", "processing", "running", "in_progress", "indexing", "parsing", "embedding"})
 FAILED_STATUSES = frozenset({"failed", "error", "errored", "failure"})
 DELETED_STATUSES = frozenset({"deleted", "tombstoned", "removed"})

@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     sync_audits: bool = False  # run API-started audits inside the request (automatic on Vercel/serverless)
     grace_minutes: int = 10  # don't flag documents that are probably still being ingested
     required_payload_fields: str = ""  # comma separated; default document_id,source_hash(+tenant_id if multi-tenant)
+    source_documents_only: bool = False  # audit only documents found in S3; ignore other manifest rows / vectors (and read only theirs)
 
     # --- source: S3 -------------------------------------------------------------------------
     s3_bucket: str | None = None

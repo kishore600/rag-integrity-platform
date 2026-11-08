@@ -16,7 +16,7 @@ from ..models import ConnectionStatus, IndexedChunk, Scope
 from .base import ConnectorError
 from .payload import build_payload_map, payload_to_chunk
 
-FILTER_DOCS_LIMIT = 1000
+FILTER_BATCH = 5000  # document ids per server-side filter (each batch is one scroll pass over the collection)
 
 
 def _coerce_id(point_id: str) -> Any:
@@ -26,6 +26,9 @@ def _coerce_id(point_id: str) -> Any:
 def _explain_qdrant(exc: Exception) -> str:
     msg = str(exc)
     low = msg.lower()
+    if "index required" in low:
+        return ("Qdrant needs a payload index on the field used to filter by document (strict mode). Ask the cluster owner to create a "
+                "keyword index on it, or turn off 'Only audit documents found in the source (S3)'.")
     if "403" in msg or "forbidden" in low or "401" in msg or "unauthorized" in low:
         return "Qdrant rejected the API key (a read-capable key is required)."
     if "timed out" in low or "timeout" in low:
@@ -80,42 +83,47 @@ class QdrantIndex:
     def _top_level(self, path: str) -> str:
         return path.split(".")[0]
 
-    def _filter(self, scope: Scope | None) -> Any:
+    def _filters(self, scope: Scope | None) -> list[Any]:
+        """Server-side filters for a scope. A long document list is split into batches (a document id is in exactly one batch)."""
         if scope is None or scope.is_full:
-            return None
+            return [None]
         from qdrant_client import models as qm
 
-        must: list[Any] = []
+        base: list[Any] = []
         if scope.tenant:
-            must.append(qm.FieldCondition(key=self.pmap["tenant_id"], match=qm.MatchValue(value=scope.tenant)))
-        if scope.keys is not None and len(scope.keys) <= FILTER_DOCS_LIMIT:
-            docs = sorted({d for _, d in scope.keys})
-            must.append(qm.FieldCondition(key=self.pmap["document_id"], match=qm.MatchAny(any=docs)))
-        return qm.Filter(must=must) if must else None
+            base.append(qm.FieldCondition(key=self.pmap["tenant_id"], match=qm.MatchValue(value=scope.tenant)))
+        if scope.keys is None:
+            return [qm.Filter(must=base)] if base else [None]
+        docs = sorted({d for _, d in scope.keys})
+        return [
+            qm.Filter(must=[*base, qm.FieldCondition(key=self.pmap["document_id"], match=qm.MatchAny(any=docs[i:i + FILTER_BATCH]))])
+            for i in range(0, len(docs), FILTER_BATCH)
+        ]  # no documents -> no filters -> nothing to read
 
     def scan(self, scope: Scope | None = None, with_vectors: bool = False) -> Iterator[IndexedChunk]:
         include = sorted({self._top_level(p) for p in self.pmap.values()})
-        flt = self._filter(scope)
         vectors_arg: Any = [self.vector_name] if (with_vectors and self.vector_name) else with_vectors
-        for coll in self.collections():
-            offset = None
-            while True:
-                points, offset = self.client.scroll(
-                    collection_name=coll, scroll_filter=flt, limit=self.s.qdrant_page_size, offset=offset,
-                    with_payload=include, with_vectors=vectors_arg,
-                )
-                for p in points:
-                    chunk = payload_to_chunk(
-                        coll, p.id, p.payload, self.pmap, vector=getattr(p, "vector", None),
-                        check_vector=with_vectors, vector_name=self.vector_name,
+        collections = self.collections()
+        for flt in self._filters(scope):
+            for coll in collections:
+                offset = None
+                while True:
+                    points, offset = self.client.scroll(
+                        collection_name=coll, scroll_filter=flt, limit=self.s.qdrant_page_size, offset=offset,
+                        with_payload=include, with_vectors=vectors_arg,
                     )
-                    if scope is not None and not scope.is_full and chunk.document_id:
-                        key = (chunk.tenant_id or self.s.default_tenant, chunk.document_id)
-                        if not scope.matches(key):
-                            continue
-                    yield chunk
-                if offset is None:
-                    break
+                    for p in points:
+                        chunk = payload_to_chunk(
+                            coll, p.id, p.payload, self.pmap, vector=getattr(p, "vector", None),
+                            check_vector=with_vectors, vector_name=self.vector_name,
+                        )
+                        if scope is not None and not scope.is_full and chunk.document_id:
+                            key = (chunk.tenant_id or self.s.default_tenant, chunk.document_id)
+                            if not scope.matches(key):
+                                continue
+                        yield chunk
+                    if offset is None:
+                        break
 
     # --------------------------------------------------------------------------------- probe
     def probe(

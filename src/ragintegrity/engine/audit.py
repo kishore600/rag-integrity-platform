@@ -32,6 +32,7 @@ class AuditOptions:
     known_tenants: set[str] = field(default_factory=set)  # tenants seen in earlier runs (keeps scoped runs consistent)
     grace_minutes: int = 0
     check_vectors: bool = False
+    source_only: bool = False  # the source inventory defines the corpus: ignore manifest rows / vectors for anything else
     probe: bool = True
     probe_max: int = 25
     probe_top_k: int = 10
@@ -69,16 +70,27 @@ def collect(
     dl = opts.deadline
     src = {d.key: d for d in _guard(source.inventory(scope), dl, "the source bucket")}  # first: the index scan classifies against it
     man = {r.key: r for r in _guard(manifest.documents(scope), dl, "the processing manifest")}
+    scan_scope, scan_nothing = scope, False
+    if opts.source_only:
+        man = {k: r for k, r in man.items() if k in src}
+        if scope is None or scope.keys is None:
+            if src:  # read only the points of known documents (server-side filter) instead of the whole collection
+                scan_scope = Scope(tenant=scope.tenant if scope else None, keys=frozenset(src))
+            else:
+                scan_nothing = True
     chunk_rows: dict[DocKey, dict[str, ChunkRow]] | None = None
     if manifest.has_chunk_manifest:
         chunk_rows = defaultdict(dict)
         for c in _guard(manifest.chunks(scope), dl, "the chunk manifest"):
+            if opts.source_only and (c.tenant_id, c.document_id) not in src:
+                continue
             chunk_rows[(c.tenant_id, c.document_id)][c.chunk_id] = c
     required = derive_required_fields(opts.required_fields, {k[0] for k in src} | opts.known_tenants)
     ctx = AggContext(source=src, manifest=man, target=opts.target, default_tenant=opts.default_tenant,
                      required_fields=required)
     agg = IndexAggregator(ctx)
-    agg.add_all(_guard(index.scan(scope, with_vectors=opts.check_vectors), dl, "the vector index"))
+    if not scan_nothing:
+        agg.add_all(_guard(index.scan(scan_scope, with_vectors=opts.check_vectors), dl, "the vector index"))
     return Collected(src, man, chunk_rows, agg, required)
 
 
@@ -98,6 +110,8 @@ def run_reconciliation(
     c = collect(source, manifest, index, opts, scope)
     result = reconcile(c.source, c.manifest, c.chunk_rows, c.agg, _config(index, opts, c.required), scope)
     result.stats["required_payload_fields"] = c.required
+    if opts.source_only:
+        result.stats["source_documents_only"] = True
     if opts.probe and result.findings:
         result.stats["retrieval_probes"] = probe_findings(
             index, result.findings, top_k=opts.probe_top_k, max_probes=opts.probe_max)

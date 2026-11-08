@@ -53,6 +53,15 @@ def test_scoped_scans_use_real_server_side_filters(world):
     assert list(idx.scan(Scope(keys=frozenset({("nobody", "nothing.md")})))) == []
 
 
+def test_a_long_document_list_is_read_in_filtered_batches_without_duplicates(world, monkeypatch):
+    monkeypatch.setattr("ragintegrity.connectors.qdrant.FILTER_BATCH", 2)  # 5 documents -> 3 real filtered scroll passes
+    keys = frozenset(list(world.sources)[:5])
+    pts = list(QdrantIndex(settings()).scan(Scope(keys=keys)))
+    ids = [p.point_id for p in pts]
+    expected = {pid for pid, sp in world.points.items() if (sp.payload["tenant_id"], sp.payload["document_id"]) in keys}
+    assert expected and len(ids) == len(set(ids)) and set(ids) == expected
+
+
 def test_empty_embeddings_are_found_when_vectors_are_fetched(world):
     idx = QdrantIndex(settings())
     bad = [p for p in idx.scan(with_vectors=True) if p.vector_checked and not p.vector_ok]

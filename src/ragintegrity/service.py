@@ -106,7 +106,7 @@ class IntegrityService:
         return AuditOptions(
             target=s.target_fingerprint(), default_tenant=s.default_tenant, required_fields=s.required_fields,
             known_tenants=self.ledger.known_tenants(), grace_minutes=s.grace_minutes,
-            check_vectors=s.qdrant_check_vectors or s.is_demo,
+            check_vectors=s.qdrant_check_vectors or s.is_demo, source_only=s.source_documents_only,
             probe=s.probe_retrieval if probe is None else probe, probe_max=s.probe_max, probe_top_k=s.probe_top_k,
             deadline=(time.monotonic() + limit) if limit else None,
         )

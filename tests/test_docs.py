@@ -11,6 +11,8 @@ import argparse
 import re
 from pathlib import Path
 
+import pytest
+
 from ragintegrity.api.app import create_app
 from ragintegrity.cli import build_parser
 from ragintegrity.config import Settings
@@ -83,6 +85,16 @@ def test_every_route_is_documented():
     }
     gap = missing(f"`{p}`" for p in paths)
     assert not gap, f"undocumented routes: {gap}"
+
+
+def test_every_page_in_the_menu_has_a_section():
+    nav = ROOT / "frontend" / "src" / "components" / "layout" / "nav.ts"
+    if not nav.exists():
+        pytest.skip("the web interface sources are not part of this checkout")
+    labels = re.findall(r'label:\s*"([^"]+)"', nav.read_text(encoding="utf-8"))
+    assert len(labels) >= 9
+    gap = [label for label in labels if f"### {label}\n" not in GUIDE]
+    assert not gap, f"menu pages without a '### <page>' section in GUIDE.md: {gap}"
 
 
 def test_every_cli_command_is_documented():

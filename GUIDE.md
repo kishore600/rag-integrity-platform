@@ -179,7 +179,7 @@ row in `issue_events`.
 
 ### 3.8 Recognised manifest status values
 The engine treats these `processing_status` values (case-insensitive) as: **success** - `success, succeeded, indexed, completed,
-complete, done, ready, ok, processed`; **in flight** - `pending, queued, processing, running, in_progress, indexing, parsing,
+complete, done, ready, ok, processed, true` (so a true/false column such as `is_indexed` can be mapped as the status); **in flight** - `pending, queued, processing, running, in_progress, indexing, parsing,
 embedding`; **failed** - `failed, error, errored, failure`; **deleted** - `deleted, tombstoned, removed`.
 
 ---
@@ -311,6 +311,19 @@ the demo server a **Reset demo data** button), **Pipeline** (the *Target pipelin
 
 *Single-user modes (demo / live) need no sign-in; their Data Sources, Integrations, Alerts and Settings pages are read-only because
 the configuration comes from the server's environment.*
+
+### Every checkbox, switch and radio button
+Only a handful of controls are tick-boxes; everything else is a drop-down, a clickable severity chip, a tab, a text box or a button.
+
+| Control | Where | What it does |
+|---|---|---|
+| Row checkboxes, and the header checkbox "Select all N issues" | Integrity Issues, *Issues* tab | Tick issues, then **Create repair plan** (open issues on a specific document only) or **Ignore** them together. |
+| **Probe retrieval for the worst findings** (switch, on by default) | Reconciliation, **Scoped audit** | Also queries the live index to confirm that the most serious findings really affect search results. Slower, more convincing. |
+| **Detect empty embeddings** (switch, off by default) | Data Sources, Qdrant card, **Configure** / **Edit** | Also fetches the vectors to find empty or all-zero embeddings. Slower and heavier for Qdrant. |
+| **Only audit documents found in the source (S3)** (switch, off by default) | Settings, *Policy* tab | The S3 key pattern decides which documents count; manifest rows and vectors for anything else are ignored, and only the matching Qdrant points are read (section 5.7, 5.10). |
+| **Scenario**: *Open issues*, *Pipeline change*, *Ingestion failure* (radio buttons) | Integrity Issues, *Impact analysis* tab | Chooses which what-if to analyse (section 8). |
+
+A switch only takes effect after **Save**.
 
 ---
 
@@ -460,6 +473,7 @@ Your own ingestion worker. The platform never writes to your systems: approved r
 | **Grace period (minutes)** | 10 | 0 to 1,440. Documents modified or being processed within this window are `pending`, not broken. |
 | **Default tenant** | `default` | Assumed when a Qdrant payload or manifest row has no tenant. |
 | **Required payload fields** | empty | Comma-separated. Empty means `document_id` and `source_hash`, plus `tenant_id` once more than one tenant exists. A vector missing a required field raises a metadata finding. |
+| **Only audit documents found in the source (S3)** | off | When on, the S3 inventory defines the corpus (the **Key pattern** chooses which files count). Manifest rows and vectors for any other document are ignored, and only the matching Qdrant points are read with a server-side filter instead of scanning the whole collection. Use it when the manifest or the index is shared with more than the bucket covers. Trade-off: left-over vectors (`orphan_vector`), manifest rows for deleted files (`manifest_orphan`) and wrong-tenant vectors (`tenant_mismatch`) are then not reported. |
 | **Embedding price (USD per 1M tokens)** | 0.13 | Used only for cost estimates. |
 | **Tokens per chunk (for estimates)** | 512 | Used only for cost estimates. |
 
@@ -510,11 +524,43 @@ settings, create keys or change passwords. Up to 20 keys per workspace; **Revoke
 | policy | Grace period (minutes) | `grace_minutes` | `RAGI_GRACE_MINUTES` | integer |
 | policy | Default tenant | `default_tenant` | `RAGI_DEFAULT_TENANT` | text |
 | policy | Required payload fields | `required_payload_fields` | `RAGI_REQUIRED_PAYLOAD_FIELDS` | comma list |
+| policy | Only audit documents found in the source (S3) | `source_documents_only` | `RAGI_SOURCE_DOCUMENTS_ONLY` | on/off |
 | policy | Embedding price (USD per 1M tokens) | `embedding_price_per_mtok` | `RAGI_EMBEDDING_PRICE_PER_MTOK` | number |
 | policy | Tokens per chunk (for estimates) | `chunk_size_tokens` | `RAGI_CHUNK_SIZE_TOKENS` | integer |
 
 In `app` mode a workspace's unset fields use the defaults above and **never** the server's environment, so one deployment's environment
 cannot leak into a user's connections.
+
+### 5.10 Worked example: audit only part of a shared index (bills)
+**The situation.** S3 holds `bills/<bill number>/<document number>.pdf`. The manifest table `bill_documents` has `external_bill_id`,
+`external_doc_id`, `s3_url` and a true/false `is_indexed`. One Qdrant collection, `bill_chunks`, holds millions of points from many
+states and years; each point names its bill in `source_id`, and some also carry `doc_version`.
+
+**What lines up.** For the `prefiled` documents the file name equals the folder name, and `external_doc_id`, `external_bill_id` and
+Qdrant's `source_id` are the same number, so those documents can be audited exactly. For every other document type Qdrant only knows
+the bill (its `doc_version` did not match `external_doc_id`), so they cannot be matched one to one.
+
+| Where | Setting | Value |
+|---|---|---|
+| S3 | Bucket / Region | `billflo-ai-development` / `us-west-1` |
+| S3 | Key prefix | `bills/` |
+| S3 | Key pattern | `^(?P<document_id>[^/]+)/(?P=document_id)\.pdf$` (folder name equals file name, so only those files count) |
+| S3 | Content hash | `etag` (no per-file HEAD requests; Qdrant has no `source_hash` to compare with anyway) |
+| Manifest | Document table | `bill_documents` |
+| Manifest | Column map | `{"document_id":"external_doc_id","source_uri":"s3_url","processing_status":"is_indexed"}` |
+| Qdrant | Collections | `bill_chunks` |
+| Qdrant | Payload field map | `{"document_id":"source_id"}` (do not map `tenant_id`; S3 and the manifest have no state) |
+| Audit policy | Only audit documents found in the source (S3) | on |
+
+**What it reports.** A document with a file in S3 and no points in Qdrant is `missing_embedding`, **critical** when `is_indexed` is
+true (the pipeline claimed success), otherwise high. Duplicate chunks, empty embeddings and metadata problems are found as usual.
+
+**What it cannot report here.** Changed files (no `source_hash` in Qdrant or the manifest), half-indexed documents (no chunk counts),
+and left-over vectors for deleted files (switched off by the option, because the collection holds far more than the bucket).
+
+**Speed.** Only the points of the listed documents are read, using a server-side filter on `source_id`. If Qdrant is in strict mode it
+refuses to filter on a field without a payload index (the message says so); ask the cluster owner to create a keyword index on
+`source_id`. On the hosted site an audit must finish in about 50 seconds; for a very large corpus run `ragi audit` instead.
 
 ---
 
@@ -768,7 +814,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 ## 15. Verification status
 
 **Verified** (and how):
-- **207 tests.** On a plain checkout with no external services **185 pass and 22 skip** (checked on the pushed commit). The 22 skipped need real servers; when every real service was attached, all 197 tests that existed at the time passed (before the 10 guide tests were added). Per file: accounts 22, api 15, app connectors 4, app mode 46, connectors 19, docs 10, engine 11, live mode 6, Postgres integration 5, real Qdrant 8, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15.
+- **236 tests.** On a plain checkout with no external services **213 pass and 23 skip** (checked before publishing). The 23 skipped need real servers; the real Qdrant server tests (9) and the new source-only tests (13) all pass against a real local Qdrant, and when every real service was attached earlier, all the tests that existed then passed. Per file: accounts 22, api 29, app connectors 4, app mode 46, connectors 19, docs 11, engine 11, live mode 6, Postgres integration 5, real Qdrant 9, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13.
 - The engine finds **exactly** the injected faults (compared with ground truth) in the in-memory demo *and* through the real connector code.
 - A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics.
 - A **real Postgres engine**: both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.
