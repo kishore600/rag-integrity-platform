@@ -228,7 +228,7 @@ def _explain_s3(exc: Exception) -> str:
     code = getattr(exc, "response", {}).get("Error", {}).get("Code")
     hints = {
         "NoSuchBucket": "The bucket does not exist (check the name and region/endpoint).",
-        "AccessDenied": "Access denied: the key needs s3:ListBucket on the bucket (and s3:GetObject only for 'compute' hashing).",
+        "AccessDenied": "Access denied: the key needs s3:ListBucket on the bucket and s3:GetObject on its objects (AWS requires GetObject for the HEAD requests that read content hashes). Both are read-only.",
         "InvalidAccessKeyId": "The access key ID is not recognised by this endpoint.",
         "SignatureDoesNotMatch": "The secret access key is wrong, or the region does not match the bucket.",
         "403": "Access denied: check the access key permissions.",

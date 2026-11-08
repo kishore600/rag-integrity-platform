@@ -261,13 +261,33 @@ Every host or URL you enter must be a **public** address (section 13).
 Where your documents live. Read-only: `list` and `head`, plus `get` only in `compute` hash mode. Works with AWS S3 and S3-compatible
 stores (Supabase Storage, MinIO, Cloudflare R2).
 
+**Permissions.** On AWS, `HeadObject` is authorised by the `s3:GetObject` permission, so the key needs **both** `s3:ListBucket` (on the
+bucket) and `s3:GetObject` (on its objects). Both are read-only and nothing is ever written. Only an `etag`-mode audit can run on
+`s3:ListBucket` alone, and even then "Save & test" and repair verification still send HEAD requests.
+
+**How to connect S3, step by step**
+1. In AWS: *IAM > Users > Create user*, then attach this policy (replace `YOUR-BUCKET`):
+   `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:ListBucket","Resource":"arn:aws:s3:::YOUR-BUCKET"},{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::YOUR-BUCKET/*"}]}`
+2. Open that user's *Security credentials* tab, press *Create access key*, and copy the **Access key ID** and **Secret access key** (shown once).
+3. Note the bucket's **region** (for example `ap-south-1`) from the S3 console.
+4. In the app: sign in, open **Settings**, expand **Source documents (S3)** and fill **Bucket**, **Region**, **Access key ID** and **Secret access key**.
+   Leave **Custom endpoint** empty for AWS.
+5. Check how your keys look. The default **Key pattern** expects `tenant/path/to/document.pdf`. For a flat bucket with no tenants set it to
+   `^(?P<document_id>.+)$`; to audit only a folder set **Key prefix**.
+6. Press **Save & test**. Every line should say OK; a warning or failure names exactly what to change.
+7. Make sure your pipeline records the **same SHA-256** that **Content hash** reads (the `sha256` user-metadata key by default) as
+   `source_hash` in the manifest and in each Qdrant payload.
+
+For an S3-compatible store set **Custom endpoint** to the provider's S3 URL (Supabase Storage: `https://<project-ref>.supabase.co/storage/v1/s3`)
+and use that provider's region and access keys.
+
 | Field | Required | Secret | Default | What it means and what it changes |
 |---|---|---|---|---|
 | **Bucket** | yes | no | none | The bucket to audit. |
 | **Key prefix** | no | no | empty | Only keys under this prefix are audited. It is removed before the key pattern is applied, and scoped audits rebuild keys as `<prefix><tenant>/<document>`. |
 | **Region** | no | no | none | The signing region (for example `us-east-1`). For S3-compatible stores use that provider's region (Supabase: your project's region). |
 | **Custom endpoint** | no | no | none | Leave empty for AWS S3. For an S3-compatible store set its endpoint, for example `https://<ref>.supabase.co/storage/v1/s3`. When set, path-style addressing is used. Must be a public host. |
-| **Access key ID** | yes | **yes** | none | The access key. It needs `s3:ListBucket`, and `s3:GetObject` only if you choose the `compute` hash mode. |
+| **Access key ID** | yes | **yes** | none | The access key. Its user needs `s3:ListBucket` on the bucket **and** `s3:GetObject` on its objects (AWS authorises the HEAD requests that read hashes with `GetObject`). |
 | **Secret access key** | yes | **yes** | none | The matching secret. |
 | **Content hash** | no | no | `metadata` | How the content hash of each document is obtained. `metadata`: use the SHA-256 stored with the object (user-metadata key below, or S3's own SHA-256 checksum); one HEAD request per object, fast. `compute`: download each object and hash it here (always correct, costs egress and time; contents are discarded, never stored). `etag`: use the ETag; **multipart ETags are not content hashes**, so those documents are flagged "hash unreliable" and stale findings are downgraded to medium. |
 | **SHA-256 metadata key** | no | no | `sha256` | The user-metadata key that holds the hex SHA-256 (case-insensitive). If an object has none, S3's `ChecksumSHA256` is used, then the ETag (flagged). |
