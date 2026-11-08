@@ -148,7 +148,8 @@ above, red below.
 
 ### 3.4 What an audit does, step by step
 1. Take a lock: **one audit at a time per workspace**, enforced by a database index (so it holds across serverless instances). A run
-   that crashed and has been "running" for over 15 minutes is retired automatically.
+   that crashed and has been "running" for over 15 minutes (for example a serverless function that was killed before it could record a
+   result) is marked failed ("abandoned") automatically the next time the app checks, so it cannot keep **Run audit** disabled.
 2. Read the **source inventory** from S3 (keys, sizes, modified times, content hashes).
 3. Read the **manifest rows** (and the chunk manifest if configured).
 4. **Scan the vector index** page by page, classifying every point as above. Memory stays proportional to the corpus, not to scan buffers.
@@ -568,7 +569,9 @@ and left-over vectors for deleted files (switched off by the option, because the
 
 **Speed.** Only the points of the listed documents are read, using a server-side filter on `source_id`. If Qdrant is in strict mode it
 refuses to filter on a field without a payload index (the message says so); ask the cluster owner to create a keyword index on
-`source_id`. On the hosted site an audit must finish in about 50 seconds; for a very large corpus run `ragi audit` instead.
+`source_id`. On the hosted site an audit must finish in about 50 seconds, and one Qdrant request may take at most 30 seconds, so a
+slow unindexed filter fails with a clear message ("Qdrant timed out ... create a keyword index") instead of hanging. For a very large
+corpus run `ragi audit` instead.
 
 ---
 
@@ -822,7 +825,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 ## 15. Verification status
 
 **Verified** (and how):
-- **236 tests.** On a plain checkout with no external services **213 pass and 23 skip** (checked before publishing). The 23 skipped need real servers; the real Qdrant server tests (9) and the new source-only tests (13) all pass against a real local Qdrant, and when every real service was attached earlier, all the tests that existed then passed. Per file: accounts 22, api 29, app connectors 4, app mode 46, connectors 19, docs 11, engine 11, live mode 6, Postgres integration 5, real Qdrant 9, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13.
+- **242 tests.** On a plain checkout with no external services **219 pass and 23 skip** (checked before publishing). The 23 skipped need real servers; the real Qdrant server tests (9) and the source-only tests (13) all pass against a real local Qdrant, and when every real service was attached earlier, all the tests that existed then passed. Per file: accounts 22, api 31, app connectors 4, app mode 46, connectors 19, docs 11, engine 11, live mode 6, Postgres integration 5, real Qdrant 9, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4.
 - The engine finds **exactly** the injected faults (compared with ground truth) in the in-memory demo *and* through the real connector code.
 - A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics.
 - A **real Postgres engine**: both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.

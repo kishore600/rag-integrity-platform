@@ -32,7 +32,9 @@ def _explain_qdrant(exc: Exception) -> str:
     if "403" in msg or "forbidden" in low or "401" in msg or "unauthorized" in low:
         return "Qdrant rejected the API key (a read-capable key is required)."
     if "timed out" in low or "timeout" in low:
-        return "Connection timed out: check the URL and port (Qdrant Cloud uses https://<cluster>:6333)."
+        return ("Qdrant timed out. Check the URL and port (Qdrant Cloud uses https://<cluster>:6333). On a very large collection, "
+                "filtering by a field that has no payload index is slow: ask the cluster owner to create a keyword index on the "
+                "document id field (for example source_id).")
     if "name or service not known" in low or "getaddrinfo" in low or "nodename nor servname" in low:
         return "The host name could not be resolved."
     if "connection refused" in low or "connecterror" in low:
@@ -40,6 +42,15 @@ def _explain_qdrant(exc: Exception) -> str:
     if "not found" in low or "doesn't exist" in low:
         return "Not found: check the collection name."
     return f"{type(exc).__name__}: {msg[:160]}"
+
+
+def client_timeout(settings: Settings, fast: bool) -> int:
+    """Seconds one Qdrant request may take. Under a time budget (serverless) a single slow request must fail with a clear
+    message well before the platform kills the whole function, which would leave the run marked 'running' forever."""
+    if fast:
+        return 8
+    limit = settings.audit_seconds_limit
+    return max(10, min(60, limit - 20)) if limit else 60
 
 
 class QdrantIndex:
@@ -54,8 +65,8 @@ class QdrantIndex:
             from qdrant_client import QdrantClient
 
             # check_compatibility=False: no extra round trip (and no warning) just to read the server version
-            client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key, timeout=8 if fast else 60,
-                                  check_compatibility=False)
+            client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key,
+                                  timeout=client_timeout(settings, fast), check_compatibility=False)
         self.client = client
         self._names = settings.collections
 

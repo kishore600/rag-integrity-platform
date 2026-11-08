@@ -182,7 +182,11 @@ class IntegrityService:
     def audit_running(self) -> bool:
         if self._lock.locked():
             return True
-        return bool(self.ledger.list_runs(limit=1, status="running"))  # another process may be running one
+        running = self.ledger.list_runs(limit=1, status="running")  # another process may be running one
+        if running and self.ledger.retire_stale_runs():
+            # a run whose process was killed never records a result; without this the button would stay disabled forever
+            running = self.ledger.list_runs(limit=1, status="running")
+        return bool(running)
 
     # ------------------------------------------------------------------ bootstrap / demo
     def ensure_ready(self) -> None:

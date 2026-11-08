@@ -333,14 +333,22 @@ class Ledger:
                 c.execute(delete(self.t[name]).where(self._w(name)))
 
     # ------------------------------------------------------------------ runs
+    def retire_stale_runs(self) -> int:
+        """Mark runs whose process died (a killed serverless function never records a result) as failed, so they cannot
+        block the workspace forever. Returns how many were retired."""
+        runs = self.t["audit_runs"]
+        now = utcnow()
+        with self.engine.begin() as c:
+            res = c.execute(update(runs).where(self._w("audit_runs"), runs.c.status == "running",
+                                               runs.c.started_at < now - timedelta(seconds=STALE_RUN_SECONDS))
+                            .values(status="failed", finished_at=now, error="abandoned: the process running it stopped"))
+        return res.rowcount or 0
+
     def start_run(self, kind: str, trigger: str, scope: Scope | None) -> str:
         run_id = str(uuid.uuid4())
         runs = self.t["audit_runs"]
         now = utcnow()
-        with self.engine.begin() as c:  # retire runs whose process died, so they cannot block the workspace forever
-            c.execute(update(runs).where(self._w("audit_runs"), runs.c.status == "running",
-                                         runs.c.started_at < now - timedelta(seconds=STALE_RUN_SECONDS))
-                      .values(status="failed", finished_at=now, error="abandoned: the process running it stopped"))
+        self.retire_stale_runs()
         try:
             with self.engine.begin() as c:
                 c.execute(insert(runs).values(
