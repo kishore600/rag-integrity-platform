@@ -678,7 +678,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 ## 15. Verification status
 
 **Verified** (and how):
-- **197 tests pass** with every real service attached; **175 pass and 22 skip** with none. Per file: accounts 22, api 15, app connectors 4, app mode 46, connectors 19, engine 11, live mode 6, Postgres integration 5, real Qdrant 8, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15.
+- **207 tests.** On a plain checkout with no external services **185 pass and 22 skip** (checked on the pushed commit). The 22 skipped need real servers; when every real service was attached, all 197 tests that existed at the time passed (before the 10 guide tests were added). Per file: accounts 22, api 15, app connectors 4, app mode 46, connectors 19, docs 10, engine 11, live mode 6, Postgres integration 5, real Qdrant 8, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15.
 - The engine finds **exactly** the injected faults (compared with ground truth) in the in-memory demo *and* through the real connector code.
 - A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics.
 - A **real Postgres engine**: both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.
