@@ -69,7 +69,9 @@ export function AppShell() {
   }, [pathname]);
 
   return (
-    <div className="flex h-full bg-app">
+    // `relative overflow-hidden`: the shell is exactly the window. Without it, absolutely positioned helpers inside the scrolling
+    // content (sr-only text) are measured against the whole page and make the *document* scroll, clipping the sidebar.
+    <div className="relative flex h-full overflow-hidden bg-app">
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[70] focus:rounded-control focus:bg-brand focus:px-3 focus:py-2 focus:text-white">
         Skip to content
       </a>
@@ -86,7 +88,7 @@ export function AppShell() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar onMenu={() => setMenu(true)} />
-        <main id="main" ref={main} className="min-h-0 flex-1 overflow-y-auto">
+        <main id="main" ref={main} className="relative min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
             <DemoBanner />
             <Suspense fallback={<PageFallback />}>
