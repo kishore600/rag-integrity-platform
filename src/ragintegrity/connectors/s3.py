@@ -17,14 +17,15 @@ from __future__ import annotations
 import base64
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timezone
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from ..config import Settings
 from ..models import ConnectionStatus, Scope, SourceDoc
-from .base import ConnectorError
+from .base import ConnectorError, check_deadline
 
 DIRECT_HEAD_LIMIT = 500  # scoped runs for <= this many documents HEAD objects directly instead of listing
 
@@ -55,6 +56,7 @@ class S3Source:
                          s3={"addressing_style": "path"} if settings.s3_endpoint_url else {})
             client = boto3.client("s3", config=cfg, **kwargs)
         self.client = client
+        self.deadline: float | None = None  # set by the audit: a time.monotonic() value after which listing must stop
 
     # --------------------------------------------------------------------------------- keys
     def parse_key(self, key: str) -> tuple[str, str] | None:
@@ -88,7 +90,11 @@ class S3Source:
             prefix = f"{self.prefix}{scope.tenant}/"
         listed: list[tuple[str, dict[str, Any]]] = []
         paginator = self.client.get_paginator("list_objects_v2")
+        seen = 0
         for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            seen += len(page.get("Contents", []))
+            # listing yields nothing until it is finished, so the time budget has to be checked here, page by page
+            check_deadline(self.deadline, "the source bucket", f" (listed {seen:,} objects so far)")
             for obj in page.get("Contents", []):
                 parsed = self.parse_key(obj["Key"])
                 if parsed is None or (scope is not None and not scope.matches(parsed)):
@@ -117,6 +123,48 @@ class S3Source:
             return self._doc(key, obj, head)
         with ThreadPoolExecutor(max_workers=max(1, self.s.s3_workers)) as pool:
             for doc in pool.map(one, sorted(scope.keys)):
+                if doc is not None:
+                    yield doc
+
+    # --------------------------------------------------------------------------------- lookup from the manifest
+    def key_from_uri(self, uri: str | None) -> str | None:
+        """The object key inside this bucket named by a URI (``s3://bucket/key`` or an https S3 address), else None."""
+        if not uri:
+            return None
+        p = urlparse(uri.strip())
+        path = unquote(p.path).lstrip("/")
+        if p.scheme == "s3":
+            return path if p.netloc == self.bucket and path else None
+        if p.scheme in ("http", "https"):
+            host = p.hostname or ""
+            if host.startswith(f"{self.bucket}.") and path:  # virtual-hosted style: <bucket>.s3.<region>.amazonaws.com/<key>
+                return path
+            if path.startswith(f"{self.bucket}/") and len(path) > len(self.bucket) + 1:  # path style: <host>/<bucket>/<key>
+                return path[len(self.bucket) + 1:]
+        return None
+
+    def lookup(self, uris: Iterable[str | None]) -> Iterator[SourceDoc]:
+        """Read exactly the files a list of URIs names (typically the manifest's source URIs) instead of listing the bucket.
+
+        Only files inside this bucket whose key matches the key pattern count; a file that does not exist is skipped.
+        Cost is one HEAD request per file, however large the bucket is."""
+        keys = sorted({k for k in (self.key_from_uri(u) for u in uris) if k is not None and self.parse_key(k) is not None})
+
+        def one(key: str) -> SourceDoc | None:
+            check_deadline(self.deadline, "the source bucket")
+            try:
+                head = self.client.head_object(Bucket=self.bucket, Key=key, ChecksumMode="ENABLED")
+            except Exception as exc:
+                code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+                if code in ("404", "NoSuchKey", "NotFound"):
+                    return None
+                raise
+            obj = {"Key": key, "Size": head.get("ContentLength", 0), "ETag": head.get("ETag", ""),
+                   "LastModified": head.get("LastModified")}
+            return self._doc(key, obj, head)
+
+        with ThreadPoolExecutor(max_workers=max(1, self.s.s3_workers)) as pool:
+            for doc in pool.map(one, keys):
                 if doc is not None:
                     yield doc
 

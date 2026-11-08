@@ -42,6 +42,10 @@ chunks are missing. Status values recognised: success-like (`success, indexed, c
 `true` lets a boolean `is_indexed` column be mapped as the status), in-flight (`pending, queued, processing, running,
 indexing, ...`), failed-like (`failed, error`), deleted (`deleted, tombstoned`).
 
+Set `RAGI_S3_LOOKUP_FROM_MANIFEST=true` for a very large bucket: the audit then reads exactly the files named by the manifest's
+`source_uri` column (one HEAD request each, only keys matching `RAGI_S3_KEY_PATTERN`) instead of listing every object. Files that
+are in S3 but not in the manifest are not discovered in this mode.
+
 Set `RAGI_SOURCE_DOCUMENTS_ONLY=true` when the manifest or the vector index is shared with more than the bucket covers: the
 S3 inventory (chosen by `RAGI_S3_KEY_PATTERN`) then defines the corpus, other manifest rows and vectors are ignored, and only
 the matching points are read from Qdrant with a server-side filter. Left-over-vector findings are not produced in this mode.

@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, TypeVar
 
-from ..connectors.base import IndexConnector, ManifestConnector, SourceConnector
+from ..connectors.base import (  # noqa: F401  (AuditTimeout is re-exported: the API maps it to a 504)
+    AuditTimeout,
+    IndexConnector,
+    ManifestConnector,
+    SourceConnector,
+    check_deadline,
+)
 from ..models import ChunkRow, DocKey, Fingerprint, ManifestRow, Scope, SourceDoc
 from .index_state import AggContext, IndexAggregator
 from .reconcile import (
@@ -33,25 +39,31 @@ class AuditOptions:
     grace_minutes: int = 0
     check_vectors: bool = False
     source_only: bool = False  # the source inventory defines the corpus: ignore manifest rows / vectors for anything else
+    lookup_from_manifest: bool = False  # find source files from the manifest's source URIs instead of listing the bucket
     probe: bool = True
     probe_max: int = 25
     probe_top_k: int = 10
     now: datetime | None = None
     deadline: float | None = None  # time.monotonic() value after which the audit stops
-
-
-class AuditTimeout(RuntimeError):
-    pass
+    progress: Callable[..., None] | None = None  # progress(phase, elapsed_seconds=..., **counts): where the audit is right now
 
 
 def _guard(items: Iterable[T], deadline: float | None, what: str) -> Iterator[T]:
     """Pass items through, but give up with a clear message once the time budget is spent."""
     for i, item in enumerate(items):
-        if deadline is not None and i % 200 == 0 and time.monotonic() > deadline:
-            raise AuditTimeout(
-                f"The audit ran out of time while reading {what}. This corpus is too large to audit in one go here: "
-                "audit one tenant at a time, or run `ragi audit` on a machine without a request time limit.")
+        if i % 200 == 0:
+            check_deadline(deadline, what, f" (after {i:,} items)")
         yield item
+
+
+def _note(opts: AuditOptions, t0: float, phase: str, **info: Any) -> None:
+    """Report progress. Best effort: it must never break an audit."""
+    if opts.progress is None:
+        return
+    try:
+        opts.progress(phase, elapsed_seconds=round(time.monotonic() - t0, 1), **info)
+    except Exception:  # a failed progress write is not worth losing the audit for
+        pass
 
 
 @dataclass
@@ -61,6 +73,7 @@ class Collected:
     chunk_rows: dict[DocKey, dict[str, ChunkRow]] | None
     agg: IndexAggregator
     required: list[str]
+    started: float = 0.0  # time.monotonic() when collecting began (for progress notes)
 
 
 def collect(
@@ -68,8 +81,22 @@ def collect(
     scope: Scope | None = None,
 ) -> Collected:
     dl = opts.deadline
-    src = {d.key: d for d in _guard(source.inventory(scope), dl, "the source bucket")}  # first: the index scan classifies against it
-    man = {r.key: r for r in _guard(manifest.documents(scope), dl, "the processing manifest")}
+    t0 = time.monotonic()
+    for connector in (source, manifest, index):  # connectors that page through data check the budget between pages
+        if hasattr(connector, "deadline"):
+            connector.deadline = dl
+    lookup = getattr(source, "lookup", None)
+    if opts.lookup_from_manifest and lookup is not None and (scope is None or scope.keys is None):
+        # large buckets: read exactly the files the manifest names (one HEAD each) instead of listing everything
+        _note(opts, t0, "reading the processing manifest")
+        man = {r.key: r for r in _guard(manifest.documents(scope), dl, "the processing manifest")}
+        _note(opts, t0, "looking up the files the manifest names (S3)", manifest_rows=len(man))
+        src = {d.key: d for d in _guard(lookup(r.source_uri for r in man.values()), dl, "the source bucket")}
+    else:
+        _note(opts, t0, "listing the source documents (S3)")
+        src = {d.key: d for d in _guard(source.inventory(scope), dl, "the source bucket")}  # first: the index scan classifies against it
+        _note(opts, t0, "reading the processing manifest", source_documents=len(src))
+        man = {r.key: r for r in _guard(manifest.documents(scope), dl, "the processing manifest")}
     scan_scope, scan_nothing = scope, False
     if opts.source_only:
         man = {k: r for k, r in man.items() if k in src}
@@ -90,8 +117,9 @@ def collect(
                      required_fields=required)
     agg = IndexAggregator(ctx)
     if not scan_nothing:
+        _note(opts, t0, "reading the vector index (Qdrant)", source_documents=len(src), manifest_rows=len(man))
         agg.add_all(_guard(index.scan(scan_scope, with_vectors=opts.check_vectors), dl, "the vector index"))
-    return Collected(src, man, chunk_rows, agg, required)
+    return Collected(src, man, chunk_rows, agg, required, started=t0)
 
 
 def _config(index: IndexConnector, opts: AuditOptions, required: list[str]) -> ReconcileConfig:
@@ -108,6 +136,7 @@ def run_reconciliation(
     scope: Scope | None = None,
 ) -> ReconcileResult:
     c = collect(source, manifest, index, opts, scope)
+    _note(opts, c.started, "comparing the three lists", source_documents=len(c.source), manifest_rows=len(c.manifest))
     result = reconcile(c.source, c.manifest, c.chunk_rows, c.agg, _config(index, opts, c.required), scope)
     result.stats["required_payload_fields"] = c.required
     if opts.source_only:

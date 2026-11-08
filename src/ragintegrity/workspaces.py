@@ -67,6 +67,11 @@ SPECS: dict[str, Spec] = {
                   help="Must capture (?P<document_id>...) and optionally (?P<tenant_id>...). Default: <tenant>/<document path>.",
                   placeholder=r"^(?P<tenant_id>[^/]+)/(?P<document_id>.+)$", max_len=300),
             Field("default_tenant", "s3_default_tenant", "Default tenant", help="Used when keys carry no tenant.", placeholder="default", max_len=64),
+            Field("lookup_from_manifest", "s3_lookup_from_manifest", "Look up files from the manifest (skip listing the bucket)",
+                  type="bool",
+                  help="Reads exactly the files the manifest's source URI column names (one HEAD request each, only files that match "
+                       "the key pattern) instead of listing the whole bucket. Much faster for large buckets. Files that are in S3 "
+                       "but not in the manifest are not discovered."),
         ),
     ),
     "manifest": Spec(

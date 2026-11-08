@@ -17,6 +17,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .models import Fingerprint
 
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+HOSTED_AUDIT_SECONDS = 270  # audit time budget on serverless hosting; vercel.json's maxDuration (300) leaves 30 s of headroom
 
 
 def check_identifier(value: str, what: str) -> str:
@@ -68,6 +69,7 @@ class Settings(BaseSettings):
     s3_sha256_metadata_key: str = "sha256"
     s3_key_pattern: str = r"^(?P<tenant_id>[^/]+)/(?P<document_id>.+)$"
     s3_default_tenant: str = "default"
+    s3_lookup_from_manifest: bool = False  # read the files the manifest names (HEAD each) instead of listing the whole bucket
     s3_workers: int = 16
 
     # --- processing manifest: PostgreSQL / Supabase ------------------------------------------
@@ -169,8 +171,9 @@ class Settings(BaseSettings):
 
     @property
     def audit_seconds_limit(self) -> int:
-        """Wall-clock budget for one audit. Serverless functions are killed at their max duration, so stop gracefully first."""
-        return self.max_audit_seconds or (50 if self.run_audits_inline else 0)
+        """Wall-clock budget for one audit. Serverless functions are killed at their max duration (vercel.json), so stop
+        gracefully first; ``HOSTED_AUDIT_SECONDS`` must stay well below it (a test enforces that)."""
+        return self.max_audit_seconds or (HOSTED_AUDIT_SECONDS if self.run_audits_inline else 0)
 
     @property
     def run_audits_inline(self) -> bool:

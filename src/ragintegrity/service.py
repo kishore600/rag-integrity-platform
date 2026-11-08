@@ -20,7 +20,7 @@ from .engine.audit import AuditOptions, inspect_document, run_reconciliation
 from .engine.blast import blast_radius
 from .engine.planning import estimate_workload, plan_items
 from .engine.reconcile import parse_ts
-from .ledger import Ledger, RunDiff, RunInProgress
+from .ledger import STALE_RUN_SECONDS, Ledger, RunDiff, RunInProgress
 from .models import ConnectionStatus, DocSummary, Finding, Scope
 from .repair import RepairManager
 from .security import scrub
@@ -100,23 +100,30 @@ class IntegrityService:
                     self._connectors = self._connector_factory(self.settings)
         return self._connectors
 
-    def options(self, probe: bool | None = None) -> AuditOptions:
+    def options(self, probe: bool | None = None, run_id: str | None = None) -> AuditOptions:
         s = self.settings
         limit = s.audit_seconds_limit
         return AuditOptions(
             target=s.target_fingerprint(), default_tenant=s.default_tenant, required_fields=s.required_fields,
             known_tenants=self.ledger.known_tenants(), grace_minutes=s.grace_minutes,
             check_vectors=s.qdrant_check_vectors or s.is_demo, source_only=s.source_documents_only,
+            lookup_from_manifest=s.s3_lookup_from_manifest,
             probe=s.probe_retrieval if probe is None else probe, probe_max=s.probe_max, probe_top_k=s.probe_top_k,
             deadline=(time.monotonic() + limit) if limit else None,
+            progress=(lambda phase, **info: self.ledger.set_progress(run_id, phase, **info)) if run_id else None,
         )
+
+    def _stale_after(self) -> int:
+        """How old a 'running' audit may get before it is presumed dead: the time budget plus a margin, else 15 minutes."""
+        limit = self.settings.audit_seconds_limit
+        return limit + 90 if limit else STALE_RUN_SECONDS
 
     # ------------------------------------------------------------------ audits
     def _execute(self, run_id: str, kind: str, trigger: str, scope: Scope | None, probe: bool | None) -> AuditResult:
         t0 = time.perf_counter()
         try:
             c = self.connectors
-            result = run_reconciliation(c.source, c.manifest, c.index, self.options(probe), scope)
+            result = run_reconciliation(c.source, c.manifest, c.index, self.options(probe, run_id), scope)
             diff = self.ledger.apply_run(run_id, result.findings, result.summaries, scope)
             stats = {**result.stats, "diff": diff.to_json(), "scope": scope.to_json() if scope else {},
                      "duration_seconds": round(time.perf_counter() - t0, 3)}
@@ -144,7 +151,7 @@ class IntegrityService:
             kind = self._kind(scope, kind)
             _ = self.connectors  # a misconfigured or incomplete setup fails here, before a run row is created
             try:
-                run_id = self.ledger.start_run(kind, trigger, scope)
+                run_id = self.ledger.start_run(kind, trigger, scope, stale_after=self._stale_after())
             except RunInProgress as exc:
                 raise AuditBusy(str(exc)) from exc
             return self._execute(run_id, kind, trigger, scope, probe)
@@ -159,7 +166,7 @@ class IntegrityService:
         try:
             kind = self._kind(scope, None)
             _ = self.connectors  # fail early (and without a run row) when setup is incomplete
-            run_id = self.ledger.start_run(kind, trigger, scope)
+            run_id = self.ledger.start_run(kind, trigger, scope, stale_after=self._stale_after())
         except RunInProgress as exc:
             self._lock.release()
             raise AuditBusy(str(exc)) from exc
@@ -183,7 +190,7 @@ class IntegrityService:
         if self._lock.locked():
             return True
         running = self.ledger.list_runs(limit=1, status="running")  # another process may be running one
-        if running and self.ledger.retire_stale_runs():
+        if running and self.ledger.retire_stale_runs(self._stale_after()):
             # a run whose process was killed never records a result; without this the button would stay disabled forever
             running = self.ledger.list_runs(limit=1, status="running")
         return bool(running)

@@ -46,8 +46,9 @@ Then deploy: `npx vercel deploy --prod` (or push to `main`: the GitHub repo is c
 * **No rewrite rule in `vercel.json`.** Vercel recognises FastAPI and routes every path to the app. A catch-all rewrite to
   `/api/index` makes the app see `/api/index` as the path, so every route 404s. `tests/test_serverless.py` guards this.
 * **Audits run inside the request.** A background thread is frozen once the response is sent, so audits finish (or stop with a
-  time-budget message) within the function's limit (`maxDuration` 60 s). Thousands of documents are fine; for very large corpora
-  audit one tenant at a time (`POST /api/audits {"tenant": "..."}`) or run `ragi audit` elsewhere.
+  time-budget message) within the function's limit (`maxDuration` 300 s; the audit stops itself at 270 s and says which step was
+  running). Thousands of documents are fine; for a large bucket turn on **Look up files from the manifest** (no bucket listing),
+  and for very large corpora audit one tenant at a time (`POST /api/audits {"tenant": "..."}`) or run `ragi audit` elsewhere.
 * **Only one audit per workspace at a time**, enforced by a database index, so it holds across concurrent function instances.
 * **Scheduled audits**: there is no long-lived process, so schedule from outside. Create an API key in Settings, then call
   `POST /api/audits` from GitHub Actions, cron or any scheduler (the Settings page shows the exact `curl`).

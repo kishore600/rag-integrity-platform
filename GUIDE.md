@@ -74,26 +74,26 @@ Your S3 bucket, manifest table and Qdrant cluster are **not** part of the produc
 | Module | Lines | What it does |
 |---|---|---|
 | `models.py` | 214 | the vocabulary: `SourceDoc`, `ManifestRow`, `IndexedChunk`, `Fingerprint`, `Finding`, `DocSummary`, `Scope`; enums for issue types, severities, actions |
-| `config.py` | 150 | every `RAGI_*` setting (pydantic-settings), identifier validation |
-| `connectors/s3.py` | 216 | read-only S3 inventory, hash modes, key parsing, `diagnose()` for the connection test |
+| `config.py` | 154 | every `RAGI_*` setting (pydantic-settings), identifier validation |
+| `connectors/s3.py` | 265 | read-only S3 inventory, hash modes, key parsing, `diagnose()` for the connection test |
 | `connectors/postgres.py` | 253 | read-only manifest reader (READ ONLY transactions, column mapping), `diagnose()` |
-| `connectors/qdrant.py` | 188 | read-only vector scan (scroll), retrieval probe, `diagnose()` |
+| `connectors/qdrant.py` | 209 | read-only vector scan (scroll), retrieval probe, `diagnose()` |
 | `connectors/payload.py` | 79 | maps a Qdrant payload to the canonical chunk record (supports dotted paths) |
 | `connectors/factory.py`, `base.py` | 57 | connector contracts and the demo/live factory |
 | `engine/index_state.py` | 152 | classifies every vector as it is scanned (fresh / stale / outdated / unknown / orphan) |
-| `engine/reconcile.py` | 559 | the reconciliation engine: compares source vs manifest vs index and emits findings |
+| `engine/reconcile.py` | 560 | the reconciliation engine: compares source vs manifest vs index and emits findings |
 | `engine/retrieval.py` | 58 | retrieval probes: can the bad content actually be returned by a search? |
-| `engine/audit.py` | 121 | pulls the three inventories, enforces the time budget, runs the engine |
+| `engine/audit.py` | 164 | pulls the three inventories, enforces the time budget, runs the engine |
 | `engine/planning.py` | 100 | turns issues into per-document repair items and estimates the work and cost |
 | `engine/blast.py` | 117 | blast-radius analysis |
-| `ledger.py` | 659 | the workspace-scoped store of issues, documents, runs, plans, and the account tables (SQLite locally, Postgres/Supabase in production) |
-| `service.py` | 267 | the one object the API/CLI use: audits, locking, overview, inspection, friendly errors |
+| `ledger.py` | 680 | the workspace-scoped store of issues, documents, runs, plans, and the account tables (SQLite locally, Postgres/Supabase in production) |
+| `service.py` | 277 | the one object the API/CLI use: audits, locking, overview, inspection, friendly errors |
 | `repair.py` | 206 | plan, signed webhook, independent verification, approved cleanup |
 | `alerts.py`, `report.py` | 115 | Slack-compatible alerts; markdown/CSV/JSON integrity report |
 | `security.py` | 170 | password hashing, the secret vault, SSRF guard, credential scrubbing |
 | `accounts.py` | 242 | users, sessions, rate limits, API keys, encrypted per-workspace settings |
-| `workspaces.py` | 374 | the declarative Settings specification, validation, per-workspace service, connection tests |
-| `api/app.py` | 548 | the HTTP API and authentication |
+| `workspaces.py` | 383 | the declarative Settings specification, validation, per-workspace service, connection tests |
+| `api/app.py` | 549 | the HTTP API and authentication |
 | `api/static/` | built | the committed build of the web interface (`index.html` and hashed files in `assets/`): deploys need no Node step |
 | `frontend/` (outside `src/`) | 10,326 | the web interface source: React, TypeScript, Vite, Tailwind, TanStack Query and Table, Recharts; `npm run build` writes `api/static/` |
 | `cli.py` | 194 | the `ragi` command |
@@ -161,8 +161,10 @@ above, red below.
 8. **Alert** (if configured) about *new, reopened or escalated* issues at or above the minimum severity.
 9. Record the run with its statistics and duration.
 
-**Time budget on Vercel:** an audit that has not finished within about 50 seconds stops with a clear message instead of being killed
-(audit one tenant at a time, or run `ragi audit` elsewhere).
+**Time budget on Vercel:** an audit that has not finished within 270 seconds (the function limit is 300) stops with a clear message
+that says which step was running, instead of being killed. The budget is checked while listing S3 and between Qdrant pages, not only
+between documents. Each step is also written to the run record, so a run that is ever cut off still shows where it stopped. Audit one
+tenant at a time, or run `ragi audit` elsewhere.
 
 ### 3.5 Scopes
 An audit can cover everything, one **tenant**, or specific **documents**. Scoped audits are how repairs are verified. A scoped audit
@@ -385,6 +387,7 @@ and use that provider's region and access keys.
 | **SHA-256 metadata key** | no | no | `sha256` | The user-metadata key that holds the hex SHA-256 (case-insensitive). If an object has none, S3's `ChecksumSHA256` is used, then the ETag (flagged). |
 | **Key pattern (regex)** | no | no | `^(?P<tenant_id>[^/]+)/(?P<document_id>.+)$` | Applied to each key (after the prefix). It **must** capture `(?P<document_id>...)` and may capture `(?P<tenant_id>...)`. With the default, `acme/policies/leave.pdf` is tenant `acme`, document `policies/leave.pdf`. Keys that do not match are ignored. For a single-tenant bucket use `^(?P<document_id>.+)$`. |
 | **Default tenant** | no | no | `default` | The tenant used for keys when the pattern has no `tenant_id` group. |
+| **Look up files from the manifest (skip listing the bucket)** | no | no | off | For large buckets. Instead of listing every object, the audit reads exactly the files named in the manifest's `source_uri` column (S3 addresses such as `s3://bucket/key` or `https://bucket.s3.region.amazonaws.com/key`), one HEAD request each, keeping only files in this bucket whose key matches the **Key pattern**. Cost no longer grows with the size of the bucket. Trade-off: a file that is in S3 but not in the manifest is not discovered. Needs the manifest's `source_uri` to be mapped (section 5.2). Used by full audits only; a tenant-scoped audit still lists. |
 
 **Important:** whatever hash you use here, your pipeline must record the **same value** as `source_hash` in the manifest and in each
 Qdrant payload, otherwise every document will look stale.
@@ -505,6 +508,7 @@ settings, create keys or change passwords. Up to 20 keys per workspace; **Revoke
 | s3 | SHA-256 metadata key | `sha256_metadata_key` | `RAGI_S3_SHA256_METADATA_KEY` | text |
 | s3 | Key pattern (regex) | `key_pattern` | `RAGI_S3_KEY_PATTERN` | regex |
 | s3 | Default tenant | `default_tenant` | `RAGI_S3_DEFAULT_TENANT` | text |
+| s3 | Look up files from the manifest (skip listing the bucket) | `lookup_from_manifest` | `RAGI_S3_LOOKUP_FROM_MANIFEST` | on/off |
 | manifest | Connection string | `database_url` | `RAGI_MANIFEST_DATABASE_URL` | Postgres URL, secret |
 | manifest | Schema | `schema` | `RAGI_MANIFEST_SCHEMA` | identifier |
 | manifest | Document table | `table` | `RAGI_MANIFEST_TABLE` | identifier |
@@ -554,7 +558,8 @@ the bill (its `doc_version` did not match `external_doc_id`), so they cannot be 
 | S3 | Bucket / Region | `billflo-ai-development` / `us-west-1` |
 | S3 | Key prefix | `bills/` |
 | S3 | Key pattern | `^(?P<document_id>[^/]+)/(?P=document_id)\.pdf$` (folder name equals file name, so only those files count) |
-| S3 | Content hash | `etag` (no per-file HEAD requests; Qdrant has no `source_hash` to compare with anyway) |
+| S3 | Content hash | `etag` (Qdrant has no `source_hash` to compare with anyway) |
+| S3 | Look up files from the manifest (skip listing the bucket) | on (the bucket holds far more than these documents, and the manifest already names each file in `s3_url`) |
 | Manifest | Document table | `bill_documents` |
 | Manifest | Column map | `{"document_id":"external_doc_id","source_uri":"s3_url","processing_status":"is_indexed"}` |
 | Qdrant | Collections | `bill_chunks` |
@@ -569,9 +574,11 @@ and left-over vectors for deleted files (switched off by the option, because the
 
 **Speed.** Only the points of the listed documents are read, using a server-side filter on `source_id`. If Qdrant is in strict mode it
 refuses to filter on a field without a payload index (the message says so); ask the cluster owner to create a keyword index on
-`source_id`. On the hosted site an audit must finish in about 50 seconds, and one Qdrant request may take at most 30 seconds, so a
-slow unindexed filter fails with a clear message ("Qdrant timed out ... create a keyword index") instead of hanging. For a very large
-corpus run `ragi audit` instead.
+`source_id`. On the hosted site an audit has 270 seconds (the function limit is 300 s) and one Qdrant request may take at most 60
+seconds, so a slow unindexed filter fails with a clear message ("Qdrant timed out ... create a keyword index") instead of hanging.
+Listing a very large bucket is the other slow step: switch on **Look up files from the manifest**, which needs only one request per
+listed file. While a run is working it records its current step, so a run that is ever cut off still shows where it stopped (Audit
+History, "last step: ..."). For a corpus too large even for that, run `ragi audit`.
 
 ---
 
@@ -723,7 +730,7 @@ Install with `pip install -e ".[dev]"`; the command is `ragi`.
 | `RAGI_ALLOW_REGISTRATION` | `true` | `false` closes sign-up. |
 | `RAGI_ALLOW_PRIVATE_HOSTS` | `false` | `true` lets users point connectors at private addresses (self-hosting only). It is the SSRF guard. |
 | `RAGI_SESSION_DAYS` | `7` | session lifetime (sliding). |
-| `RAGI_MAX_AUDIT_SECONDS` | `0` | audit time budget; `0` is unlimited, and 50 is implied on serverless. |
+| `RAGI_MAX_AUDIT_SECONDS` | `0` | audit time budget; `0` is unlimited, and 270 is implied on serverless. |
 | `RAGI_SYNC_AUDITS` | `false` | run audits inside the request (implied on Vercel). |
 | `RAGI_PROBE_RETRIEVAL`, `RAGI_PROBE_MAX`, `RAGI_PROBE_TOP_K` | `true`, `25`, `10` | retrieval-probe switches and limits. |
 | `RAGI_S3_WORKERS` | `16` | parallel HEAD requests during an S3 inventory. |
@@ -797,7 +804,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 | File | Role |
 |---|---|
 | `api/index.py` | Vercel entrypoint; sets `RAGI_MODE=app`; never falls back to a temporary database |
-| `vercel.json` | `maxDuration` 60 s and bundles `src/**`. **No rewrites** (a catch-all rewrite makes every route 404). |
+| `vercel.json` | `maxDuration` 300 s and bundles `src/**`. **No rewrites** (a catch-all rewrite makes every route 404). |
 | `requirements.txt` | the only install source on Vercel (FastAPI, SQLAlchemy, psycopg, httpx, boto3, qdrant-client, cryptography) |
 | `.vercelignore` | hides `pyproject.toml`, tests, docs, `.env*` from the upload |
 | `supabase/migrations/20261107000000_ragi_ledger.sql` | v1 ledger |
@@ -825,7 +832,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 ## 15. Verification status
 
 **Verified** (and how):
-- **242 tests.** On a plain checkout with no external services **219 pass and 23 skip** (checked before publishing). The 23 skipped need real servers; the real Qdrant server tests (9) and the source-only tests (13) all pass against a real local Qdrant, and when every real service was attached earlier, all the tests that existed then passed. Per file: accounts 22, api 31, app connectors 4, app mode 46, connectors 19, docs 11, engine 11, live mode 6, Postgres integration 5, real Qdrant 9, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4.
+- **256 tests.** On a plain checkout with no external services **233 pass and 23 skip** (checked before publishing). The 23 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 23 real-service tests (Qdrant 9, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 14, connectors 19, docs 11, engine 11, live mode 6, Postgres integration 5, real Qdrant 9, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4.
 - The engine finds **exactly** the injected faults (compared with ground truth) in the in-memory demo *and* through the real connector code.
 - A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics.
 - A **real Postgres engine**: both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.
@@ -842,7 +849,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 
 ## 16. Limits and caveats
 
-- **Scale**: aggregation is in memory, measured at about 19,000 vectors per second and about 600 bytes per vector on a laptop (about 1M vectors is roughly a minute and 600 MB). On Vercel an audit must finish in about 50 seconds.
+- **Scale**: aggregation is in memory, measured at about 19,000 vectors per second and about 600 bytes per vector on a laptop (about 1M vectors is roughly a minute and 600 MB). On Vercel an audit must finish in 270 seconds.
 - **S3 hashing**: `metadata` mode costs one HEAD per object. For very large buckets store a SHA-256 in object metadata at upload time.
 - **One workspace per user**; no teams, roles, email verification, password reset or two-factor authentication.
 - **Collections**: a document is expected in at least one configured collection; per-collection expectations are not modelled.

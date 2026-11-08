@@ -333,22 +333,37 @@ class Ledger:
                 c.execute(delete(self.t[name]).where(self._w(name)))
 
     # ------------------------------------------------------------------ runs
-    def retire_stale_runs(self) -> int:
+    def retire_stale_runs(self, max_age: int = STALE_RUN_SECONDS) -> int:
         """Mark runs whose process died (a killed serverless function never records a result) as failed, so they cannot
-        block the workspace forever. Returns how many were retired."""
+        block the workspace forever. The message says where the run had got to. Returns how many were retired."""
         runs = self.t["audit_runs"]
         now = utcnow()
+        retired = 0
         with self.engine.begin() as c:
-            res = c.execute(update(runs).where(self._w("audit_runs"), runs.c.status == "running",
-                                               runs.c.started_at < now - timedelta(seconds=STALE_RUN_SECONDS))
-                            .values(status="failed", finished_at=now, error="abandoned: the process running it stopped"))
-        return res.rowcount or 0
+            stale = c.execute(select(runs.c.id, runs.c.stats).where(
+                self._w("audit_runs"), runs.c.status == "running", runs.c.started_at < now - timedelta(seconds=max_age))).all()
+            for run_id, stats in stale:
+                progress = stats.get("progress") if isinstance(stats, dict) else None
+                msg = "abandoned: the process running it stopped"
+                if isinstance(progress, dict) and progress.get("phase"):
+                    msg += f" (last step: {progress['phase']}, {progress.get('elapsed_seconds', '?')} s in)"
+                c.execute(update(runs).where(runs.c.id == run_id, runs.c.status == "running")
+                          .values(status="failed", finished_at=now, error=msg))
+                retired += 1
+        return retired
 
-    def start_run(self, kind: str, trigger: str, scope: Scope | None) -> str:
+    def set_progress(self, run_id: str, phase: str, **info: Any) -> None:
+        """Record where a running audit is, so a run that is killed still shows how far it got."""
+        runs = self.t["audit_runs"]
+        with self.engine.begin() as c:
+            c.execute(update(runs).where(self._w("audit_runs"), runs.c.id == run_id, runs.c.status == "running")
+                      .values(stats={"progress": {"phase": phase, **info}}))
+
+    def start_run(self, kind: str, trigger: str, scope: Scope | None, stale_after: int = STALE_RUN_SECONDS) -> str:
         run_id = str(uuid.uuid4())
         runs = self.t["audit_runs"]
         now = utcnow()
-        self.retire_stale_runs()
+        self.retire_stale_runs(stale_after)
         try:
             with self.engine.begin() as c:
                 c.execute(insert(runs).values(

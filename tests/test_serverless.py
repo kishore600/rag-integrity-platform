@@ -132,6 +132,11 @@ def test_vercel_config_is_consistent():
     # Vercel detects FastAPI and routes every path to the app. A catch-all rewrite to /api/index makes the app see
     # "/api/index" instead of the real path, so every route 404s (learned the hard way on the first deployment).
     assert "rewrites" not in cfg and "routes" not in cfg
-    assert cfg["functions"]["api/index.py"]["maxDuration"] <= 60  # Hobby-plan ceiling
+    max_duration = cfg["functions"]["api/index.py"]["maxDuration"]
+    assert max_duration <= 300  # the Hobby-plan ceiling with Fluid compute (60 s without it)
+    from ragintegrity.config import HOSTED_AUDIT_SECONDS
+
+    # the audit must stop itself, with a clear message, well before the platform kills the function and leaves a run 'running'
+    assert HOSTED_AUDIT_SECONDS + 20 <= max_duration
     assert (ROOT / "api" / "index.py").exists()
     assert "pyproject.toml" in (ROOT / ".vercelignore").read_text()  # requirements.txt is the single install source

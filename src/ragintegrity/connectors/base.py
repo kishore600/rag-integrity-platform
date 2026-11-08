@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from typing import Protocol
 
@@ -51,6 +52,19 @@ class IndexConnector(Protocol):
 
 class ConnectorError(RuntimeError):
     pass
+
+
+class AuditTimeout(RuntimeError):
+    """The audit used up its time budget. Raised with a message that says where, so a run never just disappears."""
+
+
+def check_deadline(deadline: float | None, what: str, detail: str = "") -> None:
+    """Stop with a clear message once the time budget (a ``time.monotonic()`` value) is spent."""
+    if deadline is not None and time.monotonic() > deadline:
+        raise AuditTimeout(
+            f"The audit ran out of time while reading {what}{detail}. This corpus is too large to audit in one go here: "
+            "audit one tenant at a time, narrow the source (for example the S3 key prefix), or run `ragi audit` on a machine "
+            "without a request time limit.")
 
 
 class UpstreamError(ConnectorError):

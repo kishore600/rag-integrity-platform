@@ -220,8 +220,8 @@ lock-step with the models; the full repair loop - including a worker that lies -
 * The retrieval probe replays an affected chunk's own vector, not real user traffic; it proves searchability and rank, not user impact.
 * **Accounts are deliberately minimal**: one user owns one workspace; no email verification or password reset (there is no mail
   provider), no two-factor authentication, no teams or roles. Close sign-up with `RAGI_ALLOW_REGISTRATION=false` once your team has accounts.
-* **Serverless audit time limit**: audits on Vercel must finish within ~50 s and say so clearly when they do not (audit one tenant at a time,
-  or run `ragi audit`). Only the S3, Postgres and Qdrant integrations exist.
+* **Serverless audit time limit**: audits on Vercel must finish within ~270 s and say so clearly (which step, how far) when they do not
+  (look files up from the manifest instead of listing a huge bucket, audit one tenant at a time, or run `ragi audit`). Only the S3, Postgres and Qdrant integrations exist.
 * The "no competitor does this exactly" claim in the product brief is a hypothesis to validate with customer interviews, not something this repo proves.
 
 ## License

@@ -13,7 +13,7 @@ from typing import Any
 
 from ..config import Settings
 from ..models import ConnectionStatus, IndexedChunk, Scope
-from .base import ConnectorError
+from .base import ConnectorError, check_deadline
 from .payload import build_payload_map, payload_to_chunk
 
 FILTER_BATCH = 5000  # document ids per server-side filter (each batch is one scroll pass over the collection)
@@ -69,6 +69,7 @@ class QdrantIndex:
                                   timeout=client_timeout(settings, fast), check_compatibility=False)
         self.client = client
         self._names = settings.collections
+        self.deadline: float | None = None  # set by the audit: a time.monotonic() value after which scanning must stop
 
     # --------------------------------------------------------------------------------- meta
     def collections(self) -> list[str]:
@@ -115,14 +116,17 @@ class QdrantIndex:
         include = sorted({self._top_level(p) for p in self.pmap.values()})
         vectors_arg: Any = [self.vector_name] if (with_vectors and self.vector_name) else with_vectors
         collections = self.collections()
+        read = 0
         for flt in self._filters(scope):
             for coll in collections:
                 offset = None
                 while True:
+                    check_deadline(self.deadline, "the vector index", f" ({read:,} points so far)")  # a page can be empty of matches
                     points, offset = self.client.scroll(
                         collection_name=coll, scroll_filter=flt, limit=self.s.qdrant_page_size, offset=offset,
                         with_payload=include, with_vectors=vectors_arg,
                     )
+                    read += len(points)
                     for p in points:
                         chunk = payload_to_chunk(
                             coll, p.id, p.payload, self.pmap, vector=getattr(p, "vector", None),
