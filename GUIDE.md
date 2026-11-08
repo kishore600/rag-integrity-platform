@@ -201,8 +201,16 @@ data from the API: nothing is sample data, and anything the product does not do 
 - Every list can be searched, filtered, sorted (click a column header) and paged; filters are kept in the address, so a view can be
   shared or refreshed. Every page has a loading state, an empty state that says what to do next, and an error state with **Try again**.
 
-### Sign-in and Create account
-One screen with two modes. Email plus password; the password must be at least 10 characters, not a common password, not one
+### The landing page, sign-in and Create account
+Before you sign in, `/` is a public **landing page**: what the product does, the six ways a RAG index fails silently, how it works in three
+steps, the issue types it finds, what you get, how it is secured, which tools it works with, and a short FAQ. It states nothing that is
+not true of the product (no customer logos or statistics) and has **Sign in** and **Get started** buttons. Sign-in lives at `/login` and
+sign-up at `/signup`; any other address you open while signed out asks you to sign in and then lands where you were going. Once signed
+in, those two addresses lead straight to the app. The brand mark is a faceted shield holding a check drawn as a three-node path (source,
+manifest and index agreeing); its source is `frontend/src/components/brand/logo.tsx`, with copies in `frontend/public/favicon.svg` and
+`docs/assets/logo.svg`.
+
+The sign-in form is one screen with two modes. Email plus password; the password must be at least 10 characters, not a common password, not one
 repeated character, and must not contain your email name. Errors never reveal whether an email is registered (except that sign-up
 says an email is taken). Closed sign-up shows "New sign-ups are closed on this server." If the server is missing required
 configuration, a "This server isn't fully set up yet" screen lists what the operator must fix.

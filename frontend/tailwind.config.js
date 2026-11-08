@@ -15,6 +15,7 @@ export default {
         warning: { DEFAULT: "#D97706", bg: "#FFFBEB" },
         critical: { DEFAULT: "#DC2626", bg: "#FEF2F2" },
         info: { DEFAULT: "#2563EB", bg: "#EFF6FF" },
+        night: { DEFAULT: "#0B1020", 2: "#111827", 3: "#1B2338" }, // landing page and sign-in: the dark brand surface
       },
       fontFamily: { sans: ['"Inter Variable"', "Inter", "ui-sans-serif", "system-ui", "sans-serif"], mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"] },
       fontSize: {

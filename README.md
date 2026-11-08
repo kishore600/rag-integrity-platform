@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/logo.svg" alt="RAGGuard logo" width="88"></p>
+
 # RAG Integrity
 
 **Know when your RAG index is wrong - before your users do.**

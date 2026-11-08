@@ -1,6 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, KeyRound, ServerCrash, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CheckCircle2, KeyRound, ServerCrash } from "lucide-react";
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
+import { Logo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/form";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/menus";
@@ -11,17 +13,16 @@ import type { Session } from "@/types/api";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD = 10;
 
-function Frame({ children }: { children: React.ReactNode }) {
+function Frame({ children, home }: { children: React.ReactNode; /** show a way back to the landing page (signed-out visitors only) */ home?: boolean }) {
   return (
     <div className="grid min-h-full lg:grid-cols-[minmax(0,1fr)_minmax(420px,520px)]">
-      <div className="relative hidden flex-col justify-between overflow-hidden bg-sidebar p-12 text-sidebar-text lg:flex">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-white">
-            <ShieldCheck className="h-5 w-5" aria-hidden />
-          </span>
-          <span className="text-section font-semibold text-white">RAGGuard</span>
+      <div className="relative hidden flex-col justify-between overflow-hidden bg-night p-12 text-sidebar-text lg:flex">
+        <div className="pointer-events-none absolute inset-0 bg-dots opacity-60 [mask-image:radial-gradient(ellipse_at_top_left,black_25%,transparent_75%)]" aria-hidden />
+        <div className="pointer-events-none absolute -left-24 -top-24 h-[360px] w-[360px] rounded-full bg-brand/30 blur-[110px]" aria-hidden />
+        <div className="relative">
+          <Logo size={38} />
         </div>
-        <div className="max-w-lg">
+        <div className="relative max-w-lg">
           <h2 className="text-[34px] font-semibold leading-tight tracking-tight text-white">Know when your RAG index is wrong, before your users do.</h2>
           <p className="mt-4 text-section font-normal text-sidebar-text">
             RAGGuard compares what you meant to index (your documents) with what is actually searchable (your vector store) and tells you exactly what drifted.
@@ -38,19 +39,31 @@ function Frame({ children }: { children: React.ReactNode }) {
             ))}
           </ul>
         </div>
-        <p className="text-support text-sidebar-text/70">Your connection secrets are encrypted at rest and never shown again after saving.</p>
+        <p className="relative text-support text-sidebar-text/70">Your connection secrets are encrypted at rest and never shown again after saving.</p>
       </div>
-      <div className="flex items-center justify-center bg-workspace px-6 py-12">
-        <div className="w-full max-w-sm">{children}</div>
+      <div className="flex flex-col items-center justify-center bg-workspace px-6 py-10">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 flex items-center justify-between lg:mb-6 lg:justify-end">
+            <Link to="/" className="rounded-control lg:hidden" aria-label="RAGGuard home">
+              <Logo tone="light" size={32} />
+            </Link>
+            {home ? (
+              <Link to="/" className="inline-flex items-center gap-1.5 text-support font-medium text-ink-2 hover:text-ink">
+                <ArrowLeft className="h-3.5 w-3.5" aria-hidden /> Back to home
+              </Link>
+            ) : null}
+          </div>
+          {children}
+        </div>
       </div>
     </div>
   );
 }
 
-export function AuthPage({ session }: { session: Session }) {
+export function AuthPage({ session, initialMode = "login" }: { session: Session; initialMode?: "login" | "register" }) {
   const qc = useQueryClient();
   const canRegister = !!session.registration_open;
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register">(canRegister ? initialMode : "login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -76,7 +89,7 @@ export function AuthPage({ session }: { session: Session }) {
   }
 
   return (
-    <Frame>
+    <Frame home>
       <h1 className="text-page">{mode === "login" ? "Welcome back" : "Create your workspace"}</h1>
       <p className="mt-1 text-body text-ink-2">{mode === "login" ? "Sign in to see the health of your RAG index." : "Each account gets a private workspace with its own connections."}</p>
 

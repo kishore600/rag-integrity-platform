@@ -48,7 +48,7 @@ def test_dashboard_and_security_headers(client):
     assert client.get("/healthz").json()["ok"] is True
 
 
-@pytest.mark.parametrize("path", ["/issues", "/issues/abc123", "/documents", "/documents?tenant=t&doc=x", "/audit-history/run-1", "/data-sources", "/settings"])
+@pytest.mark.parametrize("path", ["/issues", "/issues/abc123", "/documents", "/documents?tenant=t&doc=x", "/audit-history/run-1", "/data-sources", "/settings", "/login", "/signup"])
 def test_client_side_routes_get_the_app_shell(client, path):
     """Opening or refreshing a deep link must load the app, not a 404 (the browser router handles the rest)."""
     r = client.get(path)

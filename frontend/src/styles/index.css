@@ -39,6 +39,11 @@
   .skeleton {
     @apply animate-pulse rounded-control bg-surface;
   }
+  /* landing page: a faint dot grid on the dark brand surface */
+  .bg-dots {
+    background-image: radial-gradient(rgba(148, 163, 184, 0.16) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
   .table-head {
     @apply text-support font-medium uppercase tracking-wide text-ink-2;
   }
@@ -109,7 +114,30 @@
   animation: pop-in 120ms ease-out;
 }
 
+/* the reconciliation scan in the landing hero: a line sweeping down the three rails */
+@keyframes hero-scan {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(290px);
+  }
+}
+.hero-scan {
+  animation: hero-scan 5.5s ease-in-out infinite alternate;
+}
+html {
+  scroll-behavior: smooth;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .hero-scan {
+    animation: none;
+    transform: translateY(150px);
+  }
   .anim-overlay,
   .anim-modal,
   .anim-drawer,

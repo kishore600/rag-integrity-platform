@@ -1,20 +1,9 @@
-import { ShieldCheck } from "lucide-react";
 import { NavLink } from "react-router-dom";
+import { Logo } from "@/components/brand/logo";
 import { cn } from "@/lib/cn";
 import { formatNumber } from "@/lib/format";
 import { useOverview, useSession } from "@/hooks/queries";
 import { NAV } from "./nav";
-
-export function Logo({ className }: { className?: string }) {
-  return (
-    <div className={cn("flex items-center gap-2.5", className)}>
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-white">
-        <ShieldCheck className="h-[18px] w-[18px]" aria-hidden />
-      </span>
-      <span className="text-section font-semibold tracking-tight text-white">RAGGuard</span>
-    </div>
-  );
-}
 
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const session = useSession().data;
@@ -25,7 +14,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-text">
       <div className="flex h-topbar shrink-0 items-center border-b border-white/5 px-5">
-        <Logo />
+        <Logo size={34} />
       </div>
 
       <nav aria-label="Main" className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4">
