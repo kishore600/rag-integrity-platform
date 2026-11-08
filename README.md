@@ -12,6 +12,10 @@ It does **not** replace your ingestion pipeline. It reads your source documents 
 every inconsistency with evidence in an issue ledger, and - when you ask it to - hands a repair plan to **your own**
 worker and independently verifies the result.
 
+> **Want the complete picture?** [GUIDE.md](GUIDE.md) explains everything that was built: every dashboard tab, every
+> Settings group and field, every issue type, the repair workflow, the API, the CLI, the data model, security,
+> deployment and what has (and has not) been verified.
+
 ```
  Customer infrastructure (read-only access)
  ┌────────────┐   ┌─────────────────────┐   ┌──────────────┐
