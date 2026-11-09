@@ -665,7 +665,9 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
         return {"ok": True}
 
     # ------------------------------------------------------------------ single-page app fallback (must stay LAST)
-    RESERVED_PREFIXES = ("api/", "static/", "docs/", "redoc/")  # note: NOT "docs": that would swallow the /documents page
+    # "help-media/": the walkthrough video is served from the CDN on Vercel; a server without it must answer 404 (the player then
+    # falls back to /static/help-media/), not the app page. Note: NOT "docs": that would swallow the /documents page.
+    RESERVED_PREFIXES = ("api/", "static/", "docs/", "redoc/", "help-media/")
     RESERVED_EXACT = {"api", "static", "docs", "redoc", "openapi.json", "healthz"}
 
     @app.get("/{spa_path:path}", include_in_schema=False)

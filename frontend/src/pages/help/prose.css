@@ -1,0 +1,141 @@
+/* The written guide, shown with the product's own tokens. Scoped to .help-prose so nothing else is affected. */
+.help-prose {
+  @apply max-w-3xl text-ink;
+  font-size: 15px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.help-prose :is(h1, h2, h3, h4) {
+  scroll-margin-top: 1.5rem;
+}
+.help-prose h1 {
+  @apply mb-4 text-ink;
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.help-prose h2 {
+  @apply mb-3 mt-12 border-t border-line pt-8 text-ink;
+  font-size: 21px;
+  line-height: 28px;
+  font-weight: 600;
+}
+.help-prose h3 {
+  @apply mb-2 mt-8 text-ink;
+  font-size: 17px;
+  line-height: 24px;
+  font-weight: 600;
+}
+.help-prose h4 {
+  @apply mb-1 mt-6 text-ink;
+  font-size: 15px;
+  font-weight: 600;
+}
+.help-prose p {
+  @apply my-3;
+}
+.help-prose strong {
+  @apply font-semibold text-ink;
+}
+.help-prose em {
+  @apply text-ink-2;
+}
+.help-prose a {
+  @apply font-medium text-brand;
+}
+.help-prose a:hover {
+  @apply underline;
+}
+.help-prose .help-offsite {
+  @apply cursor-help text-ink-2;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.help-prose hr {
+  @apply my-10 border-line;
+}
+.help-prose ul,
+.help-prose ol {
+  @apply my-3 pl-6;
+}
+.help-prose ul {
+  list-style: disc;
+}
+.help-prose ol {
+  list-style: decimal;
+}
+.help-prose li {
+  @apply my-1.5 pl-1;
+}
+.help-prose li > :is(ul, ol) {
+  @apply my-1;
+}
+.help-prose li::marker {
+  @apply text-ink-3;
+}
+.help-prose blockquote {
+  @apply my-5 rounded-control border-l-4 border-info bg-info-bg px-4 py-2 text-ink;
+}
+.help-prose blockquote p {
+  @apply my-1.5;
+}
+.help-prose code {
+  @apply rounded bg-surface px-1.5 py-0.5 font-mono text-ink;
+  font-size: 0.88em;
+}
+.help-prose pre {
+  @apply m-0 overflow-x-auto rounded-card border border-line bg-night-2 p-4 text-slate-100;
+  font-size: 13px;
+  line-height: 20px;
+}
+.help-prose pre code {
+  @apply bg-transparent p-0 text-slate-100;
+  font-size: inherit;
+}
+.help-prose .help-code {
+  @apply relative my-4;
+}
+.help-prose .help-code-copy {
+  @apply absolute right-2 top-2 opacity-0 transition-opacity;
+}
+.help-prose .help-code:hover .help-code-copy,
+.help-prose .help-code:focus-within .help-code-copy {
+  @apply opacity-100;
+}
+.help-prose .help-table {
+  @apply my-5 overflow-x-auto rounded-card border border-line bg-workspace;
+}
+.help-prose table {
+  @apply w-full border-collapse text-left;
+  font-size: 13px;
+  line-height: 20px;
+}
+.help-prose th {
+  @apply whitespace-nowrap border-b border-line bg-surface px-3 py-2 font-semibold text-ink;
+}
+.help-prose td {
+  @apply border-b border-line px-3 py-2 align-top;
+  min-width: 6rem;
+}
+.help-prose tr:last-child td {
+  border-bottom: 0;
+}
+.help-prose td code {
+  word-break: break-word;
+}
+.help-prose .help-figure {
+  @apply my-4 block overflow-hidden rounded-card border border-line bg-workspace shadow-card;
+}
+.help-prose .help-figure img {
+  @apply block h-auto w-full;
+}
+/* the one phone screenshot is tall and narrow: do not stretch it across the page */
+.help-prose .help-figure-phone {
+  @apply max-w-[20rem];
+}
+/* the italic caption under a screenshot */
+.help-prose .help-figure + em,
+.help-prose p > .help-figure + em {
+  @apply block;
+}

@@ -45,6 +45,11 @@ Then deploy: `npx vercel deploy --prod` (or push to `main`: the GitHub repo is c
 
 * **No rewrite rule in `vercel.json`.** Vercel recognises FastAPI and routes every path to the app. A catch-all rewrite to
   `/api/index` makes the app see `/api/index` as the path, so every route 404s. `tests/test_serverless.py` guards this.
+* **The root `public/` folder is served from Vercel's CDN, and nothing larger than 4.5 MB can come from the function.** The app's own files
+  (`/static/...`) are returned by the function, which cannot send a response bigger than 4.5 MB. The Help video is 8 MB, so it lives in
+  `public/help-media/` and is served at `/help-media/...` by the CDN (the player falls back to `/static/help-media/` on servers
+  without a CDN, such as Docker). `npm run build` keeps that folder in step with `docs/user-guide/video`; see GUIDE.md, *Help and user guide*.
+  Do not put other large files under `src/ragintegrity/api/static`.
 * **Audits run inside the request.** A background thread is frozen once the response is sent, so audits finish (or stop with a
   time-budget message) within the function's limit (`maxDuration` 300 s; the audit stops itself at 270 s and says which step was
   running). Thousands of documents are fine; for a large bucket turn on **Look up files from the manifest** (no bucket listing),

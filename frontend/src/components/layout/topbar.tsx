@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Bell, ChevronDown, LogOut, Menu, Play, Settings as SettingsIcon } from "lucide-react";
+import { Bell, BookOpen, ChevronDown, LogOut, Menu, Play, Settings as SettingsIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -95,6 +95,9 @@ function UserMenu() {
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => navigate("/settings")}>
           <SettingsIcon className="h-4 w-4 text-ink-2" /> Settings
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate("/help")}>
+          <BookOpen className="h-4 w-4 text-ink-2" /> Help and user guide
         </DropdownMenuItem>
         {session?.app ? (
           <DropdownMenuItem destructive onSelect={() => void signOut()}>

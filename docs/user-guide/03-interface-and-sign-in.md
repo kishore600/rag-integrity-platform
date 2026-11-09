@@ -324,9 +324,9 @@ The numbers come from the same data as the Overview, so they refresh at the same
 
 ### The account menu
 
-![The account menu open, showing the email, workspace name, Settings and Sign out](images/account-menu.png)
+![The account menu open, showing the email, workspace name, Settings, Help and user guide and Sign out](images/account-menu.png)
 
-*The account menu: who you are, your workspace, Settings and Sign out.*
+*The account menu: who you are, your workspace, Settings, Help and user guide, and Sign out.*
 
 At the far right of the top bar is your avatar: a round badge with your initials (for `alice@example.com`, `AL`; for `kishore.k@example.com`, `KK`), followed on wider screens (768 pixels and up) by your email and a small arrow. On a single-user server there is no email, so the badge reads `RG` and the name reads "Operator".
 
@@ -334,6 +334,7 @@ At the far right of the top bar is your avatar: a round badge with your initials
 |---|---|
 | Your email, and below it your workspace name | Information only. On a single-user server it reads "Operator" and "Demo workspace" or "Single-user server". |
 | **Settings** | Opens the **Settings** page. |
+| **Help and user guide** | Opens the Help pages inside the product, address `/help`: the video walkthrough and every chapter of this guide. See [The video walkthrough](19-video-walkthrough.md#where-the-video-is). |
 | **Sign out** (in red) | Ends your session and returns you to the landing page. Only shown on a hosted server. If signing out fails you see the notice "Couldn't sign out" with the reason. |
 
 ### The demo banner

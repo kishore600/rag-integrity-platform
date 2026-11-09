@@ -243,7 +243,8 @@ data from the API: nothing is sample data, and anything the product does not do 
   number of open issues), *Isolation, Documents, Audit History, Integrations, Alerts, Settings*. At the bottom a card says **LIVE** (your own systems) or
   **DEMO** (synthetic data), the workspace name and the version.
 - **Top bar**: a search box (type, then choose *Documents* or *Integrity issues*; press `/` anywhere to focus it), **Run audit**, a bell
-  (open issues by severity and when the last audit ran), and your account menu (email, workspace, Settings, **Sign out**).
+  (open issues by severity and when the last audit ran), and your account menu (email, workspace, Settings, **Help and user guide**,
+  **Sign out**).
 - **Run audit** is disabled, with the reason in a tooltip, until all three connections exist, and while an audit is already running. When
   a background audit finishes you get a notice on whatever page you are on.
 - On the demo server a banner on every page says the data is synthetic.
@@ -253,11 +254,36 @@ data from the API: nothing is sample data, and anything the product does not do 
 ### The landing page, sign-in and Create account
 Before you sign in, `/` is a public **landing page**: what the product does, the six ways a RAG index fails silently, how it works in three
 steps, the issue types it finds, what you get, how it is secured, which tools it works with, and a short FAQ. It states nothing that is
-not true of the product (no customer logos or statistics) and has **Sign in** and **Get started** buttons. Sign-in lives at `/login` and
-sign-up at `/signup`; any other address you open while signed out asks you to sign in and then lands where you were going. Once signed
-in, those two addresses lead straight to the app. The brand mark is a faceted shield holding a check drawn as a three-node path (source,
-manifest and index agreeing); its source is `frontend/src/components/brand/logo.tsx`, with copies in `frontend/public/favicon.svg` and
-`docs/assets/logo.svg`.
+not true of the product (no customer logos or statistics) and has **Sign in** and **Get started** buttons and a **User guide** link. Sign-in
+lives at `/login` and sign-up at `/signup`; any other address you open while signed out asks you to sign in and then lands where you were
+going (except `/help`, which is public, see below). Once signed in, those two addresses lead straight to the app. The brand mark is a
+faceted shield holding a check drawn as a three-node path (source, manifest and index agreeing); its source is
+`frontend/src/components/brand/logo.tsx`, with copies in `public/favicon.svg` and `docs/assets/logo.svg`.
+
+### Help and user guide
+`/help` shows the narrated walkthrough video and the whole user guide inside the product. It is **public**: a visitor who is not signed in
+sees it with a slim header (**Sign in**, **Get started**), and a signed-in user sees it inside the normal frame. Signed-in users reach it
+from **Help and user guide** in the account menu; visitors from **User guide** on the landing page. There is no entry in the left menu,
+which keeps it at the ten pages above.
+- **`/help`**: the video player (a button for each part of the video, with its time; captions from the player's captions control; the
+  poster is the title card), then every chapter as a card, grouped as in `docs/user-guide/README.md` (*Set up*, *The pages*, *Putting it to
+  work*).
+- **`/help/<chapter>`** (for example `/help/20-isolation`, and `/help/20-isolation#the-limited-state` for a heading): one chapter. On a
+  desktop a chapter list stays beside the text; on a phone it becomes a *Chapter* drop-down. Previous and next chapter links end the page.
+  Tables scroll sideways when they are wide, code samples have a **Copy** button, screenshots open full size, and links between chapters
+  and to headings work. A link to a file that is not part of the guide (this file, the repository README) is shown as plain text with a
+  tooltip. An address that is not a chapter shows "That chapter doesn't exist".
+- **One source.** The chapters are the Markdown files in `docs/user-guide`; the build reads them (and the screenshots), so the written
+  guide and the Help pages cannot differ. The contents come from the tables in `docs/user-guide/README.md`.
+  `tests/test_help_pages.py` fails when a chapter is missing from that README, when a link or heading anchor in the guide would not
+  work in the app, when a screenshot has a size the page does not expect, or when the video buttons differ from the table in chapter 19.
+- **The video** lives in `docs/user-guide/video` (the video, its WebVTT captions and the poster). `npm run build` first copies those
+  files to `public/help-media/` (`frontend/scripts/sync-help-media.mjs`) and Vite copies that folder into the built files. Vercel serves
+  a root `public/` folder from its CDN, which is how an 8 MB file can be served there (the serverless function cannot return more than
+  4.5 MB); Docker and self-hosted servers serve the same file from `/static/help-media/`. The player tries the CDN address
+  `/help-media/...` first and falls back to `/static/help-media/...`; on a server without the CDN the first request is a plain 404 and the
+  console shows it once. To replace the video, change the files in `docs/user-guide/video`, update the timestamps in
+  `frontend/src/pages/help/video.tsx` and chapter 19, run `npm run build` and commit `public/help-media`, the build and the docs.
 
 The sign-in form is one screen with two modes. Email plus password; the password must be at least 10 characters, not a common password, not one
 repeated character, and must not contain your email name. Errors never reveal whether an email is registered (except that sign-up
@@ -921,7 +947,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 ## 15. Verification status
 
 **Verified** (and how):
-- **312 tests.** On a plain checkout with no external services **288 pass and 24 skip** (checked before publishing). The 24 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 24 real-service tests (Qdrant 10, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 11, engine 11, isolation 28, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, repair cleanup only 5, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4, webhook error leaks 15, webhook errors 6.
+- **320 tests.** On a plain checkout with no external services **296 pass and 24 skip** (checked before publishing). The 24 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 24 real-service tests (Qdrant 10, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 11, engine 11, help pages 8, isolation 28, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, repair cleanup only 5, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4, webhook error leaks 15, webhook errors 6.
 - The engine finds **exactly** the injected faults (compared with ground truth) in the in-memory demo *and* through the real connector code.
 - A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics.
 - A **real Postgres engine**: both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.

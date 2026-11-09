@@ -201,6 +201,7 @@ If you open a hosted RAGGuard server without being signed in, the page at the ro
 |---|---|---|
 | Logo | The RAGGuard mark | The top of the landing page |
 | Menu links **The problem**, **How it works**, **What it finds**, **Security**, **FAQ** | Section names. Hidden on narrow screens. | Scroll to that section of the same page |
+| Menu link **User guide** | Hidden on narrow screens. | The Help pages (`/help`): the video walkthrough and every chapter of this guide. You can read them without an account. |
 | **Sign in** | | The Sign in screen (`/login`) |
 | **Get started** | | The Create account screen (`/signup`). Shown only when sign-ups are open. |
 | Tag line | "Independent verification for RAG" | |
@@ -228,7 +229,7 @@ If you open a hosted RAGGuard server without being signed in, the page at the ro
 | Works with | "The tools you already run" | Amazon S3 (and S3-compatible stores), PostgreSQL (including Supabase) and Qdrant (self-hosted or Qdrant Cloud). |
 | FAQ | "Questions, answered" | Five questions, each of which expands when you click it: does RAGGuard change my data, what do I need to connect, how does it know what my index should contain, can I run audits from CI or on a schedule, and how are my credentials protected. |
 | Closing call to action | "See what your index is really serving." | The two buttons again, and the line "Questions first? Read the FAQ." |
-| Footer | The RAGGuard mark and a one-line description | **Sign in**, **Create account** (only when sign-ups are open) and **FAQ**. |
+| Footer | The RAGGuard mark and a one-line description | **Sign in**, **Create account** (only when sign-ups are open), **FAQ** and **User guide**. |
 
 ### Where the buttons and links go
 
@@ -237,6 +238,7 @@ If you open a hosted RAGGuard server without being signed in, the page at the ro
 | Every **Sign in** | The Sign in screen, address `/login` |
 | **Get started**, **Create your workspace**, **Create account** | The Create account screen, address `/signup` |
 | **Read the FAQ**, footer **FAQ**, menu **FAQ** | The FAQ section of the landing page |
+| Menu **User guide**, footer **User guide** | The Help pages, address `/help` |
 
 If the server has closed sign-ups, the landing page shows only the **Sign in** buttons and the Create account choices disappear everywhere. See [Sign in and find your way around](03-interface-and-sign-in.md#create-account).
 

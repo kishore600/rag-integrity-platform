@@ -23,6 +23,9 @@ export function LandingNav({ canRegister }: { canRegister: boolean }) {
               {l.label}
             </a>
           ))}
+          <Link to="/help" className="text-body font-medium text-slate-300 transition-colors hover:text-white">
+            User guide
+          </Link>
         </nav>
         <div className="flex items-center gap-1 sm:gap-2">
           <Link to="/login" className="inline-flex h-10 items-center whitespace-nowrap rounded-control px-3 text-body font-medium text-slate-200 transition-colors hover:bg-white/10 hover:text-white sm:px-4">
@@ -51,6 +54,7 @@ export function LandingFooter({ canRegister }: { canRegister: boolean }) {
           <Link to="/login" className="hover:text-white">Sign in</Link>
           {canRegister ? <Link to="/signup" className="hover:text-white">Create account</Link> : null}
           <a href="#faq" className="hover:text-white">FAQ</a>
+          <Link to="/help" className="hover:text-white">User guide</Link>
         </nav>
       </Container>
       <div className="border-t border-white/5">

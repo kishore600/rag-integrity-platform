@@ -22,6 +22,10 @@ const AuditHistory = lazy(() => import("@/pages/audit-history"));
 const Integrations = lazy(() => import("@/pages/integrations"));
 const Alerts = lazy(() => import("@/pages/alerts"));
 const Settings = lazy(() => import("@/pages/settings"));
+// Help (the user guide and the video) is one chunk with three entry points.
+const HelpHome = lazy(() => import("@/pages/help").then((m) => ({ default: m.HelpHome })));
+const HelpChapter = lazy(() => import("@/pages/help").then((m) => ({ default: m.HelpChapter })));
+const HelpPublicLayout = lazy(() => import("@/pages/help").then((m) => ({ default: m.HelpPublicLayout })));
 
 function NotFound() {
   return (
@@ -73,6 +77,11 @@ export default function App() {
           {/* keys: moving between these addresses must remount the form so it opens in the right mode */}
           <Route path="login" element={<AuthPage key="login" session={s} initialMode="login" />} />
           <Route path="signup" element={<AuthPage key="signup" session={s} initialMode={s.registration_open ? "register" : "login"} />} />
+          {/* the user guide and the video are public: you can read them before you sign up */}
+          <Route path="help" element={<HelpPublicLayout />}>
+            <Route index element={<HelpHome />} />
+            <Route path=":chapter" element={<HelpChapter />} />
+          </Route>
           <Route path="*" element={<AuthPage key="other" session={s} initialMode="login" />} />
         </Routes>
       </Suspense>
@@ -95,6 +104,8 @@ export default function App() {
         <Route path="integrations" element={<Integrations />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="help" element={<HelpHome />} />
+        <Route path="help/:chapter" element={<HelpChapter />} />
         <Route path="index.html" element={<Navigate to="/" replace />} />
         {/* signed in already: the sign-in and sign-up addresses lead back into the app */}
         <Route path="login" element={<Navigate to="/" replace />} />
