@@ -17,7 +17,7 @@ A five-minute narrated video shows two parts of RAGGuard in action: the **Docume
 
 | File | What it is |
 |---|---|
-| [`video/RAGGuard-walkthrough.mp4`](video/RAGGuard-walkthrough.mp4) | The video: 4 minutes 59 seconds, 1280 by 720, with narration. |
+| [`video/RAGGuard-walkthrough.mp4`](video/RAGGuard-walkthrough.mp4) | The video: 5 minutes 18 seconds, 1280 by 720, with narration. |
 | [`video/RAGGuard-walkthrough.vtt`](video/RAGGuard-walkthrough.vtt) | The captions: every spoken sentence with its time, as a standard WebVTT file. Most video players load it next to the video, and you can also read it as plain text. |
 
 > **About the data.** The video was recorded on a demo workspace connected to a synthetic knowledge base: three tenants (acme, globex and initech), a few hundred documents, and about 50 deliberate faults. Your numbers, names and documents will differ. The layout, the labels and the meaning of every value are the same.
@@ -31,8 +31,8 @@ A five-minute narrated video shows two parts of RAGGuard in action: the **Docume
 | 0:00 | **Introduction** | The title card, then a workspace that is already connected to its three systems and has finished its first audit. The **Health score** and **Open issues** cards. | [Overview](05-overview.md), [Connect your data sources](04-data-sources.md) |
 | 0:31 | **The Documents page** | The five status cards and how a click filters the table. Every column: embedding status, source and indexed versions with the warning, chunks, issues. Search. Opening a document: the **Overview** tab (where it lives, hashes, versions, whether it is present in the source, the manifest and the index), the **Chunks** tab with **Inspect live**, and the **Issues** tab with **Re-audit document**. | [Documents](10-documents.md) |
 | 2:06 | **The Isolation page** | The status banner and its one-sentence answer. The six cards, including **Confirmed reachable by a search** and how many leaks were searched. The five checks. The **Tenants** table and **Open findings (live)**. The **Run isolation drill** dialog: the DRILL badge, the pretend relabel, what the audit would raise, the exact alert it would post, and the read-only confirmation. **Download evidence report (.md)**. | [Isolation](20-isolation.md) |
-| 3:53 | **When the check is limited** | Settings, then the **Policy** tab: the switch **Only audit documents found in the source (S3)**. After an audit the Isolation page says **This check is limited**, explains why in plain words, shows **Not checked** on the cards instead of a false all-clear, and keeps the drill available. | [Isolation](20-isolation.md), [Settings](14-settings.md) |
-| 4:47 | **Summary** | A closing card that points to the written chapters. | [Contents](README.md) |
+| 3:53 | **When the check is limited** | Settings, then the **Policy** tab: the switch **Only audit documents found in the source (S3)**. After an audit the Isolation page says **This check is limited**, explains why in plain words, shows **Not checked** on the cards instead of a false all-clear, and keeps the drill available. It also says what to do next: a full check reads the whole index and can run past the time limit on a large one, so on a large index run `ragi audit` on your own computer, and turn the switch off on the hosted site only when the index is small. | [Isolation](20-isolation.md), [Settings](14-settings.md) |
+| 5:05 | **Summary** | A closing card that points to the written chapters. | [Contents](README.md) |
 
 Yellow numbered boxes on the screen mark the part being talked about, and the short label next to each one repeats the key point, so you can pause and read.
 

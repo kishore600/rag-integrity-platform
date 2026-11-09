@@ -1,73 +1,73 @@
 WEBVTT
 
 1
-00:00:00.002 --> 00:00:14.369
+-1:-1:-0.006 --> 00:00:14.361
 This short walkthrough covers two parts of RAGGuard. The Documents page, where you inspect every document and its index. And the new Isolation page, which checks that one customer's content can never reach another.
 
 2
-00:00:15.345 --> 00:00:30.692
+00:00:15.333 --> 00:00:30.680
 We start in a workspace that is already connected to its three systems, with a first audit done. The health score is the share of healthy documents, and open issues counts what still needs attention. Everything that follows comes from that audit.
 
 3
-00:00:34.727 --> 00:00:48.229
+00:00:34.536 --> 00:00:48.039
 Documents lists every document the audit compared. The cards count them by status: total, healthy, needs attention, orphaned, and pending. Click a card to filter the table.
 
 4
-00:00:48.684 --> 00:01:12.240
+00:00:48.498 --> 00:01:12.054
 Each row is one document and its tenant. Embedding status says healthy, stale, missing embeddings, processing, or failed. Source and Indexed show which version of the file each side holds, with a warning when they differ. Chunks is indexed over expected. Issues shows how many problems the document has, and the worst severity.
 
 5
-00:01:12.695 --> 00:01:17.453
+00:01:12.526 --> 00:01:17.285
 You can search by document I D, and filter by status or tenant.
 
 6
-00:01:20.053 --> 00:01:34.415
+00:01:19.870 --> 00:01:34.232
 Click a document and a panel opens. The Overview tab shows its status, where it lives, its hashes and versions, how it was processed, and whether it is present in the source, the manifest, and the index.
 
 7
-00:01:37.018 --> 00:01:53.885
+00:01:36.834 --> 00:01:53.701
 On the Chunks tab, Inspect live reads the document again right now, from all three systems, instead of using the last audit. You see which chunks are expected, which exist, and how each is classified: fresh, stale, outdated, unknown, or orphan.
 
 8
-00:01:56.365 --> 00:02:05.717
+00:01:56.232 --> 00:02:05.585
 The Issues tab lists this document's findings. At the top, you can re-audit just this document, or create a repair plan for it.
 
 9
-00:02:10.338 --> 00:02:25.650
+00:02:10.055 --> 00:02:25.367
 Now Isolation. If you serve more than one customer, there is one question that matters: can one tenant's content ever be shown to another? The banner answers in one sentence. Here, it says a leak was found.
 
 10
-00:02:26.109 --> 00:02:46.114
+00:02:25.826 --> 00:02:45.832
 Six cards sum it up. Documents under the wrong tenant counts documents filed under another customer. Confirmed reachable means RAGGuard really searched as the wrong tenant and got the content back, and says how many leaks it searched. The last two show the share of vectors that carry a tenant label and a permission label.
 
 11
-00:02:47.871 --> 00:03:01.618
+00:02:47.584 --> 00:03:01.332
 Five checks follow, each with pass, warning, fail, or not applicable, and a sentence of detail. A warning on the search check means no leak was searched, so reachability is unknown.
 
 12
-00:03:03.489 --> 00:03:13.577
+00:03:03.195 --> 00:03:13.283
 The tenants table lists every customer, worst first. Open findings is live: the issues open right now, each opening its issue panel.
 
 13
-00:03:17.926 --> 00:03:33.427
+00:03:17.610 --> 00:03:33.112
 The isolation drill proves the check works, without risking anything. RAGGuard reads one of your real documents, pretends in memory that its vectors belong to another tenant, and shows what an audit would raise, and the exact alert it would post.
 
 14
-00:03:34.890 --> 00:03:41.348
+00:03:34.592 --> 00:03:41.051
 The badge says drill, and the dialog ends by confirming that nothing was written, saved, or sent.
 
 15
-00:03:43.767 --> 00:03:53.040
+00:03:43.477 --> 00:03:52.750
 Download evidence report saves a plain page with the result, the checks, the tenants, and the open findings, made to hand to a customer or an auditor.
 
 16
-00:03:57.571 --> 00:04:13.723
-One more thing. In Settings, on the Policy tab, the switch Only audit documents found in the source makes audits faster on huge buckets. It also means wrong-tenant vectors can no longer be seen. Let us turn it on and audit.
+00:03:57.311 --> 00:04:16.928
+One more thing. In Settings, on the Policy tab, the switch Only audit documents found in the source makes audits faster on huge buckets. It also means wrong-tenant vectors can no longer be seen. This demo index is tiny, so let us turn it on and audit to see what the page does.
 
 17
-00:04:28.226 --> 00:04:46.582
-Now the page does not claim the index is clean. It says this check is limited, and explains why, instead of giving a false all-clear. The drill still works, so you can always demonstrate the feature. To check for real, turn the setting off and run a full audit.
+00:04:32.309 --> 00:05:05.353
+Now the page does not claim the index is clean. It says this check is limited, and explains why, instead of giving a false all-clear. The drill still works, so you can always demonstrate the feature. And the card says what to do next. A full check has to read the whole index, and on a large index that can run past the time limit. So on a large index, run the ragi audit command on your own computer. Turn the setting off on the hosted site only when your index is small.
 
 18
-00:04:47.046 --> 00:04:57.854
+00:05:05.817 --> 00:05:16.625
 That was the Documents page and the Isolation page. The written user guide has a chapter for each of them, and for every other page. Thank you for watching.
