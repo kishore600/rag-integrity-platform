@@ -355,7 +355,11 @@ audit; a scoped audit does not change it. The header has **Download evidence rep
 - **Download evidence report (.md)** saves `rag-isolation-report.md`: the result, the checks, the tenants and the open findings, marked as
   generated read-only (a percentage with nothing to measure is written `n/a`). It is disabled until a full audit has produced a result.
 - **Limited**: with **Only audit documents found in the source (S3)** on, vectors under another tenant are never read, so a **Why this
-  check is limited** card says so (and links to the Policy settings), the two leak cards read **Not checked**, and the drill still works.
+  check is limited** card says so (and links to **Open audit policy settings**), the two leak cards read **Not checked**, and the drill
+  still works. The card says a full check has to read the whole index and can run past the time limit on a large one, so it recommends
+  `ragi audit` on your own computer and turning the switch off on the hosted site only when the index is small (self-hosted: run
+  `ragi audit` with `RAGI_SOURCE_DOCUMENTS_ONLY=false`, or set it to false on the server only when the index is small). A **Tenant labels**
+  figure of 0% carries the hint that the payload has no tenant field, so every vector counts as the default tenant.
 - **Only one tenant** (*not applicable*): a card says there is nothing to compare; the two leak cards read **Not applicable**.
 - Before the first full audit the page shows **No isolation result yet** with a **Run full audit** button; a workspace that has not
   connected its three systems sees **Connect your data first**.

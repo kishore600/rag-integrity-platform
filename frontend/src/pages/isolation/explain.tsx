@@ -58,11 +58,13 @@ export function LimitedCard({ appMode, onDrill }: { appMode: boolean; onDrill: (
       </p>
       {appMode ? (
         <p>
-          To check for real, turn off <span className="font-medium text-ink">&ldquo;{SOURCE_ONLY_LABEL}&rdquo;</span> in Settings, under Policy, then run a full audit.
+          A full check has to read the whole index. On a large index that can run past the time limit, so run <Mono>ragi audit</Mono> on your own computer. Turn off{" "}
+          <span className="font-medium text-ink">&ldquo;{SOURCE_ONLY_LABEL}&rdquo;</span> on the hosted site only when your index is small.
         </p>
       ) : (
         <p>
-          To check for real, set <Mono>RAGI_SOURCE_DOCUMENTS_ONLY</Mono> to false on the server (it is the &ldquo;{SOURCE_ONLY_LABEL}&rdquo; setting), then run a full audit.
+          To check for real, run <Mono>ragi audit</Mono> with <Mono>RAGI_SOURCE_DOCUMENTS_ONLY=false</Mono>, or set it to false on the server only when the index is small (it is the{" "}
+          <span className="font-medium text-ink">&ldquo;{SOURCE_ONLY_LABEL}&rdquo;</span> setting).
         </p>
       )}
       <p>
@@ -97,7 +99,7 @@ const POINTS: { lead: string; body: ReactNode }[] = [
     lead: "The label percentages",
     body: (
       <>
-        show how many vectors carry a tenant label (<Mono>tenant_id</Mono>) and a permission label. Below 100% means some vectors cannot be kept apart reliably. Permission labels are only checked when your index records them.
+        show how many vectors carry a tenant label (<Mono>tenant_id</Mono>) and a permission label. Below 100% means some vectors cannot be kept apart reliably. A tenant label of 0% means the payload has no tenant field at all, so every vector counts as the default tenant. Permission labels are only checked when your index records them.
       </>
     ),
   },

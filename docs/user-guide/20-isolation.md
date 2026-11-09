@@ -124,7 +124,7 @@ The banner has five states. The page works out the state in this order: limited 
 | **Leak found** | Red | "At least one document is indexed under the wrong tenant. Its content can be returned to the wrong customer." | At least one document is indexed under a tenant that does not own it. Treat it as a security incident. | Open the **Tenants** table to see which tenants hold foreign documents, then the **Open findings (live)** table. Follow [Fix a leak](#fix-a-leak). |
 | **Needs attention** | Amber | "No leak was found, but some vectors lack a tenant or permission label, or permissions disagree with the manifest." | Nothing is indexed under the wrong tenant, but the labels that keep tenants apart are incomplete or inconsistent. It is not a leak yet, but it can become one. | Find the tenants marked **Needs attention** and fix your pipeline so every vector carries its labels. Follow [Fix a Needs attention result](#fix-a-needs-attention-result). |
 | **No leaks found** | Green | "No document is indexed under another tenant, and the labels that keep tenants apart are present and consistent." | The audit found no wrong-tenant document and the labels are complete. | Nothing to do. Check again after every full audit. |
-| **This check is limited** | Blue | "The audit only read the points of documents found in the source, so wrong-tenant vectors cannot be seen. Turn off "Only audit documents found in the source (S3)" for a full isolation check." | The audit could not look at the whole index, so it cannot say "no leaks". It says so instead of showing green. | Read [The limited state](#the-limited-state). |
+| **This check is limited** | Blue | "The audit only read the vectors of documents found in the source, so vectors filed under another tenant cannot be seen. A full isolation check has to read the whole index. On a large index that can run past the time limit, so run `ragi audit` on your own computer, or turn off "Only audit documents found in the source (S3)" only when the index is small." | The audit could not look at the whole index, so it cannot say "no leaks". It says so instead of showing green. | Read [The limited state](#the-limited-state). |
 | **Only one tenant** | Grey | "Only one tenant was found, so there is nothing to keep apart. Isolation checks apply once documents belong to several tenants." | Only one tenant exists, so there is no other customer to leak to. | Nothing to do. See [The only one tenant state](#the-only-one-tenant-state). |
 
 **What "No leaks found" cannot see.** A leak is recognised by document id: vectors filed under one tenant count as a leak when the same document id exists in another tenant's source. Vectors for a document that exists under no tenant at all are reported as **Orphan vectors** in [Integrity issues](07-integrity-issues.md), not here.
@@ -187,6 +187,7 @@ Percentages show one decimal place, for example 98.5%. A dash means there was no
 |---|---|---|
 | 100.0% | Green | Every vector carries a tenant label. |
 | Below 100% | Amber | Some vectors have no tenant label. They are treated as belonging to the Default tenant, and they cannot be kept apart reliably. |
+| 0.0%, with the line "The payload has no tenant field, so every vector counts as the default tenant" | Amber | No vector carries a tenant field at all, so your index does not record tenants in its payload. Every vector is treated as belonging to the Default tenant. This is not a fault in the audit: it tells you the index has nothing to keep tenants apart with. The same words appear when you hover over the **Tenant label** column heading in the Tenants table. |
 | A dash | Grey | There were no vectors to measure. |
 
 ### Permission labels
@@ -276,7 +277,7 @@ The **Tenants** card has the description "Worst first. Select a tenant to see it
 | **Status** | A badge: **Leak** (red), **Needs attention** (amber), **Clean** (green), **Single tenant** (grey), or **Not fully checked** (grey, shown instead of **Clean** in the [limited state](#the-limited-state), because "clean" would claim more than the audit looked at). | See the rules below. |
 | **Documents** | How many documents the audit compared for this tenant. | |
 | **Vectors** | How many vectors are indexed under this tenant. | |
-| **Tenant label** | The share of this tenant's vectors that carry a tenant label. Hover over the heading for "Share of this tenant's vectors that carry a tenant label". | Below 100% is shown in bold amber. Vectors with no tenant label count under the Default tenant, so a shortfall usually appears on that tenant's row. |
+| **Tenant label** | The share of this tenant's vectors that carry a tenant label. Hover over the heading for "Share of this tenant's vectors that carry a tenant label. 0% means the payload has no tenant field, so every vector counts as the default tenant." | Below 100% is shown in bold amber. Vectors with no tenant label count under the Default tenant, so a shortfall usually appears on that tenant's row. |
 | **Permission label** | The share of this tenant's vectors that carry a permission label. | Below 100% is shown in bold amber. **Not recorded** (grey) when your index does not record permissions. |
 | **Foreign documents** | Documents that belong to another tenant but are indexed under this one. | 0 is grey. Above 0 is bold red: this tenant's searches can return another customer's content. |
 | **Permission mismatch** | Documents whose vectors carry a permission label that differs from the manifest. | 0 is grey. Above 0 is bold amber. |
@@ -351,7 +352,7 @@ The last card repeats four ideas in plain words. Its description is "The result 
 |---|---|
 | **A leak** | A document whose vectors are indexed under a tenant it does not belong to. A search made for that other tenant can return its content. |
 | **Confirmed reachable** | RAGGuard searched your index as the wrong tenant and the document really came back. It turns a likely leak into a proven one. Not every leak is searched, so 0 can mean unknown: the card says how many were searched. |
-| **The label percentages** | How many vectors carry a tenant label (`tenant_id`) and a permission label. Below 100% means some vectors cannot be kept apart reliably. Permission labels are only checked when your index records them. |
+| **The label percentages** | How many vectors carry a tenant label (`tenant_id`) and a permission label. Below 100% means some vectors cannot be kept apart reliably. A tenant label of 0% means the payload has no tenant field at all, so every vector counts as the default tenant. Permission labels are only checked when your index records them. |
 | **The isolation drill** | A practice run on one of your own documents. It pretends in memory that its vectors belong to another tenant, and shows what the audit would raise and the alert it would send. It never writes to your S3, database or index, saves no issue and sends no alert. |
 
 ---
@@ -370,7 +371,7 @@ If your manifest or index is shared with more than your bucket covers, you proba
 
 - The banner is blue, titled **This check is limited**.
 - A card titled **Why this check is limited** explains it: "This audit only read documents it found in your source (S3). A vector indexed under the wrong tenant belongs to a document the audit never reads, so it cannot be seen. RAGGuard says so here instead of telling you everything is clean."
-- The card tells you what to change. In a hosted workspace: "To check for real, turn off "Only audit documents found in the source (S3)" in Settings, under Policy, then run a full audit." On a single-user server: "To check for real, set `RAGI_SOURCE_DOCUMENTS_ONLY` to false on the server (it is the "Only audit documents found in the source (S3)" setting), then run a full audit."
+- The card tells you what to do next, and the advice depends on how big your index is. In a hosted workspace: "A full check has to read the whole index. On a large index that can run past the time limit, so run `ragi audit` on your own computer. Turn off "Only audit documents found in the source (S3)" on the hosted site only when your index is small." On a single-user server: "To check for real, run `ragi audit` with `RAGI_SOURCE_DOCUMENTS_ONLY=false`, or set it to false on the server only when the index is small (it is the "Only audit documents found in the source (S3)" setting)."
 - The card says: "The drill still works." It is the way to see the feature in action while limited.
 - Two buttons: **Run isolation drill** and **Open audit policy settings** (which opens **Settings**, **Policy**).
 - **Documents under the wrong tenant** and **Confirmed reachable by a search** read **Not checked**, with the line "Needs a full read of the index".
@@ -379,14 +380,18 @@ If your manifest or index is shared with more than your bucket covers, you proba
 - A tenant that would be **Clean** shows **Not fully checked**.
 - An empty **Open findings (live)** list says an empty list does not prove isolation.
 
-**How to get a real result.**
+**How to get a real result.** A full isolation check has to read the whole index, so how you get one depends on how big your index is.
+
+*Small index (well under about 700,000 vectors, which is roughly what a hosted audit can read in its 270-second budget).*
 
 1. Click **Open audit policy settings**, or open **Settings** and the **Policy** tab ([Settings](14-settings.md#policy-tab-audit-rules-and-cost-estimates)).
 2. Switch off **Only audit documents found in the source (S3)** and **Save**.
 3. Run a full audit (**Run audit** in the top bar).
 4. Return to **Isolation**. The banner now shows a real result.
 
-**What turning it off changes.** The audit reads the whole index, not only the documents in your bucket. On a very large shared collection that takes longer. The audit also starts to report findings the setting was hiding: left-over vectors for deleted files (**Orphan vectors**), manifest rows for deleted files (**Orphan manifest row**) and **Tenant mismatch**. If your collection is shared with other products, orphan findings for those products' documents may appear. See the setting's description in [Settings](14-settings.md#policy-tab-audit-rules-and-cost-estimates).
+*Large index (about 700,000 vectors or more).* Do not switch the setting off on the hosted site. Reading a very large index can run past the time limit of a hosted audit, and the audit then **fails** (cleanly, with a clear message) and your **Last audit** shows **Failed** until the next audit completes. Run `ragi audit` on your own computer instead, with `RAGI_SOURCE_DOCUMENTS_ONLY=false` in its environment. It runs the same audit from your own machine, where the hosted time limit does not apply. On a self-hosted server, run `ragi audit` with `RAGI_SOURCE_DOCUMENTS_ONLY=false`, or set `RAGI_SOURCE_DOCUMENTS_ONLY` to false on the server only when the index is small. The Isolation page shows the result of the latest full audit that its server's ledger holds.
+
+**What turning it off changes.** The audit reads the whole index, not only the documents in your bucket. On a large collection that takes much longer and, on the hosted site, can run past the audit's time limit. The audit also starts to report findings the setting was hiding: left-over vectors for deleted files (**Orphan vectors**), manifest rows for deleted files (**Orphan manifest row**) and **Tenant mismatch**. If your collection is shared with other products, orphan findings for those products' documents may appear. See the setting's description in [Settings](14-settings.md#policy-tab-audit-rules-and-cost-estimates).
 
 ---
 
@@ -546,7 +551,7 @@ Use this when you show RAGGuard to a colleague, a customer or an auditor, or whe
 
 ### Turn a limited result into a real one
 
-Follow [How to get a real result](#the-limited-state) in the limited section: turn off **Only audit documents found in the source (S3)**, save, run a full audit.
+Follow [How to get a real result](#the-limited-state) in the limited section. On a small index, turn off **Only audit documents found in the source (S3)**, save and run a full audit. On a large index, do not turn it off on the hosted site: run `ragi audit` on your own computer instead, because a full read can run past the hosted time limit and the audit then fails.
 
 ---
 

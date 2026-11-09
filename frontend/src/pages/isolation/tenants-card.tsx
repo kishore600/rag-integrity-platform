@@ -52,7 +52,7 @@ function buildColumns(limited: boolean): ColumnDef<IsolationTenant>[] {
     { id: "points", header: "Vectors", accessorFn: (t) => t.points, meta: { className: "text-right tabular-nums" }, cell: ({ row }) => formatNumber(row.original.points) },
     {
       id: "tenant_label",
-      header: () => <span title="Share of this tenant's vectors that carry a tenant label">Tenant label</span>,
+      header: () => <span title="Share of this tenant's vectors that carry a tenant label. 0% means the payload has no tenant field, so every vector counts as the default tenant.">Tenant label</span>,
       accessorFn: (t) => t.tenant_label_pct ?? -1,
       meta: { className: "text-right tabular-nums" },
       cell: ({ row }) => <Pct value={row.original.tenant_label_pct} />,

@@ -65,7 +65,7 @@ Five minutes is enough for two pages, not for all ten. Everything else is in the
 2. Open **Documents** in the sidebar. Click the **Needs attention** card, open the first row, and press **Inspect live** on the **Chunks** tab. Compare what you see with the video.
 3. Open **Isolation**. Read the banner, then press **Run isolation drill**. The drill is read-only, so it is safe on any workspace, and it works even when the page is limited or when you have only one tenant.
 4. Press **Download evidence report (.md)** and open the file.
-5. To see the limited state yourself, turn on **Only audit documents found in the source (S3)** under **Settings, Policy**, run an audit, and open **Isolation**. Turn the switch off again and run a full audit to get the real result back.
+5. To see the limited state yourself, turn on **Only audit documents found in the source (S3)** under **Settings, Policy**, run an audit, and open **Isolation**. Turn the switch off again and run a full audit to get the real result back. Do this only on a small index (the demo data is tiny): on a large index a full audit can run past the hosted time limit and fail, so run `ragi audit` on your own computer instead (see [Isolation](20-isolation.md#the-limited-state)).
 
 ---
 

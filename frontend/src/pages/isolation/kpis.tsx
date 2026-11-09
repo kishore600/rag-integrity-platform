@@ -62,7 +62,7 @@ export function IsolationKpis({ o }: { o: IsolationOverall }) {
         icon={Tag}
         tone={tenantPct === null ? "neutral" : tenantPct >= 100 ? "success" : "warning"}
         value={formatPercent(tenantPct)}
-        hint="of vectors carry a tenant label"
+        hint={tenantPct === 0 ? "The payload has no tenant field, so every vector counts as the default tenant" : "of vectors carry a tenant label"}
       />
       <KpiCard
         label="Permission labels"
