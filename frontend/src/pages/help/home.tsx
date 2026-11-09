@@ -20,7 +20,7 @@ export function HelpHome() {
 
       <Card className="mb-10 max-w-4xl p-5">
         <h2 className="text-section">Video walkthrough</h2>
-        <p className="mb-4 mt-1 text-body text-ink-2">About five minutes, narrated, with captions. It shows the Documents page and the Isolation page on a demo workspace. Use the buttons to jump to a part.</p>
+        <p className="mb-4 mt-1 text-body text-ink-2">About six minutes, narrated, with captions. It shows the Documents page and the Isolation page on a demo workspace. Use the buttons to jump to a part.</p>
         <HelpVideo />
       </Card>
 

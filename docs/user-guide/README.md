@@ -49,7 +49,7 @@ This guide explains every page, every section, every field and every value in th
 | [16. Practical use cases](16-use-cases.md) | Nightly audits, model changes, outages, user reports, cost control and more |
 | [17. Reference: every value](17-reference.md) | Lookup tables for every status, badge, severity, event, limit and term |
 | [18. Troubleshooting](18-troubleshooting.md) | Symptoms, causes and fixes |
-| [19. The video walkthrough](19-video-walkthrough.md) | A five-minute narrated demo of the Documents and Isolation pages, with timestamps and captions |
+| [19. The video walkthrough](19-video-walkthrough.md) | A six-minute narrated demo of the Documents and Isolation pages, with timestamps and captions |
 
 ## Conventions
 

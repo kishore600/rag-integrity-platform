@@ -9,10 +9,10 @@ import { MEDIA } from "./content";
  */
 export const VIDEO_CHAPTERS = [
   { t: 0, title: "Introduction" },
-  { t: 31, title: "The Documents page" },
-  { t: 126, title: "The Isolation page" },
-  { t: 233, title: "When the check is limited" },
-  { t: 305, title: "Summary" },
+  { t: 37, title: "The Documents page" },
+  { t: 148, title: "The Isolation page" },
+  { t: 269, title: "When the check is limited" },
+  { t: 342, title: "Summary" },
 ] as const;
 
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
