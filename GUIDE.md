@@ -216,7 +216,10 @@ the issue list as it is now, so a scoped re-audit, an ignore or a repair can mak
 `findings_live: true`, and `findings_changed_since_audit: true` when the open counts no longer match the audit's.
 
 **Limit.** The check needs the whole index. With **Only audit documents found in the source (S3)** on, vectors under another tenant are
-never read, so the result is `limited` and says so instead of claiming `clean`.
+never read, so the result is `limited` and says so instead of claiming `clean`. Reading the whole index can run past the hosted time
+limit on a large one (the audit then fails with a clear message, as it does after about 700,000 vectors on the 270-second budget), so
+for a large index run `ragi audit` from your own computer and turn the switch off on the hosted site only when the index is small. The
+evidence report explains a 0.0% tenant-label figure: the payload has no tenant field, so every vector counts as the default tenant.
 
 **Isolation drill.** A read-only demonstration on one of your own documents: the app reads it exactly as an audit does, then pretends in
 memory that all its vectors carry a different tenant and runs the normal checks. It shows the finding the audit would raise (critical
@@ -912,7 +915,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 ## 15. Verification status
 
 **Verified** (and how):
-- **294 tests.** On a plain checkout with no external services **270 pass and 24 skip** (checked before publishing). The 24 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 24 real-service tests (Qdrant 10, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 11, engine 11, isolation 25, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, repair cleanup only 5, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4, webhook errors 6.
+- **296 tests.** On a plain checkout with no external services **272 pass and 24 skip** (checked before publishing). The 24 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 24 real-service tests (Qdrant 10, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 11, engine 11, isolation 27, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, repair cleanup only 5, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4, webhook errors 6.
 - The engine finds **exactly** the injected faults (compared with ground truth) in the in-memory demo *and* through the real connector code.
 - A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics.
 - A **real Postgres engine**: both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.

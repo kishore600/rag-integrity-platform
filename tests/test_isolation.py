@@ -327,6 +327,25 @@ def test_findings_say_when_they_no_longer_match_the_last_full_audit(svc):
     assert after["overall"]["leaking_documents"] == out["overall"]["leaking_documents"]  # the audit's own numbers stay as they were
 
 
+def test_the_limited_advice_does_not_send_a_large_index_into_a_timeout():
+    from ragintegrity.engine.isolation import OVERALL_TEXT
+
+    text = OVERALL_TEXT["limited"]
+    assert "ragi audit" in text and "only when the index is small" in text  # not a bare "turn it off"
+    assert "Only audit documents found in the source (S3)" in text  # still names the switch
+
+
+def test_a_zero_percent_tenant_label_is_explained_in_the_report():
+    from ragintegrity.engine.isolation import label_text, to_markdown
+
+    assert "no tenant field" in label_text(0.0) and label_text(87.5) == "87.5%" and label_text(None) == "n/a"
+    src = [SourceDoc("default", "d1", "s3://b/d1", source_hash="h")]
+    iso = _iso(audit(src, [], [point(1, None, "d1", acl=None)]))  # the payload has no tenant field
+    assert iso["overall"]["tenant_label_pct"] == 0.0
+    md = to_markdown({"available": True, "audit": {"run_id": "r1", "finished_at": "now"}, **iso, "findings": []})
+    assert "0.0% (the payload has no tenant field" in md
+
+
 def test_an_unavailable_report_says_so():
     from ragintegrity.engine.isolation import to_markdown
 

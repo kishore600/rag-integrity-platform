@@ -19,8 +19,10 @@ OVERALL_TEXT = {
     "attention": "No leak was found, but some vectors lack a tenant or permission label, or permissions disagree with the manifest.",
     "leak": "At least one document is indexed under the wrong tenant. Its content can be returned to the wrong customer.",
     "not_applicable": "Only one tenant was found, so there is nothing to keep apart. Isolation checks apply once documents belong to several tenants.",
-    "limited": "The audit only read the points of documents found in the source, so wrong-tenant vectors cannot be seen. "
-               "Turn off \"Only audit documents found in the source (S3)\" for a full isolation check.",
+    "limited": "The audit only read the vectors of documents found in the source, so vectors filed under another tenant cannot be seen. "
+               "A full isolation check has to read the whole index. On a large index that can run past the time limit, so run "
+               "`ragi audit` on your own computer, or turn off \"Only audit documents found in the source (S3)\" only when the "
+               "index is small.",
 }
 NEEDS_FULL_AUDIT = "Not checked: the audit only read the documents found in the source, so this needs a full audit."
 SINGLE_TENANT = "Not checked: only one tenant exists, so there is nothing to keep apart."
@@ -33,6 +35,13 @@ def _pct(part: int, whole: int) -> float | None:
 
 def pct_text(value: float | None) -> str:
     return "n/a" if value is None else f"{value}%"
+
+
+def label_text(value: float | None) -> str:
+    """A tenant-label percentage for people: 0.0% means the payload has no tenant field at all, which is not a fault by itself."""
+    if value == 0.0:
+        return "0.0% (the payload has no tenant field, so every vector is treated as the default tenant)"
+    return pct_text(value)
 
 
 def _has_acl_problem(f: Any) -> bool:
@@ -162,7 +171,7 @@ def to_markdown(data: dict[str, Any]) -> str:
         f"- Tenants: {o['tenants']}; vectors checked: {o['points_checked']:,}",
         f"- Documents indexed under the wrong tenant: {o['leaking_documents']} "
         f"({o['leaks_confirmed_reachable']} confirmed reachable by a live search)",
-        f"- Vectors with a tenant label: {pct_text(o['tenant_label_pct'])}{perm}",
+        f"- Vectors with a tenant label: {label_text(o['tenant_label_pct'])}{perm}",
         "", "## Checks", "", "| Check | Result | Detail |", "|---|---|---|",
     ]
     lines += [f"| {c['name']} | {c['status']} | {c['detail']} |" for c in data["checks"]]
