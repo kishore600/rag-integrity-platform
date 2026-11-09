@@ -290,6 +290,50 @@ class IntegrityService:
                                 chunk_tokens=self.settings.chunk_size_tokens, price_per_mtok=self.settings.embedding_price_per_mtok)
         return {"summary": est, "items": items[:200], "items_truncated": len(items) > 200}
 
+    def isolation(self) -> dict[str, Any]:
+        """Tenant isolation as of the latest full audit, with the open findings behind it."""
+        full = self.ledger.list_runs(limit=1, kind="full", status="completed")
+        summary = ((full[0].get("stats") or {}).get("isolation") if full else None)
+        if not summary:
+            return {"available": False, "note": "Run a full audit first: the isolation picture is built from it."}
+        leaks, leak_total = self.ledger.list_issues(status="open", type="tenant_mismatch", limit=100)
+        meta, _ = self.ledger.list_issues(status="open", type="metadata_inconsistent", limit=500)
+        acl = [i for i in meta if any(p.get("code") == "acl_mismatch" for p in ((i.get("evidence") or {}).get("problems") or []))]
+        findings = [{"issue_id": i["id"], "type": i["type"], "severity": i["severity"], "tenant_id": i["tenant_id"],
+                     "document_id": i["document_id"], "title": i["title"], "status": i["status"]} for i in [*leaks, *acl[:100]]]
+        return {"available": True,
+                "audit": {"run_id": full[0]["id"], "finished_at": full[0].get("finished_at"), "kind": "full"},
+                **summary, "findings": findings, "findings_total": leak_total + len(acl)}
+
+    def isolation_report(self, fmt: str = "json") -> Any:
+        from .engine import isolation as iso
+
+        data = self.isolation()
+        return iso.to_markdown(data) if fmt == "md" else data
+
+    def isolation_drill(self, tenant: str | None = None, document_id: str | None = None) -> dict[str, Any]:
+        """Show the audit catching a pretend leak on one real document. Read-only: nothing is stored, written or sent."""
+        from .engine.drills import drill_tenant_mismatch
+
+        if (tenant is None) != (document_id is None):
+            raise ValueError("Give both tenant and document_id, or neither to let RAGGuard pick a document.")
+        if document_id is None:
+            rows, _ = self.ledger.list_documents(status="healthy", limit=50)
+            pick = next((r for r in rows if r.get("index_present") and (r.get("indexed_chunks") or 0) > 0), None)
+            if pick is None:
+                raise ValueError("There is no healthy, indexed document to use yet. Run a full audit first.")
+            tenant, document_id = pick["tenant_id"], pick["document_id"]
+        elif self.ledger.get_document(tenant, document_id) is None:
+            raise ValueError("That document has not been audited yet. Run a full audit first, or leave both fields empty.")
+        c = self.connectors
+        try:
+            return drill_tenant_mismatch(c.source, c.manifest, c.index, self.options(probe=False), (tenant, document_id))
+        except Exception as exc:
+            up = as_upstream(exc)
+            if up is not None:
+                raise up from exc
+            raise
+
     def blast_radius(self, scenario: dict[str, Any]) -> dict[str, Any]:
         return blast_radius(self.ledger, scenario, chunk_tokens=self.settings.chunk_size_tokens,
                             price_per_mtok=self.settings.embedding_price_per_mtok)

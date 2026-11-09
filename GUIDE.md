@@ -80,20 +80,22 @@ Your S3 bucket, manifest table and Qdrant cluster are **not** part of the produc
 | `connectors/qdrant.py` | 209 | read-only vector scan (scroll), retrieval probe, `diagnose()` |
 | `connectors/payload.py` | 79 | maps a Qdrant payload to the canonical chunk record (supports dotted paths) |
 | `connectors/factory.py`, `base.py` | 57 | connector contracts and the demo/live factory |
-| `engine/index_state.py` | 152 | classifies every vector as it is scanned (fresh / stale / outdated / unknown / orphan) |
+| `engine/index_state.py` | 162 | classifies every vector as it is scanned (fresh / stale / outdated / unknown / orphan) |
 | `engine/reconcile.py` | 560 | the reconciliation engine: compares source vs manifest vs index and emits findings |
 | `engine/retrieval.py` | 58 | retrieval probes: can the bad content actually be returned by a search? |
-| `engine/audit.py` | 164 | pulls the three inventories, enforces the time budget, runs the engine |
+| `engine/audit.py` | 169 | pulls the three inventories, enforces the time budget, runs the engine |
 | `engine/planning.py` | 100 | turns issues into per-document repair items and estimates the work and cost |
 | `engine/blast.py` | 117 | blast-radius analysis |
+| `engine/isolation.py` | 132 | the tenant isolation summary, per-tenant status, five checks and the evidence report |
+| `engine/drills.py` | 57 | the read-only isolation drill (pretend leak on one real document) |
 | `ledger.py` | 680 | the workspace-scoped store of issues, documents, runs, plans, and the account tables (SQLite locally, Postgres/Supabase in production) |
-| `service.py` | 277 | the one object the API/CLI use: audits, locking, overview, inspection, friendly errors |
+| `service.py` | 316 | the one object the API/CLI use: audits, locking, overview, inspection, friendly errors |
 | `repair.py` | 206 | plan, signed webhook, independent verification, approved cleanup |
 | `alerts.py`, `report.py` | 115 | Slack-compatible alerts; markdown/CSV/JSON integrity report |
 | `security.py` | 170 | password hashing, the secret vault, SSRF guard, credential scrubbing |
 | `accounts.py` | 242 | users, sessions, rate limits, API keys, encrypted per-workspace settings |
 | `workspaces.py` | 383 | the declarative Settings specification, validation, per-workspace service, connection tests |
-| `api/app.py` | 549 | the HTTP API and authentication |
+| `api/app.py` | 567 | the HTTP API and authentication |
 | `api/static/` | built | the committed build of the web interface (`index.html` and hashed files in `assets/`): deploys need no Node step |
 | `frontend/` (outside `src/`) | 10,326 | the web interface source: React, TypeScript, Vite, Tailwind, TanStack Query and Table, Recharts; `npm run build` writes `api/static/` |
 | `cli.py` | 194 | the `ragi` command |
@@ -186,6 +188,34 @@ complete, done, ready, ok, processed, true` (so a true/false column such as `is_
 embedding`; **failed** - `failed, error, errored, failure`; **deleted** - `deleted, tombstoned, removed`.
 
 ---
+### 3.9 Tenant isolation
+A **tenant** is one customer (or group) whose documents must stay private from the others; its label travels with every vector as
+`tenant_id`. Isolation fails when one tenant's content can be returned to another. Every **full** audit now builds an isolation picture
+from what it already read and stores it with the run (`stats.isolation`); scoped audits do not replace it.
+
+**Result.** Overall: `clean`, `attention`, `leak`, `not_applicable` (only one tenant exists, so there is nothing to keep apart) or
+`limited` (see below). Per tenant: `clean`, `attention`, `leak` or `single_tenant`, worst first.
+- `leak`: documents that belong to another tenant are indexed under this one (the existing **Tenant mismatch** finding, critical).
+  When the retrieval probe is on, each leak is also searched live as the wrong tenant, and the picture says how many were
+  **confirmed reachable**.
+- `attention`: some vectors have no tenant label, or (when permissions are recorded) no permission hash, or a document's vectors carry
+  a permission hash that differs from the manifest (the existing `acl_mismatch` problem, high).
+
+**Five checks** are listed: documents under the wrong tenant; leaks confirmed reachable by a real search; every vector carries a tenant
+label; permission labels agree with the manifest; every vector carries a permission label. Each is `pass`, `warn`, `fail` or `na`.
+"Permissions are recorded" means any vector or manifest row has a permission hash; if none does, those two checks are `na`.
+
+**Limit.** The check needs the whole index. With **Only audit documents found in the source (S3)** on, vectors under another tenant are
+never read, so the result is `limited` and says so instead of claiming `clean`.
+
+**Isolation drill.** A read-only demonstration on one of your own documents: the app reads it exactly as an audit does, then pretends in
+memory that all its vectors carry a different tenant and runs the normal checks. It shows the finding the audit would raise (critical
+**Tenant mismatch**) and the alert text it would send. It writes nothing to S3, the database or the index, saves no issue and sends no
+alert. With no document given, a healthy indexed one is chosen.
+
+**Evidence report.** `GET /api/isolation/report?format=md` is a plain page for a customer's own customers or auditors: result,
+checks, tenants and open findings, stating that it was produced read-only.
+
 
 ## 4. The interface, page by page
 
@@ -387,7 +417,7 @@ and use that provider's region and access keys.
 | **SHA-256 metadata key** | no | no | `sha256` | The user-metadata key that holds the hex SHA-256 (case-insensitive). If an object has none, S3's `ChecksumSHA256` is used, then the ETag (flagged). |
 | **Key pattern (regex)** | no | no | `^(?P<tenant_id>[^/]+)/(?P<document_id>.+)$` | Applied to each key (after the prefix). It **must** capture `(?P<document_id>...)` and may capture `(?P<tenant_id>...)`. With the default, `acme/policies/leave.pdf` is tenant `acme`, document `policies/leave.pdf`. Keys that do not match are ignored. For a single-tenant bucket use `^(?P<document_id>.+)$`. |
 | **Default tenant** | no | no | `default` | The tenant used for keys when the pattern has no `tenant_id` group. |
-| **Look up files from the manifest (skip listing the bucket)** | no | no | off | For large buckets. Instead of listing every object, the audit reads exactly the files named in the manifest's `source_uri` column (S3 addresses such as `s3://bucket/key` or `https://bucket.s3.region.amazonaws.com/key`), one HEAD request each, keeping only files in this bucket whose key matches the **Key pattern**. Cost no longer grows with the size of the bucket. Trade-off: a file that is in S3 but not in the manifest is not discovered. Needs the manifest's `source_uri` to be mapped (section 5.2). Used by full audits only; a tenant-scoped audit still lists. |
+| **Look up files from the manifest (skip listing the bucket)** | no | no | off | For large buckets. Instead of listing every object, the audit reads exactly the files named in the manifest's `source_uri` column (S3 addresses such as `s3://bucket/key` or `https://bucket.s3.region.amazonaws.com/key`), one HEAD request each, keeping only files in this bucket whose key matches the **Key pattern**. Cost no longer grows with the size of the bucket. Trade-off: a file that is in S3 but not in the manifest is not discovered. Needs the manifest's `source_uri` to be mapped (section 5.2). Also keeps one-document checks (**Re-audit document**, the isolation drill) fast, because the manifest is asked for just that document. |
 
 **Important:** whatever hash you use here, your pipeline must record the **same value** as `source_hash` in the manifest and in each
 Qdrant payload, otherwise every document will look stale.
@@ -681,6 +711,9 @@ Interactive docs are at `/docs`. Authentication: **public**; **session** (signed
 | GET | `/api/document` | session or key | one document; `live=true` adds the three-way source/manifest/index view |
 | GET | `/api/report` | session or key | the integrity report (`format=json\|md\|csv`) |
 | GET | `/api/recommendations` | session or key | the reindex recommendation and cost |
+| GET | `/api/isolation` | session or key | tenant isolation as of the latest full audit: overall and per-tenant status, five checks, open findings (`available: false` before the first full audit) |
+| GET | `/api/isolation/report` | session or key | the isolation evidence report (`format=json\|md`) |
+| POST | `/api/isolation/drill` | session or key | the read-only isolation drill on one document (body `tenant` and `document_id`, both or neither) |
 | POST | `/api/blast-radius` | session or key | blast-radius analysis |
 | POST | `/api/query-log` | session or key | ingest retrieval logs (up to 5,000 rows per call) |
 | GET | `/api/history` | session or key | the merged audit trail |
@@ -832,7 +865,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 ## 15. Verification status
 
 **Verified** (and how):
-- **256 tests.** On a plain checkout with no external services **233 pass and 23 skip** (checked before publishing). The 23 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 23 real-service tests (Qdrant 9, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 14, connectors 19, docs 11, engine 11, live mode 6, Postgres integration 5, real Qdrant 9, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4.
+- **275 tests.** On a plain checkout with no external services **251 pass and 24 skip** (checked before publishing). The 24 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 24 real-service tests (Qdrant 10, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 11, engine 11, isolation 17, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4.
 - The engine finds **exactly** the injected faults (compared with ground truth) in the in-memory demo *and* through the real connector code.
 - A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics.
 - A **real Postgres engine**: both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.

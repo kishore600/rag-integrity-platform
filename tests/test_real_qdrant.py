@@ -62,6 +62,27 @@ def test_a_long_document_list_is_read_in_filtered_batches_without_duplicates(wor
     assert expected and len(ids) == len(set(ids)) and set(ids) == expected
 
 
+def test_isolation_summary_and_drill_behave_the_same_on_a_real_server(world):
+    from ragintegrity.demo.world import TARGET_FP, DemoIndex, DemoManifest, DemoSource
+    from ragintegrity.engine.audit import AuditOptions, run_reconciliation
+    from ragintegrity.engine.drills import DRILL_TENANT, drill_tenant_mismatch
+
+    opts = AuditOptions(target=TARGET_FP, check_vectors=True, probe=True, now=datetime(2026, 11, 7, tzinfo=timezone.utc),
+                        grace_minutes=10)
+    real = run_reconciliation(DemoSource(world), DemoManifest(world), QdrantIndex(settings()), opts)
+    memory = run_reconciliation(DemoSource(world), DemoManifest(world), DemoIndex(world), opts)
+    keys = ("status", "tenants", "points_checked", "leaking_documents", "permission_mismatch_documents", "permissions_recorded")
+    assert {k: real.stats["isolation"]["overall"][k] for k in keys} == {k: memory.stats["isolation"]["overall"][k] for k in keys}
+    assert real.stats["isolation"]["overall"]["points_checked"] == len(world.points)
+
+    healthy = next(s for s in real.summaries if s.status == "healthy" and s.indexed_chunks)
+    out = drill_tenant_mismatch(DemoSource(world), DemoManifest(world), QdrantIndex(settings()), opts, healthy.key)
+    assert out["caught"] and out["document"]["points"] > 0
+    assert any(f["type"] == "tenant_mismatch" and f["tenant_id"] == DRILL_TENANT for f in out["findings"])
+    after = list(QdrantIndex(settings()).scan(Scope(keys=frozenset({healthy.key}))))
+    assert after and {p.tenant_id for p in after} == {healthy.tenant_id}  # the real vectors still carry their real tenant
+
+
 def test_empty_embeddings_are_found_when_vectors_are_fetched(world):
     idx = QdrantIndex(settings())
     bad = [p for p in idx.scan(with_vectors=True) if p.vector_checked and not p.vector_ok]

@@ -71,6 +71,11 @@ class QueryLogRequest(BaseModel):
     queries: list[dict[str, Any]] = Field(max_length=5000)
 
 
+class DrillRequest(BaseModel):
+    tenant: str | None = Field(default=None, max_length=256)  # both fields or neither: with neither, a healthy document is picked
+    document_id: str | None = Field(default=None, max_length=2048)
+
+
 class DemoResetRequest(BaseModel):
     seed: int | None = None
 
@@ -566,6 +571,24 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
         media = "text/markdown" if format == "md" else "text/csv"
         return PlainTextResponse(data, media_type=media,
                                  headers={"Content-Disposition": f'attachment; filename="rag-integrity-report.{format}"'})
+
+    # ------------------------------------------------------------------ tenant isolation
+    @app.get("/api/isolation")
+    def isolation(s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:
+        return s.isolation()
+
+    @app.get("/api/isolation/report")
+    def isolation_report(format: Literal["json", "md"] = "json", s: IntegrityService = Depends(get_svc)) -> Response:
+        data = s.isolation_report(format)
+        if format == "json":
+            return JSONResponse(data)
+        return PlainTextResponse(data, media_type="text/markdown",
+                                 headers={"Content-Disposition": 'attachment; filename="rag-isolation-report.md"'})
+
+    @app.post("/api/isolation/drill")
+    def isolation_drill(req: DrillRequest | None = None, s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:
+        req = req or DrillRequest()
+        return s.isolation_drill(req.tenant, req.document_id)
 
     # ------------------------------------------------------------------ recommendations / blast radius / query log
     @app.get("/api/recommendations")

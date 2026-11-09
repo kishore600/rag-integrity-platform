@@ -105,6 +105,10 @@ class IndexAggregator:
         self.states: dict[DocKey, DocIndexState] = {}
         self.unattributed: dict[str, list] = {}  # collection -> [count, sample ids]
         self.points_seen = 0
+        # tenant isolation coverage, counted for every point seen (even one without a document id)
+        self.iso_points: Counter = Counter()
+        self.iso_no_tenant: Counter = Counter()  # the payload carried no tenant label (so it is assumed to be the default tenant)
+        self.iso_no_acl: Counter = Counter()  # the payload carried no permission (ACL) hash
 
     # ------------------------------------------------------------------------------------
     def add_all(self, chunks: Iterable[IndexedChunk]) -> IndexAggregator:
@@ -114,6 +118,12 @@ class IndexAggregator:
 
     def add(self, c: IndexedChunk) -> None:
         self.points_seen += 1
+        iso_tenant = c.tenant_id or self.ctx.default_tenant
+        self.iso_points[iso_tenant] += 1
+        if not c.tenant_id:
+            self.iso_no_tenant[iso_tenant] += 1
+        if not c.acl_hash:
+            self.iso_no_acl[iso_tenant] += 1
         if not c.document_id:
             slot = self.unattributed.setdefault(c.collection, [0, []])
             slot[0] += 1

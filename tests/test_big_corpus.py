@@ -244,6 +244,34 @@ def test_the_hosted_time_budget_applies_on_vercel(monkeypatch):
     assert settings(max_audit_seconds=45).audit_seconds_limit == 45  # an explicit limit wins
 
 
+def test_a_one_document_check_looks_its_file_up_instead_of_listing_the_bucket(bucket):
+    """'Re-audit document' and the isolation drill must stay fast on a huge bucket: the manifest names the file."""
+
+    class NoListing(S3Source):
+        def inventory(self, scope=None):  # pragma: no cover - failing is the point
+            raise AssertionError("the bucket must not be listed")
+
+    class Manifest:
+        has_chunk_manifest = False
+
+        def documents(self, scope=None):
+            for doc in ("1", "2"):
+                row = ManifestRow("default", doc, source_uri=f"s3://docs/bills/{doc}/{doc}.pdf", processing_status="True")
+                if scope is None or scope.matches(row.key):
+                    yield row
+
+    class Index:
+        def scan(self, scope=None, with_vectors=False):
+            return iter(())
+
+    src = NoListing(settings(s3_bucket="docs", s3_region="us-east-1", s3_prefix="bills/", s3_key_pattern=SAME_NUMBER,
+                             s3_hash_mode="etag"))
+    one = collect(src, Manifest(), Index(), AuditOptions(lookup_from_manifest=True), Scope(keys=frozenset({("default", "2")})))
+    assert set(one.source) == {("default", "2")} and set(one.manifest) == {("default", "2")}
+    both = collect(src, Manifest(), Index(), AuditOptions(lookup_from_manifest=True))
+    assert set(both.source) == {("default", "1"), ("default", "2")}
+
+
 def test_tenant_scoped_runs_still_list_the_bucket(bucket):
     """Only a full audit looks files up from the manifest; a tenant-scoped inventory keeps using the listing."""
     src = source(s3_hash_mode="etag")

@@ -18,6 +18,7 @@ from ..connectors.base import (  # noqa: F401  (AuditTimeout is re-exported: the
 )
 from ..models import ChunkRow, DocKey, Fingerprint, ManifestRow, Scope, SourceDoc
 from .index_state import AggContext, IndexAggregator
+from .isolation import build_summary as build_isolation
 from .reconcile import (
     ReconcileConfig,
     ReconcileResult,
@@ -86,12 +87,14 @@ def collect(
         if hasattr(connector, "deadline"):
             connector.deadline = dl
     lookup = getattr(source, "lookup", None)
-    if opts.lookup_from_manifest and lookup is not None and (scope is None or scope.keys is None):
-        # large buckets: read exactly the files the manifest names (one HEAD each) instead of listing everything
+    if opts.lookup_from_manifest and lookup is not None:
+        # large buckets: read exactly the files the manifest names (one HEAD each) instead of listing everything.
+        # This also keeps "re-audit one document" fast: the manifest is queried for just that document.
         _note(opts, t0, "reading the processing manifest")
         man = {r.key: r for r in _guard(manifest.documents(scope), dl, "the processing manifest")}
         _note(opts, t0, "looking up the files the manifest names (S3)", manifest_rows=len(man))
-        src = {d.key: d for d in _guard(lookup(r.source_uri for r in man.values()), dl, "the source bucket")}
+        src = {d.key: d for d in _guard(lookup(r.source_uri for r in man.values()), dl, "the source bucket")
+               if scope is None or scope.matches(d.key)}
     else:
         _note(opts, t0, "listing the source documents (S3)")
         src = {d.key: d for d in _guard(source.inventory(scope), dl, "the source bucket")}  # first: the index scan classifies against it
@@ -145,6 +148,8 @@ def run_reconciliation(
         result.stats["retrieval_probes"] = probe_findings(
             index, result.findings, top_k=opts.probe_top_k, max_probes=opts.probe_max)
         refresh_after_escalation(result)  # probes can escalate severities
+    if scope is None or scope.is_full:  # the isolation picture needs the whole index: not for scoped runs
+        result.stats["isolation"] = build_isolation(c.agg, c.source, c.manifest, result, limited=opts.source_only)
     return result
 
 
