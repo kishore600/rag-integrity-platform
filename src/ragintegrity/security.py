@@ -95,17 +95,35 @@ def scrub(message: str, limit: int = 400) -> str:
 
 
 _ANY_URL = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
+# httpx quotes the raw Location header of a 3xx answer, which may be relative ("/services/T0/B0/token") and so has no scheme
+_REDIRECT_TARGET = re.compile(r"(redirect location: ')[^'\r\n]*(')", re.IGNORECASE)
+
+
+def _address_pieces(url: str) -> list[str]:
+    """The parts of an address that a library can echo without its scheme (a TLS error names the host): path, query,
+    user info and host, longest first. Very short parts are skipped so ordinary words are not rewritten."""
+    try:
+        p = urlparse(url.strip())
+        parts = {p.path, p.query, p.username, p.password, p.hostname}
+    except ValueError:
+        return []
+    return sorted((x for x in parts if x and len(x) >= 4), key=len, reverse=True)
 
 
 def redact_urls(message: str, *secret_urls: str | None) -> str:
     """Remove web addresses from an error message before it is stored, logged or shown.
 
     A webhook address is a secret (a Slack webhook carries its token in the path), and HTTP client errors quote the
-    address they failed on. The exact configured addresses go first, then any other address."""
+    address they failed on. The exact configured addresses go first, then their separate parts (host, path, query,
+    user info) wherever they appear without the scheme, then the target of a redirect (even a relative one), then any
+    other address."""
     text = str(message)
     for url in secret_urls:
         if url:
             text = text.replace(url, "<webhook>")
+            for piece in _address_pieces(url):
+                text = text.replace(piece, "<webhook>")
+    text = _REDIRECT_TARGET.sub(r"\1<url>\2", text)
     return _ANY_URL.sub("<url>", text)
 
 

@@ -221,12 +221,12 @@ When the filter is not the default, a **Clear filters** button appears. The choi
 | Outcome | Meaning | Text in **Detail** |
 |---|---|---|
 | **Delivered** | The webhook accepted the message | "Sent to the alert webhook." |
-| **Failed** | RAGGuard tried and the webhook did not accept it, or could not be reached, or took longer than 10 seconds | The error: its type, then the first part of its message, for example a status code from the webhook. See the caution below |
+| **Failed** | RAGGuard tried and the webhook did not accept it, or could not be reached, or took longer than 10 seconds | The error: its type, then the first part of its message with every web address removed, for example `HTTPStatusError: Client error '404 Not Found' for url '<webhook>'`. See the note below |
 | **Not sent** | Nothing was attempted | "No alert webhook was configured." (no address was saved), or "No new issues at or above the minimum severity." (the audit found nothing that qualifies), or the recorded reason, or "Nothing to send." |
 
 **Common reasons for a failure.** A revoked or deleted Slack webhook (the webhook answers with an error status), a mistyped address (not found), a network problem, or a slow endpoint (more than 10 seconds).
 
-**Caution.** The error text of a failed delivery can contain the address RAGGuard called, which is a secret. Do not share a screenshot of the **Detail** column without checking it first.
+**The address is never shown.** The webhook address is a secret, and the error a web library produces quotes it. RAGGuard replaces it before the error is stored, shown or logged: the address you saved appears as `<webhook>`, and any other web address in the message (including where a redirect pointed, even a relative one) appears as `<url>`. The error type and the status code stay, so you can still tell a 404 (deleted or mistyped address) from a 500 or a refused connection. The same applies to the error of a failed repair delivery. Audits recorded by an earlier version of RAGGuard could hold the address in this column; RAGGuard now removes any web address from that text whenever it reads a run, so old rows are cleaned too. If you ever pasted such a run into a ticket or a chat, rotate the webhook.
 
 ### Paging and counts
 

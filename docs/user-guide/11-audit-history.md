@@ -225,7 +225,7 @@ A card titled **Alert delivery**, with the line "Whether this audit sent an aler
 | **Alerts sent** | How many alert messages went out. It is 0 or 1: one message carries all the issues. |
 | **Issues included** | How many issues the message listed. Shown when a message was sent. |
 | **Reason** | Why nothing was sent. For example "No new issues at or above the alert threshold", or "No RAGI ALERT WEBHOOK URL configured" when no alert webhook is saved. |
-| **Delivery failed: ...** (red) | The webhook did not accept the message. The error follows. A failed delivery never fails the audit. |
+| **Delivery failed: ...** (red) | The webhook did not accept the message. The error follows, with the webhook address replaced by `<webhook>` (see [Alerts](13-alerts.md#outcomes-and-the-text-in-detail)). A failed delivery never fails the audit. |
 
 Alerts cover only new, reopened or escalated issues at or above your minimum severity, so a quiet run with the reason "No new issues at or above the alert threshold" is normal. Set the webhook and threshold on [Alerts](13-alerts.md).
 

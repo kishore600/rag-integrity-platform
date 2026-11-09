@@ -29,7 +29,9 @@ directly (reading, modifying, ignoring, resolving, resetting and hijacking a pla
   `RAGI_SECRET_KEY` before they reach the database. The key exists only in the server environment. Rotate by setting
   `RAGI_SECRET_KEY="<new>,<old>"`: the first encrypts, all decrypt.
 * Secrets are write-only through the API and UI: a saved secret is shown as "saved", never returned.
-* Error messages and ledger rows are scrubbed of `scheme://user:password@host` credentials.
+* Error messages and ledger rows are scrubbed of `scheme://user:password@host` credentials. A failed alert or repair delivery
+  never records the webhook address (a secret: a Slack URL's path is the credential), not even as a redirect target or a host
+  named in a TLS error; run rows stored before that was fixed have web addresses removed when they are read.
 * Everything is read-only by design: S3 `list`/`head` (and `get` only in `compute` hash mode); every manifest query runs in a
   `READ ONLY` transaction with a statement timeout; Qdrant `scroll`/`retrieve`/`query`. The connection test warns if the
   database role could write.

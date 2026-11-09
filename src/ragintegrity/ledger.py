@@ -45,6 +45,7 @@ from sqlalchemy.exc import IntegrityError
 from .config import normalize_db_url
 from .connectors.postgres import make_engine
 from .models import SEVERITY_RANK, DocSummary, Finding, Scope, severity_at_least
+from .security import redact_urls
 
 PG_SCHEMA = "ragi"
 CHUNK = 400
@@ -278,6 +279,17 @@ def _public(row: Any) -> dict[str, Any]:
     return out
 
 
+def _public_run(row: Any) -> dict[str, Any]:
+    """A run as the API returns it. Runs recorded before delivery errors were redacted may hold the alert webhook
+    address (a secret) in ``stats.alerts.error``; it is removed on the way out so old rows stop leaking too."""
+    out = _public(row)
+    stats = out.get("stats")
+    alert = stats.get("alerts") if isinstance(stats, dict) else None
+    if isinstance(alert, dict) and isinstance(alert.get("error"), str):
+        out["stats"] = {**stats, "alerts": {**alert, "error": redact_urls(alert["error"])}}
+    return out
+
+
 class Ledger:
     def __init__(self, url: str, engine: Engine | None = None, workspace_id: str = DEFAULT_WORKSPACE) -> None:
         self.url = normalize_db_url(url)
@@ -383,7 +395,7 @@ class Ledger:
         t = self.t["audit_runs"]
         with self.engine.connect() as c:
             row = c.execute(select(t).where(self._w("audit_runs"), t.c.id == run_id)).mappings().first()
-        return _public(row) if row else None
+        return _public_run(row) if row else None
 
     def list_runs(self, limit: int = 50, kind: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
         t = self.t["audit_runs"]
@@ -393,7 +405,7 @@ class Ledger:
         if status:
             q = q.where(t.c.status == status)
         with self.engine.connect() as c:
-            return [_public(r) for r in c.execute(q).mappings()]
+            return [_public_run(r) for r in c.execute(q).mappings()]
 
     # ------------------------------------------------------------------ scoping helpers
     def _scope_clause(self, table: str, scope: Scope | None):
