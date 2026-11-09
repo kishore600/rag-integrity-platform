@@ -201,6 +201,8 @@ from what it already read and stores it with the run (`stats.isolation`); scoped
 - `attention`: some vectors have no tenant label, or (when permissions are recorded) no permission hash, or a document's vectors carry
   a permission hash that differs from the manifest (the existing `acl_mismatch` problem, high).
 
+The overall sentence is wording, not data: it is produced when the result is read, so a wording change also applies to audits stored earlier.
+
 **Five checks** are listed: documents under the wrong tenant; leaks confirmed reachable by a real search; every vector carries a tenant
 label; permission labels agree with the manifest; every vector carries a permission label. Each is `pass`, `warn`, `fail` or `na`.
 "Permissions are recorded" means any vector or manifest row has a permission hash; if none does, those two checks are `na`.
@@ -919,7 +921,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 ## 15. Verification status
 
 **Verified** (and how):
-- **296 tests.** On a plain checkout with no external services **272 pass and 24 skip** (checked before publishing). The 24 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 24 real-service tests (Qdrant 10, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 11, engine 11, isolation 27, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, repair cleanup only 5, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4, webhook errors 6.
+- **297 tests.** On a plain checkout with no external services **273 pass and 24 skip** (checked before publishing). The 24 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 24 real-service tests (Qdrant 10, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 11, engine 11, isolation 28, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, repair cleanup only 5, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4, webhook errors 6.
 - The engine finds **exactly** the injected faults (compared with ground truth) in the in-memory demo *and* through the real connector code.
 - A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics.
 - A **real Postgres engine**: both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.

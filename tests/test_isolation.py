@@ -327,6 +327,21 @@ def test_findings_say_when_they_no_longer_match_the_last_full_audit(svc):
     assert after["overall"]["leaking_documents"] == out["overall"]["leaking_documents"]  # the audit's own numbers stay as they were
 
 
+def test_the_summary_sentence_always_uses_the_current_wording(svc):
+    """An audit stored earlier holds the sentence it was written with; reading it must show today's wording."""
+    from ragintegrity.engine.isolation import OVERALL_TEXT
+
+    run = svc.ledger.list_runs(limit=1, kind="full", status="completed")[0]
+    stats = dict(run["stats"])
+    stats["isolation"]["overall"]["summary"] = "OLD WORDING FROM AN EARLIER VERSION"
+    svc.ledger.finish_run(run["id"], "completed", stats)
+    assert svc.ledger.list_runs(limit=1, kind="full", status="completed")[0]["stats"]["isolation"]["overall"]["summary"].startswith("OLD")
+
+    out = svc.isolation()
+    assert out["overall"]["summary"] == OVERALL_TEXT[out["overall"]["status"]] and "OLD" not in out["overall"]["summary"]
+    assert OVERALL_TEXT[out["overall"]["status"]] in svc.isolation_report("md")  # the evidence report uses it too
+
+
 def test_the_limited_advice_does_not_send_a_large_index_into_a_timeout():
     from ragintegrity.engine.isolation import OVERALL_TEXT
 

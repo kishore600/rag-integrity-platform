@@ -18,6 +18,7 @@ from .connectors.factory import Connectors, build_connectors
 from .demo.world import DemoWorld
 from .engine.audit import AuditOptions, inspect_document, run_reconciliation
 from .engine.blast import blast_radius
+from .engine.isolation import OVERALL_TEXT
 from .engine.planning import estimate_workload, plan_items
 from .engine.reconcile import parse_ts
 from .ledger import STALE_RUN_SECONDS, Ledger, RunDiff, RunInProgress
@@ -301,7 +302,9 @@ class IntegrityService:
         acl = [i for i in meta if any(p.get("code") == "acl_mismatch" for p in ((i.get("evidence") or {}).get("problems") or []))]
         findings = [{"issue_id": i["id"], "type": i["type"], "severity": i["severity"], "tenant_id": i["tenant_id"],
                      "document_id": i["document_id"], "title": i["title"], "status": i["status"]} for i in [*leaks, *acl[:100]]]
-        overall = summary["overall"]
+        # the sentence is wording, not data: always the current wording (an audit stored earlier may hold older text)
+        overall = {**summary["overall"], "summary": OVERALL_TEXT.get(summary["overall"]["status"], summary["overall"].get("summary", ""))}
+        summary = {**summary, "overall": overall}
         # the banner and cards describe the last full audit; the findings are the issue list as it is now (a scoped re-audit,
         # an ignore or a repair can change it), so say when the two no longer agree
         changed = leak_total != overall["leaking_documents"] or len(acl) != overall["permission_mismatch_documents"]
