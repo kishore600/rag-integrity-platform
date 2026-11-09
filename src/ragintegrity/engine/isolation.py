@@ -22,15 +22,39 @@ OVERALL_TEXT = {
     "limited": "The audit only read the points of documents found in the source, so wrong-tenant vectors cannot be seen. "
                "Turn off \"Only audit documents found in the source (S3)\" for a full isolation check.",
 }
+NEEDS_FULL_AUDIT = "Not checked: the audit only read the documents found in the source, so this needs a full audit."
+SINGLE_TENANT = "Not checked: only one tenant exists, so there is nothing to keep apart."
+NO_PERMISSIONS = "Not checked: permissions are not recorded in this index."
 
 
 def _pct(part: int, whole: int) -> float | None:
     return round(100.0 * part / whole, 1) if whole else None
 
 
+def pct_text(value: float | None) -> str:
+    return "n/a" if value is None else f"{value}%"
+
+
 def _has_acl_problem(f: Any) -> bool:
     return f.type == IssueType.METADATA_INCONSISTENT and any(
         p.get("code") == "acl_mismatch" for p in (f.evidence.get("problems") or []))
+
+
+def _reachability_check(total_leaks: int, tested: int, confirmed: int, off: str | None) -> tuple[str, str]:
+    """Proof that a leak is real: a live search, as the wrong tenant, returned the leaked content."""
+    if off:
+        return "na", off
+    if not total_leaks:
+        return "na", "No leaks, so there is nothing to confirm."
+    if confirmed:
+        return "fail", f"{confirmed} of {total_leaks} leaked document(s) were returned by a live search as the wrong tenant."
+    if tested == 0:
+        return "warn", (f"None of the {total_leaks} leaked document(s) were searched, so reachability is unknown (live searches "
+                        "are off, or the audit's limit on searches was reached).")
+    if tested < total_leaks:
+        return "warn", (f"{tested} of {total_leaks} leaked document(s) were searched and none was returned; the other "
+                        f"{total_leaks - tested} were not searched.")
+    return "pass", f"All {total_leaks} leaked document(s) were searched and none was returned. The labels are still wrong."
 
 
 def build_summary(agg: Any, source_keys: Any, manifest: dict, result: Any, *, limited: bool = False) -> dict[str, Any]:
@@ -40,12 +64,14 @@ def build_summary(agg: Any, source_keys: Any, manifest: dict, result: Any, *, li
     docs = Counter(s.tenant_id for s in result.summaries)
     leaks: Counter = Counter()
     acl_bad: Counter = Counter()
-    confirmed = 0
+    confirmed = tested = 0
     for f in result.findings:
         if f.type == IssueType.TENANT_MISMATCH:
             leaks[f.tenant_id] += 1
-            if (f.evidence.get("retrieval_probe") or {}).get("reachable"):
-                confirmed += 1
+            probe = f.evidence.get("retrieval_probe") or {}
+            if "reachable" in probe:
+                tested += 1
+                confirmed += 1 if probe["reachable"] else 0
         elif _has_acl_problem(f):
             acl_bad[f.tenant_id] += 1
 
@@ -82,36 +108,37 @@ def build_summary(agg: Any, source_keys: Any, manifest: dict, result: Any, *, li
     else:
         overall = "leak" if total_leaks else ("attention" if any(r["status"] == "attention" for r in rows) else "clean")
 
-    def check(name: str, status: str, detail: str) -> dict[str, str]:
-        return {"name": name, "status": status, "detail": detail}
+    def check(name: str, state: tuple[str, str]) -> dict[str, str]:
+        return {"name": name, "status": state[0], "detail": state[1]}
 
-    off = "limited" if limited else ("not_applicable" if not multi else None)
+    # A check that was not run says why. Its detail never reads like a pass.
+    tenant_off = NEEDS_FULL_AUDIT if limited else (SINGLE_TENANT if not multi else None)
+    perm_off = NEEDS_FULL_AUDIT if limited else (NO_PERMISSIONS if not acl_in_use else None)
+
+    def flat(off: str | None, failing: bool, fail_text: str, pass_text: str, bad: str = "fail") -> tuple[str, str]:
+        if off:
+            return "na", off
+        return (bad, fail_text) if failing else ("pass", pass_text)
+
     checks = [
         check("Documents indexed under the wrong tenant",
-              "na" if off else ("fail" if total_leaks else "pass"),
-              "Needs a full audit." if limited else (f"{total_leaks} document(s) are indexed under a tenant they do not belong to."
-                                                     if total_leaks else "None found.")),
-        check("Leaks confirmed reachable by a real search",
-              "na" if off or not total_leaks else ("fail" if confirmed else "pass"),
-              f"{confirmed} of {total_leaks} leaked document(s) were returned by a live search as the wrong tenant."
-              if total_leaks and not limited else "Nothing to confirm."),
+              flat(tenant_off, bool(total_leaks), f"{total_leaks} document(s) are indexed under a tenant they do not belong to.",
+                   "None found.")),
+        check("Leaks confirmed reachable by a real search", _reachability_check(total_leaks, tested, confirmed, tenant_off)),
         check("Every vector carries a tenant label",
-              "na" if off else ("warn" if no_tenant_total else "pass"),
-              f"{no_tenant_total:,} of {total_points:,} vectors have no tenant label." if no_tenant_total
-              else f"All {total_points:,} vectors are labelled."),
+              flat(tenant_off, bool(no_tenant_total), f"{no_tenant_total:,} of {total_points:,} vectors have no tenant label.",
+                   f"All {total_points:,} vectors are labelled.", bad="warn")),
         check("Permission labels agree with the manifest",
-              "na" if limited or not acl_in_use else ("fail" if total_acl else "pass"),
-              f"{total_acl} document(s) have vectors whose permission hash differs from the manifest." if total_acl
-              else ("Permissions are not recorded in this index." if not acl_in_use else "All permission hashes agree.")),
+              flat(perm_off, bool(total_acl), f"{total_acl} document(s) have vectors whose permission hash differs from the manifest.",
+                   "All permission hashes agree.")),
         check("Every vector carries a permission label",
-              "na" if limited or not acl_in_use else ("warn" if no_acl_total else "pass"),
-              f"{no_acl_total:,} of {total_points:,} vectors have no permission hash." if no_acl_total and acl_in_use
-              else ("Permissions are not recorded in this index." if not acl_in_use else "All vectors carry one.")),
+              flat(perm_off, bool(no_acl_total), f"{no_acl_total:,} of {total_points:,} vectors have no permission hash.",
+                   f"All {total_points:,} vectors carry one.", bad="warn")),
     ]
     return {
         "overall": {
             "status": overall, "summary": OVERALL_TEXT[overall], "tenants": len(tenants), "points_checked": total_points,
-            "leaking_documents": total_leaks, "leaks_confirmed_reachable": confirmed,
+            "leaking_documents": total_leaks, "leaks_tested_by_search": tested, "leaks_confirmed_reachable": confirmed,
             "permission_mismatch_documents": total_acl, "permissions_recorded": acl_in_use,
             "tenant_label_pct": _pct(total_points - no_tenant_total, total_points),
             "permission_label_pct": _pct(total_points - no_acl_total, total_points) if acl_in_use else None,
@@ -126,6 +153,8 @@ def to_markdown(data: dict[str, Any]) -> str:
     if not data.get("available"):
         return "# Tenant isolation report\n\nNo full audit has finished yet, so there is nothing to report.\n"
     o, audit = data["overall"], data["audit"]
+    perm = (f"; with a permission label: {pct_text(o['permission_label_pct'])}" if o["permissions_recorded"]
+            else "; permissions are not recorded")
     lines = [
         "# Tenant isolation report", "",
         f"**Result: {o['status'].replace('_', ' ').upper()}**. {o['summary']}", "",
@@ -133,18 +162,19 @@ def to_markdown(data: dict[str, Any]) -> str:
         f"- Tenants: {o['tenants']}; vectors checked: {o['points_checked']:,}",
         f"- Documents indexed under the wrong tenant: {o['leaking_documents']} "
         f"({o['leaks_confirmed_reachable']} confirmed reachable by a live search)",
-        f"- Vectors with a tenant label: {o['tenant_label_pct']}%"
-        + (f"; with a permission label: {o['permission_label_pct']}%" if o["permissions_recorded"] else "; permissions are not recorded"),
+        f"- Vectors with a tenant label: {pct_text(o['tenant_label_pct'])}{perm}",
         "", "## Checks", "", "| Check | Result | Detail |", "|---|---|---|",
     ]
     lines += [f"| {c['name']} | {c['status']} | {c['detail']} |" for c in data["checks"]]
-    lines += ["", "## Tenants", "", "| Tenant | Status | Documents | Vectors | Tenant label | Permission label | Foreign documents |", "|---|---|---|---|---|---|---|"]
+    lines += ["", "## Tenants", "", "| Tenant | Status | Documents | Vectors | Tenant label | Permission label | Foreign documents |",
+              "|---|---|---|---|---|---|---|"]
     for t in data["tenants"]:
-        perm = "n/a" if t["permission_label_pct"] is None else f"{t['permission_label_pct']}%"
         lines.append(f"| {t['tenant_id']} | {t['status'].replace('_', ' ')} | {t['documents']} | {t['points']:,} | "
-                     f"{t['tenant_label_pct']}% | {perm} | {t['foreign_documents']} |")
+                     f"{pct_text(t['tenant_label_pct'])} | {pct_text(t['permission_label_pct'])} | {t['foreign_documents']} |")
     if data.get("findings"):
-        lines += ["", "## Open findings", ""]
+        note = ("These findings are read live and have changed since that audit." if data.get("findings_changed_since_audit")
+                else "These findings are read live from the issue list.")
+        lines += ["", "## Open findings", "", note, ""]
         lines += [f"- **{f['severity']}** {f['title']}: document `{f['document_id']}` under tenant `{f['tenant_id']}`" for f in data["findings"]]
     lines += ["", "_Generated read-only: nothing in your S3, database or vector index was changed._", ""]
     return "\n".join(lines)

@@ -7,7 +7,7 @@ as an issue, and no alert is sent.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import Any
 
@@ -44,8 +44,12 @@ class _MislabelledIndex:
         return getattr(self.inner, name)
 
 
-def drill_tenant_mismatch(source: Any, manifest: Any, index: Any, opts: AuditOptions, key: DocKey) -> dict[str, Any]:
-    """Pretend every vector of ``key`` is labelled with another tenant, and report what the audit would raise."""
+def drill_tenant_mismatch(
+    source: Any, manifest: Any, index: Any, opts: AuditOptions, key: DocKey, preview: Callable[[Any], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Pretend every vector of ``key`` is labelled with another tenant, and report what the audit would raise.
+
+    ``preview(finding)`` builds the alert exactly as a real audit would; without it a plain line is used."""
     opts = replace(opts, probe=False, progress=None)  # the pretend tenant has no real vectors to search, so no live probe
     scope = Scope(keys=frozenset({key}))
     wrapped = _MislabelledIndex(index, key, opts.default_tenant)
@@ -64,8 +68,8 @@ def drill_tenant_mismatch(source: Any, manifest: Any, index: Any, opts: AuditOpt
                       f"different tenant ('{DRILL_TENANT}')."),
         "caught": caught,
         "findings": findings,
-        "would_alert": ({"severity": leak.severity.value, "text": f"RAGGuard: 1 critical issue. {leak.title}: document "
-                                                                  f"{key[1]} (tenant {key[0]})."} if leak else None),
+        "would_alert": (preview(leak) if preview else {"severity": leak.severity.value, "text": f"{leak.title}: document {key[1]}"}
+                        ) if leak else None,
         "nothing_changed": "This was a read-only drill. Nothing was written to your S3, database or vector index, saved as an "
                            "issue, or sent as an alert.",
     }

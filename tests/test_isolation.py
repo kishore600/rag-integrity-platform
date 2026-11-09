@@ -106,8 +106,32 @@ def point(i, tenant, doc, acl="a1"):
                         present_fields=frozenset({"document_id", "source_hash"}))
 
 
-def audit(src, man, chunks, **kw):
-    return run_reconciliation(Src(src), Man(man), Idx(chunks), AuditOptions(probe=False, **kw))
+def audit(src, man, chunks, index=None, **kw):
+    return run_reconciliation(Src(src), Man(man), index or Idx(chunks), AuditOptions(**{"probe": False, **kw}))
+
+
+class ProbingIdx(Idx):
+    """An index whose live search always answers ``hits`` (a list of (point id, score, document id))."""
+
+    def __init__(self, chunks, hits):
+        super().__init__(chunks)
+        self.hits = hits
+
+    def probe(self, collection, point_id, tenant_id, top_k):
+        return self.hits
+
+
+def leak_world(leaks=1):
+    src = [SourceDoc("a", f"d{i}", f"s3://b/a/d{i}", source_hash="h") for i in range(1, leaks + 1)]
+    src.append(SourceDoc("b", "other", "s3://b/b/other", source_hash="h"))
+    chunks = [point(i, "a", f"d{i}") for i in range(1, leaks + 1)]
+    chunks += [point(100 + i, "b", f"d{i}") for i in range(1, leaks + 1)]  # each of a's documents also sits under tenant b
+    chunks.append(point(999, "b", "other"))
+    return src, chunks
+
+
+def reach_check(iso):
+    return next(c for c in iso["checks"] if c["name"].startswith("Leaks confirmed"))
 
 
 def test_one_tenant_means_isolation_does_not_apply():
@@ -233,6 +257,74 @@ def test_the_api(tmp_path):
         bad = c.post("/api/isolation/drill", json={"tenant": "acme"})
         assert bad.status_code == 400 and "both tenant and document_id" in bad.json()["detail"]
         assert c.post("/api/isolation/drill", json={"tenant": "x" * 300, "document_id": "d"}).status_code == 422
+
+
+def test_a_leak_nobody_searched_for_is_a_warning_not_a_pass():
+    src, chunks = leak_world()
+    iso = _iso(audit(src, [], chunks))  # live searches off
+    c = reach_check(iso)
+    assert c["status"] == "warn" and "None of the 1 leaked" in c["detail"] and "unknown" in c["detail"]
+    assert iso["overall"]["leaks_tested_by_search"] == 0 and iso["overall"]["leaks_confirmed_reachable"] == 0
+
+
+def test_a_leak_returned_by_a_live_search_fails_the_check():
+    src, chunks = leak_world()
+    iso = _iso(audit(src, [], chunks, index=ProbingIdx(chunks, [("p101", 0.9, "d1")]), probe=True))
+    c = reach_check(iso)
+    assert c["status"] == "fail" and "1 of 1" in c["detail"]
+    assert iso["overall"]["leaks_tested_by_search"] == 1 and iso["overall"]["leaks_confirmed_reachable"] == 1
+
+
+def test_a_leak_searched_but_not_returned_passes_but_says_the_labels_are_still_wrong():
+    src, chunks = leak_world()
+    iso = _iso(audit(src, [], chunks, index=ProbingIdx(chunks, []), probe=True))  # a search was sent and returned nothing
+    c = reach_check(iso)
+    assert c["status"] == "pass" and "labels are still wrong" in c["detail"]
+    assert iso["overall"]["status"] == "leak"  # the leak itself is unchanged
+
+
+def test_leaks_that_were_only_partly_searched_are_a_warning():
+    src, chunks = leak_world(leaks=2)
+    iso = _iso(audit(src, [], chunks, index=ProbingIdx(chunks, []), probe=True, probe_max=1))
+    c = reach_check(iso)
+    assert c["status"] == "warn" and "1 of 2 leaked" in c["detail"] and "1 were not searched" in c["detail"]
+
+
+def test_checks_that_were_not_run_say_so_and_never_read_like_a_pass(world, connectors, opts):
+    limited = _iso(run_reconciliation(*connectors, dataclasses.replace(opts, source_only=True)))
+    single = _iso(audit([SourceDoc("default", "d1", "s3://b/d1", source_hash="h")], [], [point(1, "default", "d1", acl=None)]))
+    for iso in (limited, single):
+        for c in iso["checks"]:
+            assert c["status"] == "na" and c["detail"].startswith("Not checked") and "All " not in c["detail"], c
+
+
+def test_the_report_never_prints_none():
+    src = [SourceDoc("a", "d1", "s3://b/a/d1", source_hash="h")]
+    iso = _iso(audit(src, [ManifestRow("b", "d9", processing_status="success")], [point(1, "a", "d1")]))  # tenant b: no vectors
+    assert next(t for t in iso["tenants"] if t["tenant_id"] == "b")["tenant_label_pct"] is None
+    from ragintegrity.engine.isolation import pct_text, to_markdown
+
+    md = to_markdown({"available": True, "audit": {"run_id": "r1", "finished_at": "now"}, **iso, "findings": []})
+    assert "None%" not in md and "| None |" not in md and "n/a" in md  # ("None found." in a check is real wording)
+    assert pct_text(None) == "n/a" and pct_text(87.5) == "87.5%"
+
+
+def test_the_drill_previews_the_alert_in_the_real_alert_format(svc):
+    out = svc.isolation_drill()
+    alert = out["would_alert"]
+    assert alert["sent"] is False and alert["severity"] == "critical" and "never sends it" in alert["note"]
+    assert alert["text"].startswith("*RAG Integrity*: 1 new issue(s) at or above `high` (health ")  # what alerts.notify posts
+    assert "[CRITICAL]" in alert["text"] and out["document"]["document_id"] in alert["text"] and "None" not in alert["text"]
+
+
+def test_findings_say_when_they_no_longer_match_the_last_full_audit(svc):
+    out = svc.isolation()
+    assert out["findings_live"] is True and out["findings_changed_since_audit"] is False
+    leak = next(f for f in out["findings"] if f["type"] == "tenant_mismatch")
+    assert svc.ledger.set_issue_status(leak["issue_id"], "ignored", "test")  # someone ignores it after the audit
+    after = svc.isolation()
+    assert after["findings_changed_since_audit"] is True and after["findings_total"] == out["findings_total"] - 1
+    assert after["overall"]["leaking_documents"] == out["overall"]["leaking_documents"]  # the audit's own numbers stay as they were
 
 
 def test_an_unavailable_report_says_so():

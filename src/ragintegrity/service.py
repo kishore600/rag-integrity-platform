@@ -301,9 +301,14 @@ class IntegrityService:
         acl = [i for i in meta if any(p.get("code") == "acl_mismatch" for p in ((i.get("evidence") or {}).get("problems") or []))]
         findings = [{"issue_id": i["id"], "type": i["type"], "severity": i["severity"], "tenant_id": i["tenant_id"],
                      "document_id": i["document_id"], "title": i["title"], "status": i["status"]} for i in [*leaks, *acl[:100]]]
+        overall = summary["overall"]
+        # the banner and cards describe the last full audit; the findings are the issue list as it is now (a scoped re-audit,
+        # an ignore or a repair can change it), so say when the two no longer agree
+        changed = leak_total != overall["leaking_documents"] or len(acl) != overall["permission_mismatch_documents"]
         return {"available": True,
                 "audit": {"run_id": full[0]["id"], "finished_at": full[0].get("finished_at"), "kind": "full"},
-                **summary, "findings": findings, "findings_total": leak_total + len(acl)}
+                **summary, "findings": findings, "findings_total": leak_total + len(acl),
+                "findings_live": True, "findings_changed_since_audit": changed}
 
     def isolation_report(self, fmt: str = "json") -> Any:
         from .engine import isolation as iso
@@ -326,8 +331,18 @@ class IntegrityService:
         elif self.ledger.get_document(tenant, document_id) is None:
             raise ValueError("That document has not been audited yet. Run a full audit first, or leave both fields empty.")
         c = self.connectors
+        full = self.ledger.list_runs(limit=1, kind="full", status="completed")
+        health = ((full[0].get("stats") or {}).get("health_score") if full else None)
+
+        def preview(finding: Finding) -> dict[str, Any]:
+            """The alert exactly as a real audit would build it (the same function), never sent."""
+            msg = alerts.build_message(self.settings, "drill", RunDiff(opened=[finding]), {"health_score": 100.0 if health is None else health})
+            return {"severity": finding.severity.value, "sent": False,
+                    "text": msg["text"] if msg else f"{finding.title} ({finding.tenant_id}/{finding.document_id})",
+                    "note": "This is the message an audit posts to your alert webhook for a new issue. The drill never sends it."}
+
         try:
-            return drill_tenant_mismatch(c.source, c.manifest, c.index, self.options(probe=False), (tenant, document_id))
+            return drill_tenant_mismatch(c.source, c.manifest, c.index, self.options(probe=False), (tenant, document_id), preview)
         except Exception as exc:
             up = as_upstream(exc)
             if up is not None:

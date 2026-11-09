@@ -86,10 +86,10 @@ Your S3 bucket, manifest table and Qdrant cluster are **not** part of the produc
 | `engine/audit.py` | 169 | pulls the three inventories, enforces the time budget, runs the engine |
 | `engine/planning.py` | 100 | turns issues into per-document repair items and estimates the work and cost |
 | `engine/blast.py` | 117 | blast-radius analysis |
-| `engine/isolation.py` | 132 | the tenant isolation summary, per-tenant status, five checks and the evidence report |
-| `engine/drills.py` | 57 | the read-only isolation drill (pretend leak on one real document) |
+| `engine/isolation.py` | 156 | the tenant isolation summary, per-tenant status, five checks and the evidence report |
+| `engine/drills.py` | 60 | the read-only isolation drill (pretend leak on one real document) |
 | `ledger.py` | 680 | the workspace-scoped store of issues, documents, runs, plans, and the account tables (SQLite locally, Postgres/Supabase in production) |
-| `service.py` | 316 | the one object the API/CLI use: audits, locking, overview, inspection, friendly errors |
+| `service.py` | 329 | the one object the API/CLI use: audits, locking, overview, inspection, friendly errors |
 | `repair.py` | 206 | plan, signed webhook, independent verification, approved cleanup |
 | `alerts.py`, `report.py` | 115 | Slack-compatible alerts; markdown/CSV/JSON integrity report |
 | `security.py` | 170 | password hashing, the secret vault, SSRF guard, credential scrubbing |
@@ -204,14 +204,24 @@ from what it already read and stores it with the run (`stats.isolation`); scoped
 **Five checks** are listed: documents under the wrong tenant; leaks confirmed reachable by a real search; every vector carries a tenant
 label; permission labels agree with the manifest; every vector carries a permission label. Each is `pass`, `warn`, `fail` or `na`.
 "Permissions are recorded" means any vector or manifest row has a permission hash; if none does, those two checks are `na`.
+A check that was not run is `na` and its detail starts with "Not checked: ..." and gives the reason; it never reads like a pass.
+
+The "leaks confirmed reachable" check is `fail` when a live search returned a leaked document as the wrong tenant; `warn` when no leak was
+searched (searches are off, or the audit's limit on searches was reached) or only some were; `pass` only when every leak was searched and
+none was returned (the labels are still wrong, and the first check still fails); `na` when there are no leaks. The summary also reports
+`leaks_tested_by_search` and `leaks_confirmed_reachable`.
+
+**Findings are live.** The overall status, cards and checks describe the last full audit. The open findings listed with them are read from
+the issue list as it is now, so a scoped re-audit, an ignore or a repair can make them differ. The response says so:
+`findings_live: true`, and `findings_changed_since_audit: true` when the open counts no longer match the audit's.
 
 **Limit.** The check needs the whole index. With **Only audit documents found in the source (S3)** on, vectors under another tenant are
 never read, so the result is `limited` and says so instead of claiming `clean`.
 
 **Isolation drill.** A read-only demonstration on one of your own documents: the app reads it exactly as an audit does, then pretends in
 memory that all its vectors carry a different tenant and runs the normal checks. It shows the finding the audit would raise (critical
-**Tenant mismatch**) and the alert text it would send. It writes nothing to S3, the database or the index, saves no issue and sends no
-alert. With no document given, a healthy indexed one is chosen.
+**Tenant mismatch**) and the alert text it would send, built by the same function a real audit uses, so it is the real wording. It writes
+nothing to S3, the database or the index, saves no issue and sends no alert. With no document given, a healthy indexed one is chosen.
 
 **Evidence report.** `GET /api/isolation/report?format=md` is a plain page for a customer's own customers or auditors: result,
 checks, tenants and open findings, stating that it was produced read-only.
@@ -865,7 +875,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 ## 15. Verification status
 
 **Verified** (and how):
-- **275 tests.** On a plain checkout with no external services **251 pass and 24 skip** (checked before publishing). The 24 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 24 real-service tests (Qdrant 10, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 11, engine 11, isolation 17, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4.
+- **283 tests.** On a plain checkout with no external services **259 pass and 24 skip** (checked before publishing). The 24 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 24 real-service tests (Qdrant 10, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 11, engine 11, isolation 25, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4.
 - The engine finds **exactly** the injected faults (compared with ground truth) in the in-memory demo *and* through the real connector code.
 - A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics.
 - A **real Postgres engine**: both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.
