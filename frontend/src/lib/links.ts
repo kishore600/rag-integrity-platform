@@ -14,6 +14,3 @@ export const links = {
   audit: (runId: string) => `/audit-history/${encodeURIComponent(runId)}`,
   settings: (tab?: string) => (tab ? `/settings?tab=${encodeURIComponent(tab)}` : "/settings"),
 };
-
-/** Same-origin API documentation (OpenAPI), served by the backend. */
-export const API_DOCS_URL = "/docs";

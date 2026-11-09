@@ -145,13 +145,14 @@ While the index is scanned, each vector is classified against the live source an
 | `orphaned` | not in the source, but vectors still exist |
 | `pending` | modified or being processed within the grace period, so not judged yet |
 
-**Health score** = (healthy + pending documents) ÷ all documents, shown as a percentage. Green at 95% and above, amber at 80% and
+**Health score** = (healthy + pending documents) ÷ all documents, shown as a percentage. Green at 90% and above, amber at 70% and
 above, red below.
 
 ### 3.4 What an audit does, step by step
 1. Take a lock: **one audit at a time per workspace**, enforced by a database index (so it holds across serverless instances). A run
-   that crashed and has been "running" for over 15 minutes (for example a serverless function that was killed before it could record a
-   result) is marked failed ("abandoned") automatically the next time the app checks, so it cannot keep **Run audit** disabled.
+   that crashed and is still "running" after the audit time budget plus 90 seconds (6 minutes on the hosted service; 15 minutes only
+   where there is no time budget), for example a serverless function that was killed before it could record a result, is marked failed
+   ("abandoned") automatically the next time the app checks, so it cannot keep **Run audit** disabled.
 2. Read the **source inventory** from S3 (keys, sizes, modified times, content hashes).
 3. Read the **manifest rows** (and the chunk manifest if configured).
 4. **Scan the vector index** page by page, classifying every point as above. Memory stays proportional to the corpus, not to scan buffers.
@@ -187,7 +188,6 @@ The engine treats these `processing_status` values (case-insensitive) as: **succ
 complete, done, ready, ok, processed, true` (so a true/false column such as `is_indexed` can be mapped as the status); **in flight** - `pending, queued, processing, running, in_progress, indexing, parsing,
 embedding`; **failed** - `failed, error, errored, failure`; **deleted** - `deleted, tombstoned, removed`.
 
----
 ### 3.9 Tenant isolation
 A **tenant** is one customer (or group) whose documents must stay private from the others; its label travels with every vector as
 `tenant_id`. Isolation fails when one tenant's content can be returned to another. Every **full** audit now builds an isolation picture
@@ -196,8 +196,8 @@ from what it already read and stores it with the run (`stats.isolation`); scoped
 **Result.** Overall: `clean`, `attention`, `leak`, `not_applicable` (only one tenant exists, so there is nothing to keep apart) or
 `limited` (see below). Per tenant: `clean`, `attention`, `leak` or `single_tenant`, worst first.
 - `leak`: documents that belong to another tenant are indexed under this one (the existing **Tenant mismatch** finding, critical).
-  When the retrieval probe is on, each leak is also searched live as the wrong tenant, and the picture says how many were
-  **confirmed reachable**.
+  When the retrieval probe is on, leaks are also searched live as the wrong tenant (up to the audit's limit of 25 searches), and the
+  picture says how many were searched and how many were **confirmed reachable**.
 - `attention`: some vectors have no tenant label, or (when permissions are recorded) no permission hash, or a document's vectors carry
   a permission hash that differs from the manifest (the existing `acl_mismatch` problem, high).
 
@@ -226,6 +226,7 @@ nothing to S3, the database or the index, saves no issue and sends no alert. Wit
 **Evidence report.** `GET /api/isolation/report?format=md` is a plain page for a customer's own customers or auditors: result,
 checks, tenants and open findings, stating that it was produced read-only.
 
+---
 
 ## 4. The interface, page by page
 
@@ -233,8 +234,8 @@ The web interface is a React and TypeScript app (source in `frontend/`, built in
 data from the API: nothing is sample data, and anything the product does not do yet is shown as a card marked **Not available yet**.
 
 **The frame around every page.**
-- **Left menu** (dark, 250 px; a slide-out drawer on a phone): *Overview, Data Sources, Reconciliation, Integrity Issues* (with the number
-  of open issues), *Documents, Audit History, Integrations, Alerts, Settings*. At the bottom a card says **LIVE** (your own systems) or
+- **Left menu** (dark, 250 px; a slide-out drawer on a phone), ten pages: *Overview, Data Sources, Reconciliation, Integrity Issues* (with the
+  number of open issues), *Isolation, Documents, Audit History, Integrations, Alerts, Settings*. At the bottom a card says **LIVE** (your own systems) or
   **DEMO** (synthetic data), the workspace name and the version.
 - **Top bar**: a search box (type, then choose *Documents* or *Integrity issues*; press `/` anywhere to focus it), **Run audit**, a bell
   (open issues by severity and when the last audit ran), and your account menu (email, workspace, Settings, **Sign out**).
@@ -323,6 +324,39 @@ once. Click a row for the detail panel:
 *Ingestion failure* (when it started), then **Analyze impact**. It returns documents and tenants affected, the work and cost to fix, and
 the queries that touched them (from your retrieval log, last 14 days).
 
+### Isolation
+Whether your index keeps tenants apart (the idea is in section 3.9). Everything on the page is read-only and comes from the latest **full**
+audit; a scoped audit does not change it. The header has **Download evidence report (.md)** and **Run isolation drill**.
+- **Status banner**: one sentence from the server, coloured by seriousness, with how long ago the audit finished and a **View audit** link.
+  Titles: **Leak found** (red), **Needs attention** (amber), **No leaks found** (green), **This check is limited** (blue) and
+  **Only one tenant** (grey).
+- **Six cards**: *Tenants*, *Vectors checked*, *Documents under the wrong tenant*, *Confirmed reachable by a search* (how many of those a
+  live search returned; the line under it says how many wrong-tenant documents were searched at all, up to 25 per audit, or that
+  reachability is unknown when none was), *Tenant labels* and *Permission labels* (the share of vectors that carry each label;
+  **Not recorded** when the index records no permissions, and a line says how many documents differ from the manifest).
+- **Checks**: the five checks of section 3.9, each *Passed*, *Warning*, *Failed* or *Not applicable* (*Not checked* when the result is
+  limited), with a detail line. A check that was not run says why ("Not checked: ..."). The reachability check shows *Warning* when no leak,
+  or only some, was searched, and *Passed* only when every leak was searched and none was returned.
+- **Tenants**: worst first, with a search box. Columns: *Tenant, Status* (Leak, Needs attention, Clean, Single tenant; **Not fully
+  checked** instead of Clean when limited), *Documents, Vectors, Tenant label, Permission label, Foreign documents, Permission
+  mismatch*. At most 200 tenants are listed ("Showing the worst N of M tenants"). A row opens Documents filtered to that tenant.
+- **Open findings (live)**: the issues open right now, which are the open **Tenant mismatch** issues and the open **Metadata mismatch**
+  issues that include `acl_mismatch`. Columns: *Severity, Issue, Tenant, Document, Status*. A row opens the issue panel. The banner, cards
+  and checks come from the last full audit but this list is live; when they no longer agree (after a scoped re-audit, an ignore or a
+  repair) a note says "These changed since the last full audit. Run a full audit to refresh the summary above." Two links open Integrity
+  Issues filtered: **Wrong-tenant issues** (Tenant mismatch) and **Permission mismatches** (Metadata mismatch).
+- **Run isolation drill**: a dialog marked **DRILL** that starts at once. It shows the **Document used**, **What the drill pretended**,
+  **The audit caught it**, **What the audit would raise**, the **Alert it would have sent** (the real Slack-style message an audit would
+  post to your alert webhook, with a note that the drill never sends it) and a confirmation that nothing was written, saved or sent;
+  **Run it again** repeats it. It never changes anything, so it works in every state.
+- **Download evidence report (.md)** saves `rag-isolation-report.md`: the result, the checks, the tenants and the open findings, marked as
+  generated read-only (a percentage with nothing to measure is written `n/a`). It is disabled until a full audit has produced a result.
+- **Limited**: with **Only audit documents found in the source (S3)** on, vectors under another tenant are never read, so a **Why this
+  check is limited** card says so (and links to the Policy settings), the two leak cards read **Not checked**, and the drill still works.
+- **Only one tenant** (*not applicable*): a card says there is nothing to compare; the two leak cards read **Not applicable**.
+- Before the first full audit the page shows **No isolation result yet** with a **Run full audit** button; a workspace that has not
+  connected its three systems sees **Connect your data first**.
+
 ### Documents
 Every document with its state. Cards count *Total, Healthy, Needs attention, Orphaned, Pending* (each filters the table). Filters:
 search by document id, status, tenant. Columns: *Document, Tenant, Embedding status* (Healthy, Stale, Missing embeddings,
@@ -345,7 +379,7 @@ issues, health and what changed; click a run for its page (stats, what it opened
   headers your worker receives.
 - **API keys**: create (the token is shown once, with a copy button), see when each was last used, and revoke. Keys work only inside
   their workspace: they can run audits and read results, but cannot read settings, create keys or change passwords.
-- **REST API**: the base address and a link to the interactive documentation at `/docs`.
+- **REST API**: the base address, to use together with an API key.
 - **Connected systems**: the three connections at a glance.
 - *Slack*, *Jira* and *PagerDuty* are marked **Not available yet** (use the alert webhook to forward findings today).
 
@@ -720,10 +754,10 @@ Interactive docs are at `/docs`. Authentication: **public**; **session** (signed
 | GET | `/api/documents` | session or key | document states (filters and paging) |
 | GET | `/api/document` | session or key | one document; `live=true` adds the three-way source/manifest/index view |
 | GET | `/api/report` | session or key | the integrity report (`format=json\|md\|csv`) |
-| GET | `/api/recommendations` | session or key | the reindex recommendation and cost |
 | GET | `/api/isolation` | session or key | tenant isolation as of the latest full audit: overall and per-tenant status, five checks, open findings (`available: false` before the first full audit) |
 | GET | `/api/isolation/report` | session or key | the isolation evidence report (`format=json\|md`) |
 | POST | `/api/isolation/drill` | session or key | the read-only isolation drill on one document (body `tenant` and `document_id`, both or neither) |
+| GET | `/api/recommendations` | session or key | the reindex recommendation and cost |
 | POST | `/api/blast-radius` | session or key | blast-radius analysis |
 | POST | `/api/query-log` | session or key | ingest retrieval logs (up to 5,000 rows per call) |
 | GET | `/api/history` | session or key | the merged audit trail |

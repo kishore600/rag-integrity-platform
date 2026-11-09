@@ -385,3 +385,108 @@ export interface PlanRequest {
   tenant?: string;
   types?: string[];
 }
+
+// ---- tenant isolation ---------------------------------------------------------------------------------------
+export type IsolationOverallStatus = "clean" | "attention" | "leak" | "not_applicable" | "limited";
+export type IsolationTenantStatus = "leak" | "attention" | "clean" | "single_tenant";
+export type IsolationCheckStatus = "pass" | "warn" | "fail" | "na";
+
+export interface IsolationOverall {
+  status: IsolationOverallStatus;
+  /** A plain sentence written by the server. Shown as is. */
+  summary: string;
+  tenants: number;
+  points_checked: number;
+  /** Documents indexed under a tenant they do not belong to. */
+  leaking_documents: number;
+  /** Of those, how many were searched live as the wrong tenant (absent in a summary stored by an older version). */
+  leaks_tested_by_search?: number;
+  /** Of the searched ones, how many a live search returned. */
+  leaks_confirmed_reachable: number;
+  permission_mismatch_documents: number;
+  permissions_recorded: boolean;
+  tenant_label_pct: number | null;
+  /** null when the index does not record permissions at all. */
+  permission_label_pct: number | null;
+}
+
+export interface IsolationCheck {
+  name: string;
+  status: IsolationCheckStatus;
+  detail: string;
+}
+
+export interface IsolationTenant {
+  tenant_id: string;
+  status: IsolationTenantStatus;
+  documents: number;
+  points: number;
+  tenant_label_pct: number | null;
+  permission_label_pct: number | null;
+  /** Documents that belong to another tenant but are indexed under this one. */
+  foreign_documents: number;
+  permission_mismatch_documents: number;
+}
+
+export interface IsolationFinding {
+  issue_id: string;
+  type: IssueType;
+  severity: Severity;
+  tenant_id: string;
+  document_id: string;
+  title: string;
+  status: IssueStatus;
+}
+
+/** GET /api/isolation once a full audit has finished. */
+export interface IsolationAvailable {
+  available: true;
+  audit: { run_id: string; finished_at: string | null; kind: "full" };
+  overall: IsolationOverall;
+  /** Worst first, at most 200. */
+  tenants: IsolationTenant[];
+  tenants_total: number;
+  /** Always five. */
+  checks: IsolationCheck[];
+  /** The issues that are open right now (not the ones the last full audit saw). */
+  findings: IsolationFinding[];
+  findings_total: number;
+  findings_live: boolean;
+  /** True when the open issues no longer match the counts of the last full audit (a scoped audit, an ignore or a repair since). */
+  findings_changed_since_audit: boolean;
+}
+
+/** GET /api/isolation before any full audit has finished. */
+export interface IsolationUnavailable {
+  available: false;
+  note: string;
+}
+
+export type IsolationView = IsolationAvailable | IsolationUnavailable;
+
+/** POST /api/isolation/drill. Both fields or neither (neither: the server picks a healthy indexed document). */
+export interface DrillRequest {
+  tenant?: string;
+  document_id?: string;
+}
+
+export interface DrillFinding {
+  type: IssueType;
+  severity: Severity;
+  tenant_id: string;
+  document_id: string;
+  title: string;
+  detail: string;
+}
+
+/** A read-only fire drill: nothing is written, saved or sent. */
+export interface DrillResult {
+  drill: true;
+  document: { tenant_id: string; document_id: string; points: number };
+  simulated: string;
+  caught: boolean;
+  findings: DrillFinding[];
+  /** The message an audit would post to the alert webhook. `text` has Slack-style markup (*bold*, `code`, bullets). */
+  would_alert: { severity: Severity; sent: boolean; text: string; note: string } | null;
+  nothing_changed: string;
+}

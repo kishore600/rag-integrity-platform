@@ -238,7 +238,7 @@ const FAQS: { q: string; a: string }[] = [
   { q: "Does RAGGuard change my data?", a: "No. It only lists, reads and queries your S3 bucket, your manifest table and your Qdrant collection. Fixes are carried out by your own worker, which RAGGuard asks with a signed request. RAGGuard then checks the real index again." },
   { q: "What do I need to connect?", a: "An S3 bucket with your source documents, a PostgreSQL table where your ingestion pipeline records what it indexed, and a Qdrant collection with your vectors. The Data Sources page tests each connection and tells you exactly what to change." },
   { q: "How does it know what my index should contain?", a: "It compares content hashes and versions from your source with the ones stored on your vectors, and the chunk counts in your manifest with what is actually indexed. It can also run a search to check whether bad content can really be returned." },
-  { q: "Can I run audits from CI or on a schedule?", a: "Yes. Create an API key and call the audit endpoint from GitHub Actions, cron or any scheduler. The API is documented in the interactive API documentation." },
+  { q: "Can I run audits from CI or on a schedule?", a: "Yes. Create an API key and call the audit endpoint from GitHub Actions, cron or any scheduler. A key can run audits and read results, but it cannot read your settings or create other keys." },
   { q: "How are my credentials protected?", a: "They are encrypted before they are stored, used only from the server to read your systems, and never shown again once saved. The hosted service refuses private and localhost addresses." },
 ];
 
@@ -247,7 +247,7 @@ export function Faq() {
     <section id="faq" aria-labelledby="faq-title" className="scroll-mt-16 border-t border-line bg-app py-20 sm:py-24">
       <Container className="grid gap-12 lg:grid-cols-[0.8fr_1.2fr]">
         <SectionHeading id="faq-title" eyebrow="FAQ" title="Questions, answered">
-          Anything else? The API documentation and your own audit results are the best place to look.
+          The usual worries, answered plainly.
         </SectionHeading>
         <div className="divide-y divide-line rounded-card border border-line bg-white">
           {FAQS.map((f) => (
@@ -286,7 +286,7 @@ export function FinalCta({ canRegister }: { canRegister: boolean }) {
           <CtaGhost to="/login">Sign in</CtaGhost>
         </div>
         <p className="mt-6 text-support text-slate-400">
-          Questions first? <a href="#faq" className="underline underline-offset-4 hover:text-white">Read the FAQ</a> or open the <a href="/docs" className="underline underline-offset-4 hover:text-white">API documentation</a>.
+          Questions first? <a href="#faq" className="underline underline-offset-4 hover:text-white">Read the FAQ</a>.
         </p>
       </Container>
     </section>

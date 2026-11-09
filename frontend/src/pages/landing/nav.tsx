@@ -1,6 +1,5 @@
 import { Link } from "react-router-dom";
 import { Logo } from "@/components/brand/logo";
-import { API_DOCS_URL } from "@/lib/links";
 import { Container } from "./ui";
 
 const LINKS = [
@@ -51,7 +50,6 @@ export function LandingFooter({ canRegister }: { canRegister: boolean }) {
         <nav aria-label="Footer" className="flex flex-wrap gap-x-10 gap-y-3 text-body">
           <Link to="/login" className="hover:text-white">Sign in</Link>
           {canRegister ? <Link to="/signup" className="hover:text-white">Create account</Link> : null}
-          <a href={API_DOCS_URL} className="hover:text-white">API documentation</a>
           <a href="#faq" className="hover:text-white">FAQ</a>
         </nav>
       </Container>

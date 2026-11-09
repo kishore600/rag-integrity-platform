@@ -16,6 +16,7 @@ const Overview = lazy(() => import("@/pages/overview"));
 const DataSources = lazy(() => import("@/pages/data-sources"));
 const Reconciliation = lazy(() => import("@/pages/reconciliation"));
 const Issues = lazy(() => import("@/pages/issues"));
+const Isolation = lazy(() => import("@/pages/isolation"));
 const Documents = lazy(() => import("@/pages/documents"));
 const AuditHistory = lazy(() => import("@/pages/audit-history"));
 const Integrations = lazy(() => import("@/pages/integrations"));
@@ -87,6 +88,7 @@ export default function App() {
         <Route path="reconciliation" element={<Reconciliation />} />
         <Route path="issues" element={<Issues />} />
         <Route path="issues/:issueId" element={<Issues />} />
+        <Route path="isolation" element={<Isolation />} />
         <Route path="documents" element={<Documents />} />
         <Route path="audit-history" element={<AuditHistory />} />
         <Route path="audit-history/:runId" element={<AuditHistory />} />

@@ -1,13 +1,10 @@
-import { ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
-import { buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { CopyButton } from "@/components/shared/copy-button";
 import { LinkButton } from "@/components/shared/link-button";
 import { PageHeader, Mono } from "@/components/shared/page";
 import { NotAvailable, Skeleton } from "@/components/shared/states";
 import { useOverview } from "@/hooks/queries";
-import { API_DOCS_URL } from "@/lib/links";
 import { EnvNote, QueryGate, StateBadge, useSystems } from "../_settings-form";
 import { ApiKeysSection } from "./api-keys";
 import { RepairCard } from "./repair-card";
@@ -16,19 +13,13 @@ function RestApiCard() {
   const origin = window.location.origin;
   return (
     <Card>
-      <CardHeader title="REST API" description="Everything in this interface is also available over HTTP." />
-      <CardBody className="space-y-4">
-        <div>
-          <p className="text-support text-ink-2">Base URL</p>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <Mono>{origin}</Mono>
-            <CopyButton text={origin} label="Copy" />
-          </div>
+      <CardHeader title="REST API" description="Everything in this interface is also available over HTTP, with an API key." />
+      <CardBody>
+        <p className="text-support text-ink-2">Base URL</p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <Mono>{origin}</Mono>
+          <CopyButton text={origin} label="Copy" />
         </div>
-        <a href={API_DOCS_URL} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary" })}>
-          Open API documentation <ExternalLink className="h-4 w-4" aria-hidden />
-          <span className="sr-only">(opens in a new tab)</span>
-        </a>
       </CardBody>
     </Card>
   );

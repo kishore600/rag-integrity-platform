@@ -15,7 +15,10 @@ import type {
   CreatedApiKey,
   DocumentDetail,
   DocumentRow,
+  DrillRequest,
+  DrillResult,
   HistoryEvent,
+  IsolationView,
   IssueDetail,
   Issue,
   Overview,
@@ -221,3 +224,11 @@ export function useRevokeApiKey() {
 export function useChangePassword() {
   return useMutation({ mutationFn: (v: { current_password: string; new_password: string }) => post<{ ok: boolean }>("/api/auth/password", v) });
 }
+
+// ---- tenant isolation ------------------------------------------------------------------------------------------
+/** The isolation picture of the latest full audit. It only changes when an audit finishes (invalidateData refreshes it), so it is not polled. */
+export const useIsolation = (enabled = true) =>
+  useQuery({ queryKey: ["isolation"], queryFn: () => get<IsolationView>("/api/isolation"), enabled, retry: noRetryOnClientError });
+
+/** The read-only fire drill. It changes nothing on the server, so it deliberately does not invalidate any cached read. */
+export const useIsolationDrill = () => useMutation({ mutationFn: (req: DrillRequest = {}) => post<DrillResult>("/api/isolation/drill", req) });
