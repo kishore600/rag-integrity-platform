@@ -90,9 +90,9 @@ Your S3 bucket, manifest table and Qdrant cluster are **not** part of the produc
 | `engine/drills.py` | 60 | the read-only isolation drill (pretend leak on one real document) |
 | `ledger.py` | 680 | the workspace-scoped store of issues, documents, runs, plans, and the account tables (SQLite locally, Postgres/Supabase in production) |
 | `service.py` | 329 | the one object the API/CLI use: audits, locking, overview, inspection, friendly errors |
-| `repair.py` | 206 | plan, signed webhook, independent verification, approved cleanup |
+| `repair.py` | 215 | plan, signed webhook, independent verification, approved cleanup |
 | `alerts.py`, `report.py` | 115 | Slack-compatible alerts; markdown/CSV/JSON integrity report |
-| `security.py` | 170 | password hashing, the secret vault, SSRF guard, credential scrubbing |
+| `security.py` | 180 | password hashing, the secret vault, SSRF guard, credential scrubbing |
 | `accounts.py` | 242 | users, sessions, rate limits, API keys, encrypted per-workspace settings |
 | `workspaces.py` | 383 | the declarative Settings specification, validation, per-workspace service, connection tests |
 | `api/app.py` | 567 | the HTTP API and authentication |
@@ -692,7 +692,10 @@ current but the manifest records an older hash), `manifest_version_mismatch` (lo
 The platform holds **read-only** access and never deletes vectors blindly. Repair is a hand-off with independent verification.
 
 1. **Plan.** Open issues are grouped per document into the *smallest safe action*: `reindex_full` for missing, stale, drifted or empty-embedding documents; `reindex_chunks` for partial indexes; `fix_metadata` when only metadata is wrong; and a "cleanup later" flag for superseded, duplicate, orphan and tenant-mismatch vectors. Collection-level findings are not document repairs.
-2. **Trigger.** The reindex request is POSTed to your webhook, signed with HMAC-SHA256 over `"<timestamp>.<raw body>"` (headers `X-Ragi-Event`, `X-Ragi-Timestamp`, `X-Ragi-Signature`, `X-Ragi-Delivery`; a 5-minute replay window). **Reindex phase: add or replace only, never delete.** Without a signing secret nothing is sent.
+2. **Trigger.** The reindex request is POSTed to your webhook, signed with HMAC-SHA256 over `"<timestamp>.<raw body>"` (headers `X-Ragi-Event`, `X-Ragi-Timestamp`, `X-Ragi-Signature`, `X-Ragi-Delivery`; a 5-minute replay window). **Reindex phase: add or replace only, never delete.** Without a signing secret nothing is sent. A failed delivery is reported without the webhook address (it is a secret: Slack puts its token in the path).
+   **A plan that only removes vectors** (orphans, duplicates, superseded or wrong-tenant vectors) has nothing for your worker to reprocess:
+   **Trigger repair** sends nothing, records a `nothing_to_reindex` event and goes straight to verification, so the plan becomes
+   `cleanup_pending` and is ready for **Approve cleanup**. Verify can also be the first step of such a plan.
 3. **Your worker** re-reads the latest source, parses, chunks, embeds and upserts with deterministic point ids (retries overwrite instead of duplicating), updates the manifest, and optionally calls back to the platform.
 4. **Verify.** A scoped re-audit of the plan's documents runs and each document gets five checks: *all expected chunks present*, *embeddings present*, *latest version indexed*, *metadata correct*, *old vectors inactive*. A worker that reports success but wrote half the chunks fails here, and its documents keep their old vectors.
 5. **Approve cleanup.** With policy `manual` an operator presses **Approve cleanup**; with `auto` this happens after verification. The removal list is **recomputed from the live index at that moment** and sent as exact point ids, and only for documents that passed verification (orphan documents have nothing to verify first). A single request carries at most 5,000
@@ -856,7 +859,7 @@ The full threat model, with what is and is not covered, is in [docs/security.md]
 - **CSRF**: `SameSite=Lax` plus an `Origin` check on every cookie-authenticated write.
 - **Rate limits** (database-backed, so they hold across serverless instances): 8 sign-in attempts per account and 30 per network per 15 minutes; 5 sign-ups per network per hour; 10 password changes per account per 15 minutes; 30 connection tests per workspace per 10 minutes.
 - **Tenant isolation**: every ledger statement carries the workspace id; the tests attack read, modify, resolve, reset and plan-hijack across workspaces, on SQLite and a real Postgres.
-- **Secrets at rest**: Fernet (AES-128-CBC + HMAC-SHA256) under `RAGI_SECRET_KEY`, which exists only in the server environment. Secrets are write-only in the UI/API. Errors and ledger rows are scrubbed of `scheme://user:password@host` credentials.
+- **Secrets at rest**: Fernet (AES-128-CBC + HMAC-SHA256) under `RAGI_SECRET_KEY`, which exists only in the server environment. Secrets are write-only in the UI/API. Errors and ledger rows are scrubbed of `scheme://user:password@host` credentials, and the error of a failed alert or repair webhook delivery has every web address removed (a webhook address is itself a secret), in the ledger, the logs and the interface.
 - **SSRF guard**: every host a user supplies (S3 endpoint, Qdrant URL, manifest database, repair and alert webhooks) must be public. Loopback, private, link-local (including the cloud metadata address), carrier-grade NAT, IPv4-mapped IPv6, multicast and reserved ranges are refused; hostnames are resolved and every address must be public; checked when saved **and again before every connection**. URLs may not contain credentials; databases must be `postgresql://` with only `sslmode`, `connect_timeout`, `application_name` options.
 - **Read-only connectors**: S3 list/head (get only in `compute` mode); manifest queries in `READ ONLY` transactions; Qdrant scroll/retrieve/query.
 - **API keys** are hashed, revocable, and cannot read settings or mint keys.
@@ -909,7 +912,7 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 ## 15. Verification status
 
 **Verified** (and how):
-- **283 tests.** On a plain checkout with no external services **259 pass and 24 skip** (checked before publishing). The 24 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 24 real-service tests (Qdrant 10, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 11, engine 11, isolation 25, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4.
+- **294 tests.** On a plain checkout with no external services **270 pass and 24 skip** (checked before publishing). The 24 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 24 real-service tests (Qdrant 10, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 11, engine 11, isolation 25, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, repair cleanup only 5, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4, webhook errors 6.
 - The engine finds **exactly** the injected faults (compared with ground truth) in the in-memory demo *and* through the real connector code.
 - A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics.
 - A **real Postgres engine**: both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.

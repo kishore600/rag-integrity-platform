@@ -94,6 +94,21 @@ def scrub(message: str, limit: int = 400) -> str:
     return _URL_CREDS.sub(r"\1***\2", str(message))[:limit]
 
 
+_ANY_URL = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
+
+
+def redact_urls(message: str, *secret_urls: str | None) -> str:
+    """Remove web addresses from an error message before it is stored, logged or shown.
+
+    A webhook address is a secret (a Slack webhook carries its token in the path), and HTTP client errors quote the
+    address they failed on. The exact configured addresses go first, then any other address."""
+    text = str(message)
+    for url in secret_urls:
+        if url:
+            text = text.replace(url, "<webhook>")
+    return _ANY_URL.sub("<url>", text)
+
+
 # ---------------------------------------------------------------------------------------------- email / tokens
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s.]{2,}$")
 

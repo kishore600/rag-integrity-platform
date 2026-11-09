@@ -10,6 +10,7 @@ import httpx
 from .config import Settings
 from .ledger import RunDiff
 from .models import severity_at_least
+from .security import redact_urls
 
 log = logging.getLogger("ragintegrity.alerts")
 
@@ -52,5 +53,7 @@ def notify(settings: Settings, run_id: str, diff: RunDiff, stats: dict[str, Any]
         resp.raise_for_status()
         return {"sent": 1, "issues": message["summary"]["new_issues"]}
     except Exception as exc:  # alert delivery must never fail an audit
-        log.warning("alert delivery failed: %s", exc)
-        return {"sent": 0, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+        # the webhook address is a secret and HTTP errors quote it: never store it, show it or log it
+        safe = f"{type(exc).__name__}: {redact_urls(str(exc), settings.alert_webhook_url)[:160]}"
+        log.warning("alert delivery failed: %s", safe)
+        return {"sent": 0, "error": safe}

@@ -20,6 +20,7 @@ import httpx
 
 from .engine.planning import estimate_workload, plan_items
 from .models import CLEANUP_TYPES, IssueType, Scope
+from .security import redact_urls
 
 if TYPE_CHECKING:
     from .service import IntegrityService
@@ -127,7 +128,8 @@ class RepairManager:
             resp = httpx.post(url, content=raw, headers=headers, timeout=30)
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            raise RepairError(f"Repair webhook delivery failed: {type(exc).__name__}: {str(exc)[:200]}", 502) from exc
+            # the webhook address can carry a token, and HTTP errors quote it
+            raise RepairError(f"Repair webhook delivery failed: {type(exc).__name__}: {redact_urls(str(exc), url)[:200]}", 502) from exc
         try:
             return resp.json()
         except ValueError:
@@ -140,7 +142,13 @@ class RepairManager:
             raise RepairError(f"Plan is '{plan['status']}'; only draft, partial or failed plans can be (re)triggered.", 409)
         body = self.payload(plan, "reindex")
         if not body["items"]:
-            raise RepairError("This plan has nothing to reprocess (cleanup only). Use approve-cleanup.", 409)
+            if plan["status"] == "draft":
+                # a cleanup-only plan (orphans, duplicates, superseded or wrong-tenant vectors) has nothing for the worker to
+                # reprocess: go straight to verification, which makes it ready for the operator to approve the removal
+                self.svc.ledger.add_repair_event(plan_id, "nothing_to_reindex", {
+                    "note": "Cleanup-only plan: nothing was sent to the worker. Verified directly; removal still needs approval."})
+                return self.verify(plan_id)
+            raise RepairError("This plan has nothing to reprocess (cleanup only). Use verify, then approve-cleanup.", 409)
         resp = self._deliver(body)
         self.svc.ledger.save_plan(plan_id, "triggered", plan["items"], plan["summary"])
         self.svc.ledger.add_repair_event(plan_id, "reindex_triggered", {"documents": len(body["items"]), "worker_response": resp})
@@ -148,9 +156,10 @@ class RepairManager:
 
     def verify(self, plan_id: str) -> dict[str, Any]:
         plan = self.get(plan_id)
-        if plan["status"] == "draft":
+        reindex_work = any(it["actions"] and it["status"] in ("planned", "failed") for it in plan["items"])
+        if plan["status"] == "draft" and reindex_work:
             raise RepairError("Trigger the plan before verifying it.", 409)
-        items = plan["items"]
+        items = plan["items"]  # (a cleanup-only draft has nothing to trigger, so it may be verified straight away)
         keys = frozenset((i["tenant_id"], i["document_id"]) for i in items)
         result = self.svc.run_audit(scope=Scope(keys=keys), trigger="repair-verify", kind="verify", probe=False)
         types_by_key: dict[tuple[str, str], set[str]] = {}
