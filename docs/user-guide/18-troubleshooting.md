@@ -12,6 +12,7 @@ Most problems fall into three groups: a connection does not work (sections on co
 - [Connection test messages](#connection-test-messages)
 - [A data source card says Error or Status unavailable](#a-data-source-card-says-error-or-status-unavailable)
 - [An audit stays running or fails](#an-audit-stays-running-or-fails)
+- [Everything looks missing, or an audit warns about document IDs](#everything-looks-missing-or-an-audit-warns-about-document-ids)
 - [Zero issues when you expect some](#zero-issues-when-you-expect-some)
 - [Too many issues](#too-many-issues)
 - [Documents shown as Failed, Missing or orphaned unexpectedly](#documents-shown-as-failed-missing-or-orphaned-unexpectedly)
@@ -183,6 +184,23 @@ Where to read the reason: the red message on **Overview** under **Last audit**, 
 | "Finish setup first: connect ..." | A required connection is missing | See [Connect your data sources first](#connect-your-data-sources-first) |
 | The message names one of your systems, for example an access denied text, "Qdrant rejected the API key ..." or "Authentication failed ..." | A connection stopped working since you last tested it | See [Connection test messages](#connection-test-messages) |
 
+## Everything looks missing, or an audit warns about document IDs
+
+An audit can only match documents whose ID is the same in S3, the manifest and Qdrant. When the IDs differ, most documents look missing or orphaned and the numbers are noise. Start with the **Setup check** on **Data sources**: it compares the IDs in plain words ([The Setup check](04-data-sources.md#the-setup-check)).
+
+| What you see | Likely cause | Fix |
+|---|---|---|
+| **Files in S3** needs fixing: none of the file names match the key pattern | The **Key pattern** does not fit your file names (for example it expects `.pdf` and the bucket holds `.md`) | Change the **Key pattern** in the S3 dialog so it captures the document ID from the real file names the check shows, save, and check again |
+| **S3 against the manifest** is red or amber, and the IDs at a glance look alike but are not the same (`2329961` and `bill-2329961`) | S3 and the manifest write the ID differently | Make both sides write the ID the same way, or change the key pattern. RAGGuard compares IDs exactly: an ID clean-up rule is not available yet |
+| **Tenant names agree** needs fixing | The systems use different tenant names, or one side has none | Make the tenant names match, or set the **Default tenant** for data without tenants |
+| **S3 against Qdrant** is low | The IDs in the Qdrant payload differ from the file IDs, or those documents are not indexed yet | Compare the IDs at a glance; map the Qdrant payload field that holds the document ID |
+| **Qdrant against S3** says most of the index belongs to other documents | The collection is shared with other sources | Turn on **Only audit documents found in the source (S3)** under **Settings**, **Policy**. The row then passes: it was information, not a problem |
+| An amber notice on **Overview** and a warning on the audit's page: more than one file in S3 shares an ID | A key pattern that captures only the file name, while the same name exists in two folders | Change the key pattern so every file gets its own ID (for example include the folder), or remove the extra copies |
+| The warning says more than one manifest row shares an ID | Old rows were left behind when a document was processed again, or the mapped ID column is not unique | Remove the old rows, or map a column that is unique per document as the document ID |
+| The warning says some manifest rows have no document ID | The column map points at the wrong column | Check the column map for the manifest on **Data sources** |
+
+These warnings do not make an audit's findings wrong: the audit followed one item per ID, and the warning tells you what it could not see. Fix the cause, run a full audit, and the warning goes away.
+
 ## Zero issues when you expect some
 
 Work through these in order. Each is a way the audit can legitimately see less than you expect.
@@ -192,7 +210,7 @@ Work through these in order. Each is a way the audit can legitimately see less t
 | You are looking at a filter | The **Issues** tab shows **Open** issues only by default. Ignored and resolved issues are hidden. A severity chip or other filter may be on. | Click **Clear filters**, or set **Status** to **All statuses** |
 | No audit has run, or the last one failed | **Overview** says "No audit has run yet", or **Last audit** is red | Run an audit and read any error |
 | You only ran a scoped audit | The run's **Scope** is a tenant or "N documents" | Run a full audit. The results on **Reconciliation** come from the latest full audit. |
-| Your documents are not being found | **Source documents** on **Reconciliation** is 0 or too low | Check **Key prefix** and **Key pattern**. Keys that do not match the pattern are ignored without warning, and so are keys that end in `/`. |
+| Your documents are not being found | **Source documents** on **Reconciliation** is 0 or too low | Run the **Setup check** on **Data sources**: it shows real file names next to your pattern. Check **Key prefix** and **Key pattern**. Keys that do not match the pattern are ignored (the Setup check counts them), and so are keys that end in `/`. |
 | Documents are still inside the grace period | They are listed as **Pending** under **Document status** | Wait, or reduce **Grace period (minutes)** on **Settings**, **Policy** |
 | **Only audit documents found in the source (S3)** is on | The switch on the **Policy** tab | With it on, orphan vectors, orphan manifest rows and tenant mismatches are not reported, by design |
 | **Look up files from the manifest (skip listing the bucket)** is on | The switch in the S3 dialog | A file that is in S3 but not in the manifest is not discovered, so "never ingested" documents are not reported |

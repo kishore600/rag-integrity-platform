@@ -8,6 +8,7 @@ import { KpiCard, PageHeader } from "@/components/shared/page";
 import { EmptyState, ErrorState, Skeleton } from "@/components/shared/states";
 import { CopyButton } from "@/components/shared/copy-button";
 import { LinkButton } from "@/components/shared/link-button";
+import { RunWarningsSection, runWarnings } from "@/components/shared/run-warnings";
 import { IssueStatusBadge, RunStatusBadge, SeverityBadge, healthTone } from "@/components/shared/status";
 import { useAudit, useIssues } from "@/hooks/queries";
 import { ApiError } from "@/lib/api";
@@ -167,6 +168,8 @@ function RunView({ run }: { run: AuditRun }) {
             ))}
           </div>
         ) : null}
+
+        <RunWarningsSection warnings={runWarnings(s)} />
 
         {diff || showFindings ? (
           <div className="grid gap-4 lg:grid-cols-2">

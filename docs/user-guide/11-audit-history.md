@@ -16,6 +16,7 @@ Audit history is RAGGuard's record of everything that has happened to your index
   - [The header](#the-header)
   - [The running and failed notices](#the-running-and-failed-notices)
   - [The statistics tiles](#the-statistics-tiles)
+  - [Warnings about document IDs](#warnings-about-document-ids)
   - [Changes in this audit](#changes-in-this-audit)
   - [Findings](#findings)
   - [Alert delivery](#alert-delivery)
@@ -185,13 +186,40 @@ Up to six tiles appear, only for numbers the audit recorded. A running or failed
 | Tile | Line under the number | What it counts |
 |---|---|---|
 | **Documents** | compared in total | Every document the audit compared: those in S3, in the manifest or with vectors. |
-| **Source documents** | in Amazon S3 | Files RAGGuard found in S3 that match your key pattern, after files that share one document id are merged. |
+| **Source documents** | in Amazon S3 | Files RAGGuard found in S3 that match your key pattern, after files that share one document id are merged. A warning under the tiles says when that happened. |
 | **Manifest rows** | in PostgreSQL | Rows read from your manifest table, merged in the same way. |
 | **Index vectors** | in Qdrant | Vectors scanned in the index. Each document is split into chunks, so this is normally larger than the number of documents. |
 | **Retrieval probes** | queries sent to the index | How many search probes the audit sent to check whether bad content can be returned ([Concepts: retrieval probe](02-concepts.md#retrieval-probe)). Present only when probing ran. |
 | **Health score** | of documents are healthy | This audit's own score. Its number is coloured: green at 90% or more, amber at 70% up to 90%, red below. |
 
 For a scoped audit, every count covers only that scope.
+
+### Warnings about document IDs
+
+![The detail page of an audit with a Warnings about document IDs card: duplicate manifest rows with a table of example IDs and rows with no ID](images/run-id-warnings.png)
+
+*An audit that saw ambiguous IDs: the amber card under the statistics tiles, with example IDs and where their copies are.*
+
+This card appears only when the audit recorded warnings. Most audits have none, and older audits (recorded before this existed) show nothing. It is amber because the audit still ran and **its findings are valid**: it could only follow one item for each ID, and the card tells you what it did not see. The top line is "The audit still ran and its findings are valid, but some document IDs could not be told apart." and, at the right, a link **Run the setup check** ([The Setup check](04-data-sources.md#the-setup-check)).
+
+Each warning has a title with a count, a sentence with the real numbers, **What to do**, and, when IDs are involved, a table of up to five examples:
+
+| Column | Meaning |
+|---|---|
+| **Document ID** | The ID that is shared |
+| **Tenant** | Its tenant |
+| **Copies** | How many files or rows carry it |
+| **Where they are** | The S3 files, or the manifest rows (with their source address), that carry it |
+
+The three warnings:
+
+| Title | What happened | What the audit did |
+|---|---|---|
+| **Some document IDs belong to more than one file in S3** | Two files got the same ID. A common cause is a key pattern that captures only the file name when the same name exists in two folders | Looked at one file per ID. The others were not checked |
+| **Some document IDs have more than one row in the processing manifest** | The manifest has several rows for one ID, often old rows left behind when a document was processed again | Used one row per ID |
+| **Some manifest rows have no document ID** | The column mapped as the document ID is empty on those rows | Skipped them. They cannot be matched to a file or to vectors |
+
+With **Only audit documents found in the source (S3)** on, duplicates among manifest rows for documents that are not in S3 are ignored, as those rows are. The same warnings are in the audit's statistics in the API (`stats.warnings`, an empty list when all is well).
 
 ### Changes in this audit
 

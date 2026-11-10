@@ -13,4 +13,6 @@ export const links = {
   },
   audit: (runId: string) => `/audit-history/${encodeURIComponent(runId)}`,
   settings: (tab?: string) => (tab ? `/settings?tab=${encodeURIComponent(tab)}` : "/settings"),
+  /** The Setup check card on the Data Sources page. */
+  setupCheck: () => "/data-sources#setup-check",
 };

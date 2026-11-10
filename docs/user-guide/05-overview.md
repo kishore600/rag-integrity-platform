@@ -15,6 +15,7 @@ The Overview is the first page you see after signing in, and the one you will op
   - [Documents](#documents)
   - [Open issues](#open-issues)
   - [Last audit](#last-audit)
+- [The ID warnings notice](#the-id-warnings-notice)
 - [Health over time](#health-over-time)
 - [Open issues by severity](#open-issues-by-severity)
 - [Issues by type](#issues-by-type)
@@ -50,6 +51,7 @@ The page is made of cards. From top to bottom:
 |---|---|---|
 | Banner (sometimes) | **Audit-running banner** | An audit is in progress. |
 | 1 | **Health score**, **Documents**, **Open issues**, **Last audit** | The four numbers that matter most. |
+| Notice (sometimes) | **ID warnings notice** | The latest full audit saw document IDs it could not tell apart. |
 | 2 | **Health over time**, **Open issues by severity** | Where you are heading and how urgent the open problems are. |
 | 3 | **Issues by type**, **Document status** | What kinds of problems you have and how your documents are distributed. |
 | 4 | **Top open issues**, **Tenant health** (left) and **Last audit**, **Connection health** (right) | What to fix first, which tenant is worst, what the last audit changed, and whether your systems respond. |
@@ -206,6 +208,28 @@ The score covers every document RAGGuard currently knows, including those last c
 | **What good looks like** | Recent, and **Completed**. |
 | **What to do next** | If it failed, click the card for the reason. If it is old, run another audit. |
 | **Click** | Opens that audit's page. |
+
+---
+
+## The ID warnings notice
+
+![The Overview with an amber notice under the four cards: Some document IDs were ambiguous in the latest full audit, two warnings and two links](images/overview-id-warning.png)
+
+*The notice, under the four cards: it names each problem the latest full audit found with document IDs, and offers two links.*
+
+**When it appears.** Only when the latest *full* audit recorded warnings about document IDs. Most of the time it is not there, and the page looks like the other screenshots in this chapter. Audits recorded before this notice existed have none.
+
+**What it says.** It is amber, not red, because the audit still ran and its findings are valid. The heading is "Some document IDs were ambiguous in the latest full audit", the line under it is "The audit still ran and its findings are valid, but some document IDs could not be told apart.", and a list names each problem with how many there were in brackets:
+
+| Line | What happened |
+|---|---|
+| Some document IDs belong to more than one file in S3 | Two files got the same document ID, so the audit looked at only one of them |
+| Some document IDs have more than one row in the processing manifest | The manifest has several rows for one ID, so the audit used only one |
+| Some manifest rows have no document ID | The rows could not be matched to a file or to vectors, so they were skipped |
+
+**Two links.** **See the details** opens that audit's page, where each warning is explained with example IDs ([Audit history](11-audit-history.md#warnings-about-document-ids)). **Run the setup check** opens the Setup check card on Data sources ([The Setup check](04-data-sources.md#the-setup-check)), which shows the IDs of S3, the manifest and Qdrant side by side.
+
+**What to do.** Read the details and fix the cause: change the key pattern so each file gets its own ID, remove extra copies or old rows, or map the right column as the document ID. Then run a full audit. The notice goes away when the next full audit has no ID warnings.
 
 ---
 
@@ -369,6 +393,7 @@ The layout adapts to your data so there are no empty boxes.
 | Card | Appears when |
 |---|---|
 | The four cards, **Health over time**, **Open issues by severity**, **Last audit**, **Connection health** | Always, once at least one audit exists |
+| **ID warnings notice** | The latest full audit recorded at least one warning about document IDs |
 | **Issues by type** | At least one issue type has open issues |
 | **Document status** | At least one document is known |
 | **Top open issues** | At least one issue is open |

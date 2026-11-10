@@ -29,6 +29,7 @@ import type {
   Session,
   SettingsKind,
   SettingsView,
+  SetupCheckResult,
   TestResult,
 } from "@/types/api";
 
@@ -232,3 +233,7 @@ export const useIsolation = (enabled = true) =>
 
 /** The read-only fire drill. It changes nothing on the server, so it deliberately does not invalidate any cached read. */
 export const useIsolationDrill = () => useMutation({ mutationFn: (req: DrillRequest = {}) => post<DrillResult>("/api/isolation/drill", req) });
+
+// ---- setup and coverage check ----------------------------------------------------------------------------------
+/** Read-only and stores nothing on the server, so it deliberately does not invalidate any cached read. It can take up to about two minutes. */
+export const useSetupCheck = () => useMutation({ mutationFn: () => post<SetupCheckResult>("/api/setup-check") });

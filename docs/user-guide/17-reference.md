@@ -524,6 +524,7 @@ Every web-interface action is also an API call. The technical reference lists ev
 | POST | `/api/isolation/drill` | Session or key | The read-only isolation drill on one document. Optional body: `tenant` and `document_id`, both or neither. It changes nothing and sends nothing; `would_alert` holds the real alert message an audit would post, with `sent` set to false. |
 | GET | `/api/recommendations` | Session or key | Recommended work and cost; optional `min_severity` |
 | POST | `/api/blast-radius` | Session or key | Impact analysis |
+| POST | `/api/setup-check` | Session or key, 20 per 10 minutes per workspace | The setup check: do S3, the manifest and Qdrant call the same documents by the same ID? No body. Read-only, stores nothing, can take up to about two minutes. Always answers 200, even when a connection is missing (then the verdict is `not_ready`) |
 | POST | `/api/query-log` | Session or key | Send retrieval logs (up to 5,000 rows per call) |
 | GET | `/api/history` | Session or key | The merged activity trail (`limit` 1 to 500, default 100) |
 | POST, GET | `/api/repairs` | Session or key | Create a plan, list plans |

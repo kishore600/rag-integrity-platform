@@ -18,6 +18,7 @@ RAGGuard cannot check anything until it can read three systems: the Amazon S3 bu
 - [Amazon S3](#amazon-s3)
 - [PostgreSQL manifest](#postgresql-manifest)
 - [Qdrant](#qdrant)
+- [The Setup check](#the-setup-check)
 - [The Issue ledger card](#the-issue-ledger-card)
 - [Single-user mode: a read-only page](#single-user-mode-a-read-only-page)
 - [States you may see](#states-you-may-see)
@@ -69,8 +70,9 @@ From top to bottom the page shows:
 1. **Header.** The title **Data sources**, the line "The three systems RAGGuard compares.", and a **Refresh status** button.
 2. **Guide card** (only until all three connections are saved). Titled **Connect your three systems**, with the line "RAGGuard needs all three before it can run an audit. Start with the highlighted step." It has three numbered steps and three reassurances.
 3. **Three system cards** in a row: Amazon S3, PostgreSQL and Qdrant. The first one that is not yet saved has a coloured outline so you know where to start.
-4. **Issue ledger card** (appears once at least one connection is saved).
-5. **How RAGGuard connects** card (only after all three are saved). It repeats the three reassurances as a reminder.
+4. **Setup check card** (appears once all three connections are saved). It checks that the three systems call the same documents by the same ID. See [The Setup check](#the-setup-check).
+5. **Issue ledger card** (appears once at least one connection is saved).
+6. **How RAGGuard connects** card (only after all three are saved). It repeats the three reassurances as a reminder.
 
 **Refresh status** checks every saved connection again and reloads the saved settings. While it works the icon spins and the button is disabled. The page otherwise reuses the last check for up to 30 seconds, so press **Refresh status** after you fix something.
 
@@ -101,9 +103,9 @@ A step shows its number while it is waiting, a highlighted number when it is the
 7. Optional but wise: press **Test** on each card. This tests what is saved and records the result, so the card shows "Last tested ... passed".
 8. Run your first audit. See [Overview](05-overview.md) and [Reconciliation](06-reconciliation.md).
 
-![The Data sources page with all three cards Connected and the Issue ledger card below them](images/data-sources-connected.png)
+![The Data sources page with all three cards Connected and the Setup check card below them](images/data-sources-connected.png)
 
-*After all three connections are saved and healthy: three Connected cards, then the Issue ledger card.*
+*After all three connections are saved and healthy: three Connected cards, then the Setup check card (and below it, out of view, the Issue ledger card).*
 
 ---
 
@@ -838,9 +840,83 @@ Messages for failures reading Qdrant:
 
 ---
 
+## The Setup check
+
+![The Setup check card after a clean check: a green Ready banner, three coverage tiles and the list of checks, all Passed](images/setup-check-ready.png)
+
+*A clean result: a green Ready banner, three coverage tiles, and every check Passed.*
+
+**What it is for.** An audit matches documents by their ID. If a file is called `2329961.pdf` but the manifest says `bill-2329961`, every document looks missing and the audit is just noise. The Setup check answers one question before you trust an audit: **do S3, the manifest and Qdrant call the same documents by the same ID, and do the numbers add up?** It is not an audit. It stores nothing (no audit run, no issue, no alert) and changes nothing in your systems.
+
+**Where it is.** A card called **Setup check** on this page, below the three system cards. It appears once all three connections are saved (on a single-user server it is always there). There is no menu item for it. Press **Check setup**.
+
+**What happens when you press it.** RAGGuard reads, and only reads:
+
+- **S3:** the *names* of the files only (a listing: nothing is downloaded or hashed), at most 200,000 files.
+- **The manifest:** its rows, at most 500,000.
+- **Qdrant:** the document and tenant IDs of a random sample of 1,000 points, the approximate size of the collection, and a lookup of 200 of your S3 documents by ID.
+
+While it works the button shows a spinner and cannot be pressed again, and a line says "Reading your three systems." It takes seconds on a small system and up to two minutes on a large one. You can stay on the page. Anything that was cut short is listed at the bottom of the result. In a hosted workspace you can run it 20 times in 10 minutes, because each run opens connections to your systems. After the first run the button reads **Check again**.
+
+### Reading the result
+
+From top to bottom:
+
+1. **The banner.** One sentence, coloured by the verdict. **Ready** (green): the three systems line up, so an audit will compare the right documents. **Almost ready** (amber): they mostly line up, with some things worth a look. **Not ready yet** (red): something must be fixed before an audit can be trusted; the sentence names the first thing to fix.
+2. **Three tiles.** *S3 documents found in the manifest*, *Manifest rows with a file in S3* and *S3 documents found in Qdrant* (of up to 200 looked up). Each shows a percentage and the real numbers behind it. They are green from 80%, amber from 20% to 79% and red below 20%. A tile reads **n/a** when there was nothing to compare or the number could not be measured.
+3. **What to do next.** Every fix, in order, in plain words. It is missing when there is nothing to fix.
+4. **The checks.** One row for each question the check asked (the table below). A row has an icon, a name, a badge (**Passed**, **Worth a look**, **Needs fixing** or **Not applicable**) and a sentence with the real numbers. When they apply it also has example IDs or file names in a grey box, a small hint marked with an *i*, and **What to do**. Rows that need attention come first, the red ones before the amber ones. The rows that passed are tucked into one line, "N checks passed or not applicable", which you can open.
+5. **IDs at a glance.** Five real document IDs from each of S3, the manifest and Qdrant, side by side. Compare them by eye: the same document should have the same ID in all three. Under the Qdrant column a line says how the IDs are stored there (as text, as whole numbers, as text made of digits, or as decimals).
+6. **Notes.** What was read (for example "S3: 235 documents from 235 files.") and any limit, such as "this Qdrant server cannot sample at random, so the first points of each collection were used". At the very end: when it ran, how long it took, and "Nothing was changed or saved."
+
+### The checks, one by one
+
+Some rows are missing, depending on your setup (for example the two lookup rows only appear when **Look up files from the manifest** is on).
+
+| Check | What it asks | Needs fixing when | Worth a look when |
+|---|---|---|---|
+| **Files in S3** | Do the file names give document IDs? | The bucket cannot be read, there are no files, or no file name matches the key pattern (examples are shown) | More than half of the files do not match. Skipping some is normal when the pattern is meant to select only some files |
+| **One file per document ID** | Does each ID belong to one file? | 5% or more of the IDs are shared by several files | Fewer than that are |
+| **Rows in the manifest** | Can the manifest be read, and do the rows have IDs? | It cannot be read, has no rows, or no row has an ID | Some rows have no ID |
+| **One manifest row per document ID** | Does each ID have one row? | 5% or more of the IDs have several rows | Fewer than that do |
+| **S3 against the manifest** | What share of S3 documents has a manifest row with the same ID? | Fewer than 20% | 20% to 80%. It shows IDs found on one side only and, if they look like the same document, how they differ |
+| **Manifest against S3** | What share of manifest rows has a file? | Never | Many rows have no file. It then recommends **Only audit documents found in the source (S3)** |
+| **Files the manifest names** | (Lookup mode only.) Do a sample of the files the manifest names exist in S3? | Fewer than 20% exist, or no manifest row names a file of this bucket | Never |
+| **Files without a manifest row** | (Lookup mode only.) A reminder that a file with no manifest row is not seen | Never | Always, while that setting is on |
+| **Tenant names agree** | Do the sides use the same tenant names? | Two sides share no tenant name at all, so their documents cannot match. The hint says when the same IDs exist under another tenant name | Never |
+| **Document IDs in Qdrant** | Do the points carry a document ID, and how is it stored? | Qdrant cannot be read, the collection is empty, or no sampled point carries the mapped payload field | Some points have no ID, some IDs are decimals, or numbers are mixed with text |
+| **S3 against Qdrant** | Of 200 S3 documents, how many have pieces in Qdrant under the same ID? | Fewer than 20% | 20% to 80% |
+| **Qdrant against S3** | What share of the sampled points belongs to a document that S3 or the manifest knows? | Never | Most of the index belongs to other documents, unless **Only audit documents found in the source (S3)** is on. Then those points are ignored and the row passes: it is information, not a problem |
+
+"Passed" starts at 80% on purpose. The gaps inside a pass are real documents that an audit reports one by one. This check is about whether IDs can be matched at all, not about how well your pipeline is doing. The overall verdict is **Not ready yet** if any row needs fixing, **Almost ready** if any row is worth a look, and **Ready** otherwise.
+
+**It never guesses.** When the unmatched IDs on two sides differ only by capital letters, spaces or leading zeros, or one contains the other (a prefix or a suffix), the check says so, with examples. RAGGuard still compares IDs exactly: an ID clean-up rule is not available yet. Make both sides write the ID the same way, or change the **Key pattern** (see [Amazon S3](#amazon-s3)).
+
+### Example: a few ID defects
+
+![The Setup check card showing Almost ready, a What to do next list, and two checks worth a look: manifest rows with no ID, and document IDs that have several manifest rows](images/setup-check-attention.png)
+
+*Almost ready: three manifest rows have no ID, and three IDs have more than one manifest row. The examples name the IDs and how many rows each has.*
+
+Here S3 and Qdrant agree with the manifest (98%, 99% and 96%), so the verdict is amber, not red. The two things worth a look are about the manifest: some rows have nothing in the document ID column and are skipped, and some IDs have several rows, so the audit can follow only one of them. The same problems appear as warnings on the [Overview](05-overview.md#the-id-warnings-notice) and on the audit's own page ([Audit history](11-audit-history.md#warnings-about-document-ids)) after the next audit.
+
+### Example: the key pattern matches nothing
+
+![The Setup check card showing Not ready yet, with Files in S3 needing fixing: 235 files were found but none match the key pattern, with example file names and the pattern](images/setup-check-not-ready.png)
+
+*Not ready yet: the key pattern expects .pdf files but the bucket holds .md files, so no file has an ID.*
+
+The bucket was read, but the **Key pattern** only accepts names ending in `.pdf`, so no file gets a document ID. The check shows real file names, quotes the pattern, and says what to do. The first and third tiles read **n/a** because nothing could be compared, and the second reads 0%. Fix the pattern in the S3 dialog, save, and run the check again.
+
+### Other ways to run it
+
+The same check is available as the command `ragi setup-check` (add `--json` for the full result; it exits with code 1 when the result is **Not ready yet**), and as `POST /api/setup-check` with a session or an API key and no body. See [GUIDE.md](../../GUIDE.md) for every field of the result.
+
+---
+
 ## The Issue ledger card
 
-The **Issue ledger** card (the wide card under the three system cards in the screenshot near the top of this chapter) is different: you do not configure it. It shows where RAGGuard keeps your audit runs, issues and repair plans. The text reads "Where audit runs, issues and repair plans are stored. The server manages it." followed by the engine name (for example "Engine: supabase/postgres") and the result of a quick reachability check, such as "postgresql ledger reachable". The badge is **Connected** (green) or **Error** (red; the red text says why). If it is red, the problem is on the RAGGuard server, not in your systems. Contact whoever runs the server. The card appears once at least one connection is saved, because that is when the page asks the server for connection health.
+The **Issue ledger** card (the wide card below the Setup check card) is different: you do not configure it. It shows where RAGGuard keeps your audit runs, issues and repair plans. The text reads "Where audit runs, issues and repair plans are stored. The server manages it." followed by the engine name (for example "Engine: supabase/postgres") and the result of a quick reachability check, such as "postgresql ledger reachable". The badge is **Connected** (green) or **Error** (red; the red text says why). If it is red, the problem is on the RAGGuard server, not in your systems. Contact whoever runs the server. The card appears once at least one connection is saved, because that is when the page asks the server for connection health.
 
 ---
 
@@ -852,6 +928,7 @@ Some servers run for one team with no accounts. They are in **live** or **demo**
 - There is no guide card, and no **Configure**, **Edit** or **Test** button.
 - Each card shows its badge and the live status text from the server's own check, but not the settings rows.
 - **Refresh status** still works.
+- The **Setup check** card is shown, always, because the connections are set by the server.
 - The **Issue ledger** card is shown.
 
 To change a connection on such a server, ask the person who runs it.
@@ -866,16 +943,19 @@ To change a connection on such a server, ask the person who runs it.
 | **Nothing connected** | The guide card and three **Not connected** cards | Follow [Step by step](#step-by-step-connect-all-three-systems) |
 | **Partly connected** | The guide shows green checks for saved steps and highlights the next one. A card saved with missing required fields says "Setup is incomplete. Still needed: ..." | Press **Edit** on that card and fill in what is listed |
 | **All connected** | Three green **Connected** cards, the Issue ledger, and the "How RAGGuard connects" card | Run an audit |
+| **Setup check running** | The **Check setup** button shows a spinner and the card says "Reading your three systems." | Wait. It takes up to two minutes on a large system |
+| **Setup check says Not ready yet or Almost ready** | A red or amber banner, a **What to do next** list and the checks that need attention first | Follow the list, then press **Check again**. See [The Setup check](#the-setup-check) |
 | **A connection has an error** | A red **Error** badge with a red message | Read it, press **Edit**, fix, **Save**, **Refresh status** |
 | **The page itself cannot load** | A message "We couldn't load this" with the reason and a **Try again** button | Press **Try again**. If it keeps failing, the RAGGuard server may be down |
 | **A rejected value** | A red box in the dialog starting with the field label | Change that field |
 | **Too many tests** | "Too many connection tests. Try again in a few minutes." | Wait about ten minutes |
+| **Too many setup checks** | "Too many setup checks. Try again in a few minutes." | Wait a few minutes |
 
 ---
 
 ## Mistakes that affect all three connections
 
-- **The three systems do not agree on ids or hashes.** Check the table in [What you need before you start](#what-you-need-before-you-start).
+- **The three systems do not agree on ids or hashes.** Check the table in [What you need before you start](#what-you-need-before-you-start), then run the [Setup check](#the-setup-check): it shows the IDs of all three side by side.
 - **Two default tenants.** The S3 **Default tenant** and the Policy **Default tenant** are separate. Set both when your data has no tenants.
 - **Testing before saving, then forgetting to save.** **Test connection** never saves. The **Save** button is the only thing that stores your values.
 - **Trusting "Connected" too much.** It means reachable. An audit judges the data.

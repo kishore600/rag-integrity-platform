@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { documentName } from "@/lib/format";
 
 const BANNER = {
+  success: { box: "border-success/25 bg-success-bg", icon: "text-success" },
   info: { box: "border-info/25 bg-info-bg", icon: "text-info" },
   warning: { box: "border-warning/30 bg-warning-bg", icon: "text-warning" },
   critical: { box: "border-critical/25 bg-critical-bg", icon: "text-critical" },

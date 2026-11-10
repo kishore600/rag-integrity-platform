@@ -366,6 +366,9 @@ The answer to "is my index consistent with the source?"
   and a **Set up** button.
 - **Four cards**: *Health score* (the share of documents that match the latest source exactly), *Documents* (and how many tenants),
   *Open issues* (and how many are critical or high; click to open the list), *Last audit* (how long ago, and how long it took).
+- **ID warnings notice**: an amber notice under the four cards, only when the latest full audit recorded `stats.warnings` (section 3.4):
+  *Some document IDs were ambiguous in the latest full audit*, one line per warning with its count, and two links, **See the details** (that
+  audit's page) and **Run the setup check** (the Setup check card, `/data-sources#setup-check`). Amber, not red: the audit's findings are valid.
 - **Health over time**: the score after each full audit (it needs two audits before it can draw a line).
 - **Open issues by severity** (a donut with counts and shares) and **Issues by type** (each bar opens the issue list filtered to that type).
 - **Document status**: healthy, degraded, broken, pending, orphaned, each opening Documents filtered to that status.
@@ -384,6 +387,16 @@ read-only **Issue ledger** status. Until all three are configured a guide at the
   remembers the result.
 - A **Refresh status** button re-checks all connections. On a single-user server the cards are read-only and say the connections come
   from the server's `RAGI_*` environment variables.
+- **Setup check** card (below the three cards once all three are saved; always on a single-user server; no menu item): a **Check setup**
+  button (**Check again** afterwards) that calls `POST /api/setup-check` (section 3.10) and shows, while it works, a spinner and "Reading your
+  three systems" (up to about two minutes). The result: a banner coloured by the verdict (**Ready**, **Almost ready**, **Not ready yet**) with
+  the server's `headline`; three coverage tiles (*S3 documents found in the manifest*, *Manifest rows with a file in S3*, *S3 documents found in
+  Qdrant*; green from 80%, amber from 20%, red below, **n/a** when nothing could be compared); **What to do next** (`next_steps`); **The
+  checks**, problems first (red before amber) and the rest collapsed into "N checks passed or not applicable", each row with its badge
+  (**Passed**, **Worth a look**, **Needs fixing**, **Not applicable**), `detail`, `examples` in monospace, `hint`, then **What to do** (`fix`);
+  **IDs at a glance** (five IDs each from S3, the manifest and Qdrant, side by side, with how Qdrant stores them); and quiet notes (what was
+  read, `limits`, when and how long). The texts are the server's, shown unchanged. A `pass` row such as *Qdrant against S3* is information.
+  A 429 (more than 20 checks in 10 minutes) shows the server's message with **Try again**.
 
 ### Reconciliation
 The three-way comparison and its results.
@@ -476,7 +489,9 @@ plan**, and three tabs:
 
 ### Audit History
 Two tabs. **Audit runs**: every audit with when it started, its type (full, scoped, verify), trigger, scope, status, duration, documents,
-issues, health and what changed; click a run for its page (stats, what it opened and resolved, alert delivery, the error if it failed).
+issues, health and what changed; click a run for its page (stats, **Warnings about document IDs** when the run recorded `stats.warnings` (an amber card with each warning's
+detail, **What to do** and a table of example IDs with where their copies are, plus a **Run the setup check** link), what it opened and
+resolved, alert delivery, the error if it failed).
 **Activity log**: one chronological trail of issue events, repair events and audits, filterable by kind and searchable.
 
 ### Integrations

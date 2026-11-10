@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/shared/states";
 import { cn } from "@/lib/cn";
 import type { ConnectionStatus } from "@/types/api";
 import { EnvNote, QueryGate, StateBadge, useSystems, type SystemStatus } from "../_settings-form";
+import { SetupCheckCard } from "./setup-check";
 import { SetupGuide, TrustPoints } from "./setup-guide";
 import { SystemCard } from "./system-card";
 
@@ -76,6 +77,7 @@ export default function DataSourcesPage() {
             <div className="space-y-6">
               {!view.ready ? <SetupGuide systems={systems} /> : null}
               <SystemGrid systems={systems} appMode healthError={connections.error} />
+              {view.ready ? <SetupCheckCard /> : null}
               {ledger ? <LedgerCard ledger={ledger} /> : null}
               {view.ready ? (
                 <Card>
@@ -101,6 +103,7 @@ export default function DataSourcesPage() {
           {() => (
             <>
               <SystemGrid systems={systems} appMode={false} />
+              <SetupCheckCard />
               {ledger ? <LedgerCard ledger={ledger} /> : null}
             </>
           )}

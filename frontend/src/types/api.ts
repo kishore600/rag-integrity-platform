@@ -33,7 +33,20 @@ export interface Session {
   api_key_required?: boolean;
 }
 
+/** An ID problem the audit noticed but could not resolve: it still ran, and its findings are valid (GUIDE.md section 3.4). */
+export interface RunWarning {
+  code: "duplicate_source_ids" | "duplicate_manifest_ids" | "empty_manifest_ids";
+  severity: "warning";
+  title: string;
+  detail: string;
+  fix: string;
+  count: number;
+  examples?: { tenant_id: string; document_id: string; copies: number; found_in: string[] }[];
+}
+
 export interface AuditStats {
+  /** Absent on runs recorded before ID warnings existed: treat as none. */
+  warnings?: RunWarning[];
   source_documents?: number;
   manifest_rows?: number;
   index_points?: number;
@@ -489,4 +502,51 @@ export interface DrillResult {
   /** The message an audit would post to the alert webhook. `text` has Slack-style markup (*bold*, `code`, bullets). */
   would_alert: { severity: Severity; sent: boolean; text: string; note: string } | null;
   nothing_changed: string;
+}
+
+// ---- setup and coverage check (POST /api/setup-check, GUIDE.md section 3.10) -----------------------------------
+export type SetupStatus = "ready" | "needs_attention" | "not_ready";
+export type SetupCheckStatus = "pass" | "warn" | "fail" | "na";
+
+export interface SetupCheckItem {
+  id: string;
+  name: string;
+  status: SetupCheckStatus;
+  /** Plain words with the real numbers in them. */
+  detail: string;
+  fix?: string;
+  /** Real IDs or file names, shown in monospace. */
+  examples?: string[];
+  hint?: string;
+  numbers?: { matched: number; of: number };
+}
+
+export interface CoverageLink {
+  matched: number;
+  of: number;
+  percent: number;
+}
+
+/** The result is always an HTTP 200, even when a connection is missing (then `checks` holds one `connections` check and most else is empty). */
+export interface SetupCheckResult {
+  status: SetupStatus;
+  headline: string;
+  checks: SetupCheckItem[];
+  coverage: { source_to_manifest?: CoverageLink | null; manifest_to_source?: CoverageLink | null; source_to_index?: CoverageLink | null };
+  counts: {
+    source_files?: number | null;
+    source_documents?: number | null;
+    source_files_skipped?: number | null;
+    manifest_rows?: number | null;
+    manifest_documents?: number | null;
+    index_points_approx?: number | null;
+    index_points_sampled?: number | null;
+  };
+  ids_at_a_glance: { source?: string[]; manifest?: string[]; index?: string[] };
+  id_types_in_index: Partial<Record<"integer" | "digits" | "text" | "decimal" | "other", number>>;
+  /** Notes about anything that was cut short. */
+  limits: string[];
+  next_steps: string[];
+  generated_at?: string;
+  duration_seconds?: number | null;
 }

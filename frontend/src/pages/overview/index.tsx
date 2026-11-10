@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState, ErrorState, Skeleton } from "@/components/shared/states";
 import { KpiCard, PageHeader } from "@/components/shared/page";
+import { RunWarningsNotice, runWarnings } from "@/components/shared/run-warnings";
 import { healthTone } from "@/components/shared/status";
 import { useOverview, useSession } from "@/hooks/queries";
 import { formatDuration, formatNumber, formatPercent, timeAgo } from "@/lib/format";
@@ -72,6 +73,7 @@ function Dashboard({ o }: { o: Overview }) {
   const showTypes = Object.values(o.issues.by_type).some((n) => n > 0);
   const showStatus = o.documents.total > 0;
   const hasLeft = o.issues.open > 0 || tenants.length > 0;
+  const idWarnings = runWarnings(o.latest_full_run?.stats);
 
   const right = [<LastAuditCard key="audit" run={run} />, <ConnectionHealthCard key="connections" />];
 
@@ -111,6 +113,8 @@ function Dashboard({ o }: { o: Overview }) {
           onClick={() => navigate(links.audit(run.id))}
         />
       </div>
+
+      {idWarnings.length > 0 && o.latest_full_run ? <RunWarningsNotice warnings={idWarnings} runId={o.latest_full_run.id} /> : null}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <HealthTrendCard trend={o.trend} />
