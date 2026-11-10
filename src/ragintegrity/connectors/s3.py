@@ -126,6 +126,33 @@ class S3Source:
                 if doc is not None:
                     yield doc
 
+    # --------------------------------------------------------------------------------- a cheap look (setup check)
+    def iter_keys(self) -> Iterator[tuple[str, tuple[str, str] | None]]:
+        """Every object key under the prefix with the ``(tenant, document)`` its name stands for (None when the name does not
+        match the key pattern). Listing only: no HEAD, no hashing, so it costs one request per 1,000 files."""
+        seen = 0
+        for page in self.client.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=self.prefix):
+            contents = page.get("Contents", [])
+            seen += len(contents)
+            check_deadline(self.deadline, "the source bucket", f" (listed {seen:,} objects so far)")
+            for obj in contents:
+                if not obj["Key"].endswith("/"):
+                    yield obj["Key"], self.parse_key(obj["Key"])
+
+    def exists(self, keys: Iterable[str]) -> set[str]:
+        """Which of these object keys exist (one HEAD each; contents are never read)."""
+        def one(key: str) -> str | None:
+            check_deadline(self.deadline, "the source bucket")
+            try:
+                self.client.head_object(Bucket=self.bucket, Key=key)
+                return key
+            except Exception as exc:
+                if getattr(exc, "response", {}).get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+                    return None
+                raise
+        with ThreadPoolExecutor(max_workers=max(1, self.s.s3_workers)) as pool:
+            return {k for k in pool.map(one, list(keys)) if k is not None}
+
     # --------------------------------------------------------------------------------- lookup from the manifest
     def key_from_uri(self, uri: str | None) -> str | None:
         """The object key inside this bucket named by a URI (``s3://bucket/key`` or an https S3 address), else None."""

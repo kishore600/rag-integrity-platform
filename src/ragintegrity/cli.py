@@ -108,6 +108,14 @@ def cmd_connections(_: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_setup_check(args: argparse.Namespace) -> int:
+    from .engine.coverage import to_text
+
+    report = _service().setup_check()
+    print(json.dumps(report, indent=2, default=str) if args.json else to_text(report))
+    return 1 if report["status"] == "not_ready" else 0
+
+
 def cmd_init_db(_: argparse.Namespace) -> int:
     svc = _service()
     ok, detail = svc.ledger.ping()
@@ -199,6 +207,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("connections", help="test connectivity to S3, the manifest database, Qdrant and the ledger")
     c.set_defaults(fn=cmd_connections)
+
+    sc = sub.add_parser("setup-check", help="check that S3, the manifest and Qdrant use the same document IDs (read-only, takes seconds)")
+    sc.add_argument("--json", action="store_true")
+    sc.set_defaults(fn=cmd_setup_check)
 
     init = sub.add_parser("init-db", help="create the ledger tables (idempotent) and check connectivity")
     init.set_defaults(fn=cmd_init_db)

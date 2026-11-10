@@ -133,6 +133,7 @@ See [docs/repair-webhook.md](docs/repair-webhook.md) and the runnable [reference
 ```bash
 cp .env.example .env     # then edit; secrets stay in the environment, never in the ledger
 RAGI_MODE=live ragi connections     # tests S3, the manifest DB, Qdrant and the ledger, naming whichever is misconfigured
+RAGI_MODE=live ragi setup-check    # do S3, the manifest and Qdrant use the same document IDs? (read-only, takes seconds)
 RAGI_MODE=live ragi serve
 ```
 

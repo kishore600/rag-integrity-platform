@@ -108,11 +108,24 @@ class IntegrityService:
             target=s.target_fingerprint(), default_tenant=s.default_tenant, required_fields=s.required_fields,
             known_tenants=self.ledger.known_tenants(), grace_minutes=s.grace_minutes,
             check_vectors=s.qdrant_check_vectors or s.is_demo, source_only=s.source_documents_only,
-            lookup_from_manifest=s.s3_lookup_from_manifest,
+            lookup_from_manifest=s.s3_lookup_from_manifest, names=self.id_names(),
             probe=s.probe_retrieval if probe is None else probe, probe_max=s.probe_max, probe_top_k=s.probe_top_k,
             deadline=(time.monotonic() + limit) if limit else None,
             progress=(lambda phase, **info: self.ledger.set_progress(run_id, phase, **info)) if run_id else None,
         )
+
+    def id_names(self) -> dict[str, str]:
+        """The setting names a message about identifiers can quote (the payload field, the manifest column, the key pattern)."""
+        from .connectors.payload import build_payload_map
+
+        s = self.settings
+        names = {"payload_document_id": "document_id", "manifest_document_id": "document_id", "key_pattern": s.s3_key_pattern}
+        try:  # a setting that cannot be read is reported by the connector that needs it, not by a message about names
+            names["payload_document_id"] = build_payload_map(s.payload_map)["document_id"]
+            names["manifest_document_id"] = s.manifest_columns.get("document_id", "document_id")
+        except (ValueError, ConnectorError):
+            pass
+        return names
 
     def _stale_after(self) -> int:
         """How old a 'running' audit may get before it is presumed dead: the time budget plus a margin, else 15 minutes."""
@@ -290,6 +303,30 @@ class IntegrityService:
         est = estimate_workload(items, docs, list(self.ledger.all_documents()),
                                 chunk_tokens=self.settings.chunk_size_tokens, price_per_mtok=self.settings.embedding_price_per_mtok)
         return {"summary": est, "items": items[:200], "items_truncated": len(items) > 200}
+
+    def setup_check(self) -> dict[str, Any]:
+        """Do S3, the manifest and Qdrant line up on document IDs? A quick, read-only look (no audit is stored or started).
+
+        Runs within a short time budget of its own, reads a bounded part of each system, and reports what it could not
+        look at as part of the result instead of failing."""
+        from .engine.coverage import build_setup_report, collect_setup_facts
+
+        t0 = time.monotonic()
+        limit = self.settings.audit_seconds_limit
+        budget = min(limit, 120) if limit else 120
+        try:
+            c = self.connectors
+        except (ConnectorError, ValueError) as exc:  # a connection that is not set up (or refused) is a result of this check, not a server fault
+            return {"status": "not_ready", "checks": [{"id": "connections", "name": "Connections", "status": "fail", "detail": scrub(str(exc), 300),
+                                                       "fix": "Finish connecting S3, the manifest and Qdrant in Settings, then run this check again."}],
+                    "headline": "Not ready yet: a connection is missing. Finish connecting S3, the manifest and Qdrant in Settings.",
+                    "coverage": {}, "counts": {}, "limits": [], "next_steps": ["Finish connecting S3, the manifest and Qdrant in Settings."],
+                    "ids_at_a_glance": {}, "id_types_in_index": {}, "duration_seconds": 0.0}
+        s = self.settings
+        facts = collect_setup_facts(c.source, c.manifest, c.index, time.monotonic() + budget, default_tenant=s.default_tenant,
+                                    names=self.id_names(), source_only=s.source_documents_only, lookup_mode=s.s3_lookup_from_manifest,
+                                    explain=friendly_error)
+        return build_setup_report(facts, time.monotonic() - t0)
 
     def isolation(self) -> dict[str, Any]:
         """Tenant isolation as of the latest full audit, with the open findings behind it."""

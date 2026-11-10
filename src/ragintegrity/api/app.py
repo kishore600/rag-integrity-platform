@@ -572,6 +572,17 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
         return PlainTextResponse(data, media_type=media,
                                  headers={"Content-Disposition": f'attachment; filename="rag-integrity-report.{format}"'})
 
+    # ------------------------------------------------------------------ setup and coverage check
+    @app.post("/api/setup-check")
+    def setup_check(request: Request, s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:
+        if multi:
+            # it opens connections to the user's systems: keep it from being used to hammer them or to scan ports
+            assert state is not None and state.accounts is not None
+            p = get_principal(request)
+            if not state.accounts.hit(f"setup-check:{p.workspace_id}", 20, 600):
+                raise HTTPException(429, "Too many setup checks. Try again in a few minutes.")
+        return s.setup_check()
+
     # ------------------------------------------------------------------ tenant isolation
     @app.get("/api/isolation")
     def isolation(s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:

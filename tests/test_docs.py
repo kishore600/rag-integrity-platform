@@ -135,3 +135,20 @@ def test_numbers_quoted_in_the_guide_match_the_code():
     assert 'hit(f"register:ip:{ip}", 5, 3600)' in app_py
     assert 'hit(f"test:{p.workspace_id}", 30, 600)' in app_py
     assert 'hit(f"password:{p.user_id}", 10, 900)' in app_py
+    assert 'hit(f"setup-check:{p.workspace_id}", 20, 600)' in app_py and "20 setup checks per workspace per 10 minutes" in GUIDE
+
+
+def test_every_setup_check_and_id_warning_is_documented():
+    """The checks of the setup check (3.10) and the ID warnings of an audit (3.4) are named in the guide by their codes,
+    and the limits and thresholds quoted in 3.10 are the ones in the code."""
+    from ragintegrity.engine import coverage
+
+    src = (ROOT / "src" / "ragintegrity" / "engine" / "coverage.py").read_text(encoding="utf-8")
+    codes = set(re.findall(r'_check\(\s*"(\w+)"', src)) | set(re.findall(r'"code": "(\w+)"', src))
+    assert len(codes) >= 13
+    assert not missing(f"`{c}`" for c in codes)
+    section = GUIDE[GUIDE.index("### 3.10 "):GUIDE.index("## 4. The interface")]
+    for name in ("MAX_SOURCE_OBJECTS", "MAX_MANIFEST_ROWS", "INDEX_SAMPLE", "INDEX_LOOKUP_DOCS", "INDEX_LOOKUP_POINTS",
+                 "INDEX_LOOKUP_SECONDS"):
+        assert f"{getattr(coverage, name):,}" in section, f"3.10 does not state {name} = {getattr(coverage, name):,}"
+    assert f"starts at {round(coverage.ALIGNED * 100)}%" in section and f"{round(coverage.PARTIAL * 100)}%" in section

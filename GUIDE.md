@@ -74,38 +74,40 @@ Your S3 bucket, manifest table and Qdrant cluster are **not** part of the produc
 | Module | Lines | What it does |
 |---|---|---|
 | `models.py` | 214 | the vocabulary: `SourceDoc`, `ManifestRow`, `IndexedChunk`, `Fingerprint`, `Finding`, `DocSummary`, `Scope`; enums for issue types, severities, actions |
+| `ids.py` | 67 | how an ID is written: a number, a decimal and text for the same ID become one text form; the form a number takes in a filter |
 | `config.py` | 154 | every `RAGI_*` setting (pydantic-settings), identifier validation |
-| `connectors/s3.py` | 265 | read-only S3 inventory, hash modes, key parsing, `diagnose()` for the connection test |
-| `connectors/postgres.py` | 253 | read-only manifest reader (READ ONLY transactions, column mapping), `diagnose()` |
-| `connectors/qdrant.py` | 209 | read-only vector scan (scroll), retrieval probe, `diagnose()` |
-| `connectors/payload.py` | 79 | maps a Qdrant payload to the canonical chunk record (supports dotted paths) |
+| `connectors/s3.py` | 326 | read-only S3 inventory, hash modes, key parsing, `diagnose()` for the connection test |
+| `connectors/postgres.py` | 315 | read-only manifest reader (READ ONLY transactions, column mapping), `diagnose()` |
+| `connectors/qdrant.py` | 301 | read-only vector scan (scroll), retrieval probe, `diagnose()` |
+| `connectors/payload.py` | 101 | maps a Qdrant payload to the canonical chunk record (supports dotted paths) |
 | `connectors/factory.py`, `base.py` | 57 | connector contracts and the demo/live factory |
 | `engine/index_state.py` | 162 | classifies every vector as it is scanned (fresh / stale / outdated / unknown / orphan) |
 | `engine/reconcile.py` | 560 | the reconciliation engine: compares source vs manifest vs index and emits findings |
 | `engine/retrieval.py` | 58 | retrieval probes: can the bad content actually be returned by a search? |
-| `engine/audit.py` | 169 | pulls the three inventories, enforces the time budget, runs the engine |
+| `engine/audit.py` | 205 | pulls the three inventories, enforces the time budget, runs the engine |
+| `engine/coverage.py` | 665 | duplicate-ID warnings, and the setup and coverage check (what the three systems call their documents, and whether the IDs line up) |
 | `engine/planning.py` | 100 | turns issues into per-document repair items and estimates the work and cost |
 | `engine/blast.py` | 117 | blast-radius analysis |
 | `engine/isolation.py` | 156 | the tenant isolation summary, per-tenant status, five checks and the evidence report |
 | `engine/drills.py` | 60 | the read-only isolation drill (pretend leak on one real document) |
 | `ledger.py` | 680 | the workspace-scoped store of issues, documents, runs, plans, and the account tables (SQLite locally, Postgres/Supabase in production) |
-| `service.py` | 329 | the one object the API/CLI use: audits, locking, overview, inspection, friendly errors |
+| `service.py` | 414 | the one object the API/CLI use: audits, locking, overview, inspection, friendly errors |
 | `repair.py` | 215 | plan, signed webhook, independent verification, approved cleanup |
 | `alerts.py`, `report.py` | 115 | Slack-compatible alerts; markdown/CSV/JSON integrity report |
 | `security.py` | 180 | password hashing, the secret vault, SSRF guard, credential scrubbing |
 | `accounts.py` | 242 | users, sessions, rate limits, API keys, encrypted per-workspace settings |
 | `workspaces.py` | 383 | the declarative Settings specification, validation, per-workspace service, connection tests |
-| `api/app.py` | 567 | the HTTP API and authentication |
+| `api/app.py` | 691 | the HTTP API and authentication |
 | `api/static/` | built | the committed build of the web interface (`index.html` and hashed files in `assets/`): deploys need no Node step |
 | `frontend/` (outside `src/`) | 10,326 | the web interface source: React, TypeScript, Vite, Tailwind, TanStack Query and Table, Recharts; `npm run build` writes `api/static/` |
-| `cli.py` | 194 | the `ragi` command |
+| `cli.py` | 251 | the `ragi` command |
 | `demo/` | 501 | a synthetic world with 47 injected faults, a toy pipeline, seeding for real infrastructure (local exploration and tests only) |
 
 Also: `api/index.py` (the Vercel entrypoint), `examples/reference_worker/worker.py` (a runnable receiver for the repair webhook),
 `supabase/migrations/` (2 migrations, 328 lines of SQL), `scripts/vercel-env.ps1` and `scripts/seed_live.py`, `Dockerfile`,
 `docker-compose.yml`, `.github/workflows/ci.yml`, and `docs/`.
 
-**Size:** about 5,500 lines of Python in `src`, 2,050 lines of tests, 10,326 lines of interface TypeScript and CSS, 328 lines of SQL.
+**Size:** about 8,000 lines of Python in `src`, 5,200 lines of tests, 10,326 lines of interface TypeScript and CSS, 328 lines of SQL.
 
 ### 2.3 The three ways it can run
 
@@ -124,6 +126,16 @@ The live site runs `app` mode. Demo mode never runs on it.
 ### 3.1 Three inventories, one key
 Documents are identified by `(tenant_id, document_id)`. For each key the engine looks at what the **source** says, what the
 **manifest** says, and what the **index** holds, and decides whether they agree.
+
+**A number and its text are the same ID.** IDs are compared as text, and a whole number is always written without a decimal part:
+`2329961` (a number in a database column or in a Qdrant payload), `2329961.0` or `2329961.00` (a decimal, from a `numeric` column or a
+JSON library) and `"2329961"` (text, as in a file name) are one ID. This applies to document, tenant and chunk IDs read from the manifest and
+from payloads. Filters follow the same rule: a scoped read of Qdrant matches both the text and the number form of an ID (if a server refuses
+the number form, the text form is used alone), and a scoped read of the manifest compares in the form the column stores (numbers against a number
+column, where an ID that is not a number cannot be present; the text form against a text column; any other type as text). Two limits: Qdrant
+cannot filter by a decimal such as `2329961.0` (store IDs as text or whole numbers, or turn off **Only audit documents found in the source (S3)**),
+and only the *type* is reconciled. IDs that differ in letter case, spaces, leading zeros, a prefix or a file extension are different IDs: the
+setup check (3.10) shows such pairs and says so, and does not guess.
 
 ### 3.2 Every vector gets a class
 While the index is scanned, each vector is classified against the live source and your target pipeline:
@@ -154,7 +166,8 @@ above, red below.
    where there is no time budget), for example a serverless function that was killed before it could record a result, is marked failed
    ("abandoned") automatically the next time the app checks, so it cannot keep **Run audit** disabled.
 2. Read the **source inventory** from S3 (keys, sizes, modified times, content hashes).
-3. Read the **manifest rows** (and the chunk manifest if configured).
+3. Read the **manifest rows** (and the chunk manifest if configured). While reading, count document IDs that appear twice (two files in S3
+   or two rows in the manifest) and rows whose ID is empty: see **Warnings about IDs** below.
 4. **Scan the vector index** page by page, classifying every point as above. Memory stays proportional to the corpus, not to scan buffers.
 5. **Reconcile**: run the per-document checks and emit findings.
 6. **Retrieval probes** (up to 25 per audit): for findings about content that should not be searchable, query the live index with one
@@ -168,6 +181,16 @@ above, red below.
 that says which step was running, instead of being killed. The budget is checked while listing S3 and between Qdrant pages, not only
 between documents. Each step is also written to the run record, so a run that is ever cut off still shows where it stopped. Audit one
 tenant at a time, or run `ragi audit` elsewhere.
+
+**Warnings about IDs.** If two S3 files get the same document ID (for example a key pattern that captures only the file name when the
+same name exists in two folders), or two manifest rows share an ID, the audit can follow only one of them, and before this check the other
+disappeared without a word. The audit still follows one item per ID, so its findings are unchanged, but the run now lists what it saw in
+`stats.warnings` (an empty list when all is well). Each warning has a `code` (`duplicate_source_ids`, `duplicate_manifest_ids`,
+`empty_manifest_ids`), `severity` (`warning`), a `title`, a plain-language `detail`, a `fix`, a `count` and up to five `examples` that name the ID
+and where its copies are (up to 200 duplicated IDs are remembered with their locations; all are counted). With **Only audit documents found in
+the source (S3)** on, duplicates among manifest rows for documents that are not in S3 are ignored, as those rows are. A manifest row with no ID is
+skipped (it used to be recorded as a document called `None`). The warnings are part of the run, so they are returned by `GET /api/audits/{run_id}`
+and in `latest_full_run.stats` of the overview.
 
 ### 3.5 Scopes
 An audit can cover everything, one **tenant**, or specific **documents**. Scoped audits are how repairs are verified. A scoped audit
@@ -230,6 +253,53 @@ nothing to S3, the database or the index, saves no issue and sends no alert. Wit
 
 **Evidence report.** `GET /api/isolation/report?format=md` is a plain page for a customer's own customers or auditors: result,
 checks, tenants and open findings, stating that it was produced read-only.
+
+### 3.10 Setup and coverage check
+An audit is only as good as the ID it matches on. If a file is called `2329961.pdf` and the manifest says `bill-2329961`, every document looks
+missing and the audit is noise. The setup check answers one question before you trust an audit: **do S3, the manifest and Qdrant call the same
+documents by the same ID, and do the numbers add up?** Run it with `POST /api/setup-check` or `ragi setup-check` (exit code 1 when the result is
+`not_ready`). It is not an audit: it stores nothing (no run, no issue, no alert), does not take the audit lock and writes to nothing.
+
+**What it reads, and how little.** S3: object *names* only (a listing: no HEAD, no download, no hashing), at most 200,000 files. The manifest: its
+rows, at most 500,000. Qdrant: the document and tenant IDs of a random sample of 1,000 points (the first points of each collection on a server that
+cannot sample; the result says so), the approximate size of the collection, and a lookup of 200 of your S3 documents by ID (reading at most 50,000
+points and giving up after 40 seconds, which is reported as a warning, not a failure). The whole look has its own budget of 120 seconds (less on a
+host with a shorter time limit). Anything cut short is listed under `limits`. With **Look up files from the manifest** on, the bucket is not
+listed: the check heads (HEAD request only) up to 200 of the files the manifest names instead. A system that cannot be read is a failed check
+with the reason; the other systems are still read. If a connection is not set up at all the answer is a `not_ready` result with a `connections`
+check, not an error.
+
+**The checks.** Each has an `id`, a `name`, a `status` (`pass`, `warn`, `fail` or `na`), a `detail` in plain words and, when something is wrong,
+a `fix`, `examples` and sometimes a `hint`.
+
+| Check (`id`) | What it asks | Fails when |
+|---|---|---|
+| Files in S3 (`source_files`) | do the file names give document IDs? | the bucket cannot be read, there are no files, or no file name matches the key pattern (examples are shown); warns when more than half of the files do not match (skipping some is normal when the pattern is meant to select only some files, and the result only says so) |
+| One file per document ID (`source_ids_unique`) | does each ID belong to one file? | 5% or more of the IDs are shared by several files (warns below that) |
+| Rows in the manifest (`manifest_rows`) | can the manifest be read, and do the rows have IDs? | it cannot be read, has no rows, or no row has an ID; warns when some rows have no ID |
+| One manifest row per document ID (`manifest_ids_unique`) | does each ID have one row? | 5% or more of the IDs have several rows (warns below that) |
+| S3 against the manifest (`source_vs_manifest`) | what share of S3 documents has a manifest row with the same ID? | fewer than 20% (warns from 20% to 80%); shows IDs found on one side only and, if they look like the same document, how they differ |
+| Manifest against S3 (`manifest_vs_source`) | what share of manifest rows has a file? | never fails; warns, and recommends **Only audit documents found in the source (S3)**, when many rows have no file |
+| Files the manifest names (`manifest_files_exist`) | lookup mode only: do a sample of the manifest's files exist in S3? | fewer than 20% exist, or no manifest row names a file of this bucket |
+| Files without a manifest row (`lookup_blind_spot`) | lookup mode only: a reminder that a file with no manifest row is not seen | it is always a warning while that setting is on |
+| Tenant names agree (`tenant_labels`) | do the sides use the same tenant names? | two sides share no tenant name at all (their documents cannot match; the hint says when the same IDs exist under another tenant name) |
+| Document IDs in Qdrant (`index_ids`) | do the points carry a document ID, and how is it stored (numbers, text, decimals)? | Qdrant cannot be read, the collection is empty, or no sampled point carries the mapped payload field; warns for missing IDs on some points, decimals, or numbers mixed with text |
+| S3 against Qdrant (`source_vs_index`) | of 200 S3 documents, how many have pieces in Qdrant under the same ID? | fewer than 20% (warns from 20% to 80%) |
+| Qdrant against S3 (`index_vs_source`) | what share of the sampled points belongs to a document S3 or the manifest knows? | never fails; warns when most of the index belongs to other documents, unless **Only audit documents found in the source (S3)** is on (then those points are ignored and it passes) |
+
+"Pass" starts at 80% because the gaps inside a pass are real documents that an audit reports one by one: this check is about whether IDs can
+be matched at all, not about how well your pipeline is doing. **Overall** `status`: `not_ready` if any check fails, `needs_attention` if any
+warns, else `ready`; `headline` says which in a sentence, and `next_steps` lists every `fix`.
+
+**What else is in the result.** `coverage` (`source_to_manifest`, `manifest_to_source`, `source_to_index`, each `matched`, `of`, `percent`, or
+`null` when it could not be measured), `counts` (files, documents, rows, approximate points, points sampled), `ids_at_a_glance` (five IDs from each
+side, to compare by eye), `id_types_in_index` (how many sampled IDs are stored as `integer`, `digits`, `text`, `decimal` or `other`), `limits`,
+`generated_at` and `duration_seconds`.
+
+**It never guesses.** When the unmatched IDs on two sides differ only by letter case, spaces or leading zeros, or one contains the other (a prefix
+or suffix), the check says so with examples. RAGGuard still compares IDs exactly: an ID clean-up rule is not available yet, so make both sides
+write the ID the same way or change the key pattern. The call needs a session or an API key; in the hosted app it is limited to 20 checks per
+workspace per 10 minutes because it opens connections to your systems.
 
 ---
 
@@ -678,6 +748,11 @@ the bill (its `doc_version` did not match `external_doc_id`), so they cannot be 
 **What it reports.** A document with a file in S3 and no points in Qdrant is `missing_embedding`, **critical** when `is_indexed` is
 true (the pipeline claimed success), otherwise high. Duplicate chunks, empty embeddings and metadata problems are found as usual.
 
+**What the setup check shows for this layout.** S3 against the manifest passes (every `prefiled` file has a manifest row), Manifest against
+S3 warns that most manifest rows have no file here (the other document types), and Qdrant against S3 notes that most of the sampled points belong to
+other bills; with **Only audit documents found in the source (S3)** on, as above, that last one passes because those points are ignored. Run it
+after changing any setting in this table.
+
 **What it cannot report here.** Changed files (no `source_hash` in Qdrant or the manifest), half-indexed documents (no chunk counts),
 and left-over vectors for deleted files (switched off by the option, because the collection holds far more than the bucket).
 
@@ -782,6 +857,7 @@ Interactive docs are at `/docs`. Authentication: **public**; **session** (signed
 | DELETE | `/api/keys/{key_id}` | session only | revoke a key |
 | GET | `/api/overview` | session or key | health, counts, trend, latest runs |
 | GET | `/api/connections` | session or key | connector status |
+| POST | `/api/setup-check` | session or key (20 per 10 min per workspace in the hosted app) | the read-only setup and coverage check: do S3, the manifest and Qdrant use the same document IDs (3.10) |
 | POST | `/api/audits` | session or key | run an audit (`tenant`, `documents`, `probe`, `wait` options) |
 | GET | `/api/audits` | session or key | recent runs |
 | GET | `/api/audits/{run_id}` | session or key | one run |
@@ -827,6 +903,7 @@ Install with `pip install -e ".[dev]"`; the command is `ragi`.
 | `ragi issues [--status S] [--severity S] [--type T] [--tenant T] [--limit N]` | list issues from the ledger |
 | `ragi report [--format md\|json\|csv] [--all] [-o FILE \| --output FILE]` | the document-level integrity report |
 | `ragi connections` | test the ledger, S3, the manifest database and Qdrant, naming whichever is misconfigured |
+| `ragi setup-check [--json]` | the setup and coverage check (3.10): do S3, the manifest and Qdrant use the same document IDs; exits **1** when the result is `not_ready` |
 | `ragi init-db` | create the ledger tables (idempotent) and check connectivity |
 | `ragi users list` / `ragi users delete EMAIL --yes` | list users, or delete a user and everything in their workspace (app mode; needs `RAGI_DATABASE_URL` and `RAGI_SECRET_KEY`) |
 | `ragi repair plan\|trigger\|verify\|approve-cleanup [PLAN_ID] [--min-severity S] [--tenant T]` | drive the repair workflow |
@@ -892,7 +969,7 @@ The full threat model, with what is and is not covered, is in [docs/security.md]
 - **Passwords**: scrypt with a per-user salt, constant-time compare; unknown emails burn the same CPU, so timing does not reveal accounts.
 - **Sessions**: a random 256-bit token in an `HttpOnly`, `SameSite=Lax`, `Secure` cookie; only its SHA-256 is stored; 7-day sliding expiry; logout and password change revoke on the server.
 - **CSRF**: `SameSite=Lax` plus an `Origin` check on every cookie-authenticated write.
-- **Rate limits** (database-backed, so they hold across serverless instances): 8 sign-in attempts per account and 30 per network per 15 minutes; 5 sign-ups per network per hour; 10 password changes per account per 15 minutes; 30 connection tests per workspace per 10 minutes.
+- **Rate limits** (database-backed, so they hold across serverless instances): 8 sign-in attempts per account and 30 per network per 15 minutes; 5 sign-ups per network per hour; 10 password changes per account per 15 minutes; 30 connection tests per workspace per 10 minutes; 20 setup checks per workspace per 10 minutes.
 - **Tenant isolation**: every ledger statement carries the workspace id; the tests attack read, modify, resolve, reset and plan-hijack across workspaces, on SQLite and a real Postgres.
 - **Secrets at rest**: Fernet (AES-128-CBC + HMAC-SHA256) under `RAGI_SECRET_KEY`, which exists only in the server environment. Secrets are write-only in the UI/API. Errors and ledger rows are scrubbed of `scheme://user:password@host` credentials, and the error of a failed alert or repair webhook delivery has every web address removed (a webhook address is itself a secret), in the ledger, the logs and the interface. That includes the target of a redirect (even a relative one) and the host, path, query and user info of the configured address wherever a library echoes them without the scheme; run rows stored before this existed have any web address removed when they are read.
 - **SSRF guard**: every host a user supplies (S3 endpoint, Qdrant URL, manifest database, repair and alert webhooks) must be public. Loopback, private, link-local (including the cloud metadata address), carrier-grade NAT, IPv4-mapped IPv6, multicast and reserved ranges are refused; hostnames are resolved and every address must be public; checked when saved **and again before every connection**. URLs may not contain credentials; databases must be `postgresql://` with only `sslmode`, `connect_timeout`, `application_name` options.
@@ -947,10 +1024,10 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 ## 15. Verification status
 
 **Verified** (and how):
-- **320 tests.** On a plain checkout with no external services **296 pass and 24 skip** (checked before publishing). The 24 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 24 real-service tests (Qdrant 10, S3 over HTTP 5, end-to-end connectors 4, Postgres 5) all pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 11, engine 11, help pages 8, isolation 28, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, repair cleanup only 5, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, source only 13, stuck audits 4, webhook error leaks 15, webhook errors 6.
+- **417 tests.** On a plain checkout with no external services **385 pass and 32 skip** (checked before publishing). The 32 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 32 real-service tests (Qdrant 14, S3 over HTTP 5, end-to-end connectors 4, Postgres 9) all pass, so all 417 pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 12, duplicate ids 13, engine 11, help pages 8, id types 47, isolation 28, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, repair cleanup only 5, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, setup check 36, source only 13, stuck audits 4, webhook error leaks 15, webhook errors 6.
 - The engine finds **exactly** the injected faults (compared with ground truth) in the in-memory demo *and* through the real connector code.
-- A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics.
-- A **real Postgres engine**: both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.
+- A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics, ids stored as numbers and as text found by the same filter, and the setup check against it.
+- A **real Postgres engine** (also number, decimal and text ID columns read the same way, including scoped reads): both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.
 - **S3 over real HTTP** with a custom endpoint and path-style addressing (inventory, compute hashing, scoped listing, diagnostics).
 - The app run against the **real Supabase** with a throwaway account (16 of 16 checks: empty workspace, SSRF refusal, secrets encrypted at rest, API keys, logout, login), then cleaned to zero rows.
 - The **live site**: healthy, connected to Supabase, protected endpoints return 401 to anonymous visitors, headers present, sign-in and sign-up screens render in a real browser.
@@ -968,6 +1045,9 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 - **S3 hashing**: `metadata` mode costs one HEAD per object. For very large buckets store a SHA-256 in object metadata at upload time.
 - **One workspace per user**; no teams, roles, email verification, password reset or two-factor authentication.
 - **Collections**: a document is expected in at least one configured collection; per-collection expectations are not modelled.
+- **IDs are matched exactly** (apart from number versus text, see 3.1): letter case, spaces, leading zeros, prefixes and extensions all make IDs
+  different. One S3 file or manifest row per ID is followed; duplicates are warned about, not merged. The setup check looks at a bounded sample
+  (200,000 files, 500,000 rows, 1,000 points, 200 documents looked up in the index), so its percentages for a very large system are estimates.
 - **Retrieval probe** replays an affected chunk's own vector, not real user traffic: it proves searchability and rank, not user impact.
 - **Integrations**: S3, PostgreSQL/Supabase and Qdrant only.
 - The claim that no competitor does exactly this is a hypothesis to validate with customers; nothing in this repository proves it.

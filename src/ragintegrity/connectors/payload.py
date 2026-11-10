@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..ids import normalize_id
 from ..models import Fingerprint, IndexedChunk
 
 CANONICAL_FIELDS = (
@@ -34,6 +35,11 @@ def _dig(payload: dict[str, Any], path: str) -> Any:
 
 def _s(v: Any) -> str | None:
     return None if v is None or v == "" else str(v)
+
+
+def _id(v: Any) -> str | None:
+    """Tenant, document and chunk ids: 170, 170.0 and "170" are the same id (see ids.py)."""
+    return None if v is None or v == "" else normalize_id(v)
 
 
 def _i(v: Any) -> int | None:
@@ -80,9 +86,9 @@ def payload_to_chunk(
     return IndexedChunk(
         collection=collection,
         point_id=str(point_id),
-        tenant_id=_s(raw["tenant_id"]),
-        document_id=_s(raw["document_id"]),
-        chunk_id=_s(raw["chunk_id"]),
+        tenant_id=_id(raw["tenant_id"]),
+        document_id=_id(raw["document_id"]),
+        chunk_id=_id(raw["chunk_id"]),
         chunk_index=_i(raw["chunk_index"]),
         chunk_hash=_s(raw["chunk_hash"]),
         source_hash=_s(raw["source_hash"]),

@@ -12,10 +12,12 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import types as sqltypes
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
 
 from ..config import Settings, check_identifier, normalize_db_url
+from ..ids import normalize_id, number_form
 from ..models import ChunkRow, ConnectionStatus, Fingerprint, ManifestRow, Scope
 from .base import ConnectorError
 
@@ -85,6 +87,11 @@ def _i(v: Any) -> int | None:
         return None
 
 
+def _id(v: Any) -> str | None:
+    """A document, tenant or chunk id as text: 170 (a bigint column), 170.00 (a numeric column) and "170" are one id."""
+    return None if v is None or v == "" else normalize_id(v)
+
+
 class PostgresManifest:
     def __init__(self, settings: Settings, engine: Engine | None = None) -> None:
         if engine is None:
@@ -102,6 +109,8 @@ class PostgresManifest:
         self.has_chunk_manifest = self.chunk_table is not None
         self.doc_map = self._column_map(settings.manifest_columns, DOC_COLUMNS)
         self.chunk_map = self._column_map(settings.manifest_chunk_columns, CHUNK_COLUMNS)
+        self.empty_ids = 0  # manifest rows skipped because their document id column was empty (counted per read)
+        self._types: dict[str, dict[str, Any]] = {}  # table -> column name -> SQL type (read together with the column names)
 
     @staticmethod
     def _column_map(overrides: dict[str, str], canonical: tuple[str, ...]) -> dict[str, str]:
@@ -119,8 +128,32 @@ class PostgresManifest:
 
     def _existing(self, table: str, cmap: dict[str, str]) -> dict[str, str]:
         insp = inspect(self.engine)
-        cols = {c["name"] for c in insp.get_columns(table, schema=self.schema)}
-        return {canon: actual for canon, actual in cmap.items() if actual in cols}
+        columns = {c["name"]: c["type"] for c in insp.get_columns(table, schema=self.schema)}
+        self._types[table] = columns
+        return {canon: actual for canon, actual in cmap.items() if actual in columns}
+
+    def _in_clause(self, table: str, column: str, values: list[str], prefix: str, params: dict[str, Any]) -> str:
+        """``column IN (...)`` for ids written as text, in the form the column stores them.
+
+        Comparing text with a number column fails for any value that is not a number (Postgres cannot cast 'abc' to
+        bigint), and a text column never matches a number. So a number column is given numbers (an id that is not
+        a plain number cannot be in it), and a column of any other type is compared as text."""
+        q = self.engine.dialect.identifier_preparer.quote
+        ctype = self._types.get(table, {}).get(column)
+        col = q(column)
+        if isinstance(ctype, (sqltypes.Integer, sqltypes.Numeric, sqltypes.Float)):
+            usable: list[Any] = sorted({n for n in (number_form(v) for v in values) if n is not None})
+            if not usable:
+                return "1 = 0"
+        else:
+            usable = sorted(set(values))
+            if ctype is not None and not isinstance(ctype, sqltypes.String):  # uuid, enums, ...: their text form
+                col = f"CAST({col} AS TEXT)"
+        names = []
+        for i, v in enumerate(usable):
+            params[f"{prefix}{i}"] = v
+            names.append(f":{prefix}{i}")
+        return f"{col} IN ({', '.join(names)})"
 
     def _stream(self, sql: str, params: dict[str, Any]) -> Iterator[Any]:
         with self.engine.connect() as conn:
@@ -130,25 +163,18 @@ class PostgresManifest:
             result = conn.execution_options(stream_results=True).execute(text(sql), params)
             yield from result.mappings()
 
-    def _where(self, scope: Scope | None, present: dict[str, str]) -> tuple[str, dict[str, Any], bool]:
+    def _where(self, scope: Scope | None, present: dict[str, str], table: str) -> tuple[str, dict[str, Any], bool]:
         """Return (where clause, params, needs_python_filter)."""
         if scope is None or scope.is_full:
             return "", {}, False
-        q = self.engine.dialect.identifier_preparer.quote
         parts: list[str] = []
         params: dict[str, Any] = {}
         if scope.tenant and "tenant_id" in present:
-            parts.append(f"{q(present['tenant_id'])} = :tenant")
-            params["tenant"] = scope.tenant
+            parts.append(self._in_clause(table, present["tenant_id"], [scope.tenant], "t", params))
         python_filter = scope.tenant is not None and "tenant_id" not in present
         if scope.keys is not None:
             if len(scope.keys) <= KEYS_IN_LIMIT and "document_id" in present:
-                ids = sorted({d for _, d in scope.keys})
-                names = []
-                for i, d in enumerate(ids):
-                    params[f"d{i}"] = d
-                    names.append(f":d{i}")
-                parts.append(f"{q(present['document_id'])} IN ({', '.join(names)})")
+                parts.append(self._in_clause(table, present["document_id"], sorted({d for _, d in scope.keys}), "d", params))
             # the SQL filter only narrows by document id; exact (tenant, document) pairs are re-checked in Python
             python_filter = True
         return (" WHERE " + " AND ".join(parts)) if parts else "", params, python_filter
@@ -160,11 +186,16 @@ class PostgresManifest:
             raise ConnectorError(f"Manifest table {self.table} has no column '{self.doc_map['document_id']}' (document_id)")
         q = self.engine.dialect.identifier_preparer.quote
         select = ", ".join(f"{q(actual)} AS {q(canon)}" for canon, actual in present.items())
-        where, params, py_filter = self._where(scope, present)
+        where, params, py_filter = self._where(scope, present, self.table)
         sql = f"SELECT {select} FROM {self._qualified(self.table)}{where}"
+        self.empty_ids = 0
         for r in self._stream(sql, params):
-            tenant = _s(r.get("tenant_id")) or self.s.default_tenant
-            key = (tenant, str(r["document_id"]))
+            tenant = _id(r.get("tenant_id")) or self.s.default_tenant
+            doc = _id(r["document_id"])
+            if doc is None:  # a row without an id cannot be matched to anything: count it instead of calling it "None"
+                self.empty_ids += 1
+                continue
+            key = (tenant, doc)
             if py_filter and scope is not None and not scope.matches(key):
                 continue
             yield ManifestRow(
@@ -193,14 +224,16 @@ class PostgresManifest:
             raise ConnectorError("Chunk manifest needs at least document_id and chunk_id columns")
         q = self.engine.dialect.identifier_preparer.quote
         select = ", ".join(f"{q(actual)} AS {q(canon)}" for canon, actual in present.items())
-        where, params, py_filter = self._where(scope, present)
+        where, params, py_filter = self._where(scope, present, self.chunk_table)
         sql = f"SELECT {select} FROM {self._qualified(self.chunk_table)}{where}"
         for r in self._stream(sql, params):
-            tenant = _s(r.get("tenant_id")) or self.s.default_tenant
-            if py_filter and scope is not None and not scope.matches((tenant, str(r["document_id"]))):
+            tenant = _id(r.get("tenant_id")) or self.s.default_tenant
+            doc, chunk = _id(r["document_id"]), _id(r["chunk_id"])
+            if doc is None or chunk is None:
                 continue
-            yield ChunkRow(tenant, str(r["document_id"]), str(r["chunk_id"]), _i(r.get("chunk_index")),
-                           _s(r.get("chunk_hash")))
+            if py_filter and scope is not None and not scope.matches((tenant, doc)):
+                continue
+            yield ChunkRow(tenant, doc, chunk, _i(r.get("chunk_index")), _s(r.get("chunk_hash")))
 
     def diagnose(self) -> list[dict[str, str]]:
         """Specific, actionable checks for the 'Test connection' button."""

@@ -12,9 +12,10 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..config import Settings
+from ..ids import number_form
 from ..models import ConnectionStatus, IndexedChunk, Scope
 from .base import ConnectorError, check_deadline
-from .payload import build_payload_map, payload_to_chunk
+from .payload import _dig, build_payload_map, payload_to_chunk
 
 FILTER_BATCH = 5000  # document ids per server-side filter (each batch is one scroll pass over the collection)
 
@@ -42,6 +43,11 @@ def _explain_qdrant(exc: Exception) -> str:
     if "not found" in low or "doesn't exist" in low:
         return "Not found: check the collection name."
     return f"{type(exc).__name__}: {msg[:160]}"
+
+
+def _is_rejection(exc: Exception) -> bool:
+    """Qdrant refused the request itself (a 400, for example "index required"), as opposed to being slow or unreachable."""
+    return getattr(exc, "status_code", None) == 400 or "bad request" in str(exc).lower()
 
 
 def client_timeout(settings: Settings, fast: bool) -> int:
@@ -95,37 +101,65 @@ class QdrantIndex:
     def _top_level(self, path: str) -> str:
         return path.split(".")[0]
 
-    def _filters(self, scope: Scope | None) -> list[Any]:
-        """Server-side filters for a scope. A long document list is split into batches (a document id is in exactly one batch)."""
+    def _filters(self, scope: Scope | None) -> list[tuple[Any, Any]]:
+        """Server-side filters for a scope, as ``(filter, text_only_filter)`` pairs. A long document list is split into batches
+        (a document id is in exactly one batch).
+
+        Qdrant keeps ``170`` and ``"170"`` apart, so a filter on text ids alone finds nothing when the index stores numbers.
+        The first filter of each pair matches both forms; the second is the text-only version, used if a server refuses the
+        number form."""
         if scope is None or scope.is_full:
-            return [None]
+            return [(None, None)]
         from qdrant_client import models as qm
 
-        base: list[Any] = []
+        def either(key: str, values: list[str], many: bool) -> tuple[Any, Any]:
+            text = (qm.FieldCondition(key=key, match=qm.MatchAny(any=values)) if many
+                    else qm.FieldCondition(key=key, match=qm.MatchValue(value=values[0])))
+            numbers = [n for n in (number_form(v) for v in values) if n is not None]
+            if not numbers:
+                return text, text
+            number = (qm.FieldCondition(key=key, match=qm.MatchAny(any=numbers)) if many
+                      else qm.FieldCondition(key=key, match=qm.MatchValue(value=numbers[0])))
+            return qm.Filter(should=[text, number]), text
+
+        both: list[Any] = []
+        text_only: list[Any] = []
         if scope.tenant:
-            base.append(qm.FieldCondition(key=self.pmap["tenant_id"], match=qm.MatchValue(value=scope.tenant)))
+            b, t = either(self.pmap["tenant_id"], [scope.tenant], many=False)
+            both.append(b)
+            text_only.append(t)
         if scope.keys is None:
-            return [qm.Filter(must=base)] if base else [None]
+            return [(qm.Filter(must=both), qm.Filter(must=text_only))] if both else [(None, None)]
         docs = sorted({d for _, d in scope.keys})
-        return [
-            qm.Filter(must=[*base, qm.FieldCondition(key=self.pmap["document_id"], match=qm.MatchAny(any=docs[i:i + FILTER_BATCH]))])
-            for i in range(0, len(docs), FILTER_BATCH)
-        ]  # no documents -> no filters -> nothing to read
+        out: list[tuple[Any, Any]] = []
+        for i in range(0, len(docs), FILTER_BATCH):
+            b, t = either(self.pmap["document_id"], docs[i:i + FILTER_BATCH], many=True)
+            out.append((qm.Filter(must=[*both, b]), qm.Filter(must=[*text_only, t])))
+        return out  # no documents -> no filters -> nothing to read
 
     def scan(self, scope: Scope | None = None, with_vectors: bool = False) -> Iterator[IndexedChunk]:
         include = sorted({self._top_level(p) for p in self.pmap.values()})
         vectors_arg: Any = [self.vector_name] if (with_vectors and self.vector_name) else with_vectors
         collections = self.collections()
         read = 0
-        for flt in self._filters(scope):
+        text_only = False  # set once a server has refused the number form of a filter
+        for flt_both, flt_text in self._filters(scope):
             for coll in collections:
                 offset = None
                 while True:
                     check_deadline(self.deadline, "the vector index", f" ({read:,} points so far)")  # a page can be empty of matches
-                    points, offset = self.client.scroll(
-                        collection_name=coll, scroll_filter=flt, limit=self.s.qdrant_page_size, offset=offset,
-                        with_payload=include, with_vectors=vectors_arg,
-                    )
+                    flt = flt_text if text_only else flt_both
+                    try:
+                        points, offset = self.client.scroll(
+                            collection_name=coll, scroll_filter=flt, limit=self.s.qdrant_page_size, offset=offset,
+                            with_payload=include, with_vectors=vectors_arg,
+                        )
+                    except Exception as exc:
+                        # only the very first page of a pass can be retried: nothing has been read with this filter yet
+                        if offset is None and flt is not flt_text and _is_rejection(exc):
+                            text_only = True
+                            continue
+                        raise
                     read += len(points)
                     for p in points:
                         chunk = payload_to_chunk(
@@ -139,6 +173,39 @@ class QdrantIndex:
                         yield chunk
                     if offset is None:
                         break
+
+    # --------------------------------------------------------------------------------- a look at the ids (setup check)
+    def id_sample(self, limit: int = 1000) -> dict[str, Any]:
+        """The document and tenant ids of a random sample of points, exactly as stored (a number stays a number).
+
+        Used by the setup check to see what the index calls its documents. Falls back to the first points of each
+        collection on a server that cannot sample at random. Reads payloads only; never vectors."""
+        from qdrant_client import models as qm
+
+        names = self.collections()
+        paths = {"document_id": self.pmap["document_id"], "tenant_id": self.pmap["tenant_id"]}
+        include = sorted({self._top_level(p) for p in paths.values()})
+        per = max(1, limit // max(1, len(names)))
+        rows: list[dict[str, Any]] = []
+        approx = 0
+        random_sample = True
+        for coll in names:
+            try:
+                approx += self.client.count(collection_name=coll, exact=False).count
+            except Exception:
+                pass
+            check_deadline(self.deadline, "the vector index", " (sampling)")
+            try:
+                points = self.client.query_points(collection_name=coll, query=qm.SampleQuery(sample=qm.Sample.RANDOM),
+                                                  limit=per, with_payload=include, with_vectors=False).points
+            except Exception:  # an older server: the first points are a weaker sample, but still show the format
+                random_sample = False
+                points, _ = self.client.scroll(collection_name=coll, limit=per, with_payload=include, with_vectors=False)
+            for p in points:
+                pl = p.payload or {}
+                rows.append({"collection": coll, "point_id": str(p.id),
+                             "document_id": _dig(pl, paths["document_id"]), "tenant_id": _dig(pl, paths["tenant_id"])})
+        return {"rows": rows, "random": random_sample, "approx_points": approx, "collections": names}
 
     # --------------------------------------------------------------------------------- probe
     def probe(

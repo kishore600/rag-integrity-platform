@@ -212,7 +212,7 @@ def qdrant(**kw):
 
 def test_a_long_document_list_is_split_into_server_side_filters():
     idx, client = qdrant()
-    ids = [str(i) for i in range(2 * FILTER_BATCH + 1)]
+    ids = [f"doc-{i}" for i in range(2 * FILTER_BATCH + 1)]  # (digit-only ids also get a number form: tests/test_id_types.py)
     assert list(idx.scan(Scope(keys=frozenset(("default", i) for i in ids)))) == []
     assert len(client.calls) == 3
     seen = []
