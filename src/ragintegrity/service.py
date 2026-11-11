@@ -318,9 +318,9 @@ class IntegrityService:
             c = self.connectors
         except (ConnectorError, ValueError) as exc:  # a connection that is not set up (or refused) is a result of this check, not a server fault
             return {"status": "not_ready", "checks": [{"id": "connections", "name": "Connections", "status": "fail", "detail": scrub(str(exc), 300),
-                                                       "fix": "Finish connecting S3, the manifest and Qdrant in Settings, then run this check again."}],
-                    "headline": "Not ready yet: a connection is missing. Finish connecting S3, the manifest and Qdrant in Settings.",
-                    "coverage": {}, "counts": {}, "limits": [], "next_steps": ["Finish connecting S3, the manifest and Qdrant in Settings."],
+                                                       "fix": "Finish connecting S3, the manifest and Qdrant on the Data Sources page, then run this check again."}],
+                    "headline": "Not ready yet: a connection is missing. Finish connecting S3, the manifest and Qdrant on the Data Sources page.",
+                    "coverage": {}, "counts": {}, "limits": [], "next_steps": ["Finish connecting S3, the manifest and Qdrant on the Data Sources page."],
                     "ids_at_a_glance": {}, "id_types_in_index": {}, "duration_seconds": 0.0}
         s = self.settings
         facts = collect_setup_facts(c.source, c.manifest, c.index, time.monotonic() + budget, default_tenant=s.default_tenant,

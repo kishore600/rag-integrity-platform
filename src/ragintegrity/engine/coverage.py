@@ -362,10 +362,10 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
                              "The check looks up a sample of the files the manifest names instead (next check)."))
     elif f.source_error:
         checks.append(_check("source_files", "Files in S3", "fail", f"Could not read the bucket: {f.source_error}",
-                             "Fix the S3 connection in Settings, then run this check again."))
+                             "Fix the S3 connection on the Data Sources page, then run this check again."))
     elif f.source_objects == 0:
         checks.append(_check("source_files", "Files in S3", "fail", "No files were found under this bucket and key prefix.",
-                             "Check the bucket name and the key prefix in Settings."))
+                             "Check the bucket name and the key prefix on the Data Sources page."))
     elif not src_keys:
         checks.append(_check("source_files", "Files in S3", "fail",
                              f"{f.source_objects:,} file(s) were found, but none of their names match the key pattern, so no document has an ID.",
@@ -400,14 +400,14 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
     # ---- 3. the manifest
     if f.manifest_error:
         checks.append(_check("manifest_rows", "Rows in the manifest", "fail", f"Could not read the manifest: {f.manifest_error}",
-                             "Fix the manifest connection and the table and column names in Settings, then run this check again."))
+                             "Fix the manifest connection and the table and column names on the Data Sources page, then run this check again."))
     elif f.manifest_rows == 0 and not f.manifest_empty_ids:
         checks.append(_check("manifest_rows", "Rows in the manifest", "fail", "The manifest table has no rows.",
-                             "Check the schema and table name in Settings: the table may be a different one."))
+                             "Check the schema and table name on the Data Sources page: the table may be a different one."))
     elif not man_keys:
         checks.append(_check("manifest_rows", "Rows in the manifest", "fail",
                              f"All {f.manifest_empty_ids:,} manifest row(s) have an empty document ID.",
-                             "Map the column that holds the document ID (the column map in Settings)."))
+                             "Map the column that holds the document ID (the column map on the Data Sources page)."))
     else:
         problems = []
         if f.manifest_empty_ids:
@@ -466,7 +466,7 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
             elif f.source_only and man_in_src < len(man_keys) * ALIGNED:
                 msg += " Your setting 'Only audit documents found in the source (S3)' is on, so the other rows are ignored."
             checks.append(_check("manifest_vs_source", "Manifest against S3", ms, msg,
-                                 "Turn on 'Only audit documents found in the source (S3)' in Settings so those rows are ignored."
+                                 "Turn on 'Only audit documents found in the source (S3)' (Settings, Policy) so those rows are ignored."
                                  if ms == "warn" and not f.source_only else None,
                                  numbers={"matched": man_in_src, "of": len(man_keys)}))
 
@@ -524,10 +524,10 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
     kinds = Counter(id_kind(raw) for _, raw in idx_docs)
     if f.index_error:
         checks.append(_check("index_ids", "Document IDs in Qdrant", "fail", f"Could not read Qdrant: {f.index_error}",
-                             "Fix the Qdrant connection in Settings, then run this check again."))
+                             "Fix the Qdrant connection on the Data Sources page, then run this check again."))
     elif not rows:
         checks.append(_check("index_ids", "Document IDs in Qdrant", "fail", "The collection(s) are empty: there are no vectors to check.",
-                             "Check the collection name in Settings."))
+                             "Check the collection name on the Data Sources page."))
     elif not idx_docs:
         checks.append(_check("index_ids", "Document IDs in Qdrant", "fail",
                              f"None of {len(rows):,} sampled points has a value in the payload field '{pdoc}', so no vector can be tied to a document.",

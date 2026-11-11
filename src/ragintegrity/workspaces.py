@@ -305,7 +305,7 @@ def _factory(settings: Settings) -> Connectors:
     if not settings.qdrant_url:
         missing.append("the Qdrant index")
     if missing:
-        raise SetupIncomplete("Finish setup first: connect " + ", ".join(missing) + " in Settings.")
+        raise SetupIncomplete("Finish setup first: connect " + ", ".join(missing) + " on the Data Sources page.")
     guard_settings(settings)
     return build_connectors(settings)
 

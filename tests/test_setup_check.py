@@ -461,7 +461,8 @@ def test_a_service_whose_connections_are_not_set_up_answers_with_a_not_ready_rep
     svc._connectors, svc._connector_factory = None, refuse
     r = svc.setup_check()
     assert r["status"] == "not_ready" and r["checks"][0]["id"] == "connections" and "S3_BUCKET" in r["checks"][0]["detail"]
-    assert "Settings" in r["next_steps"][0]
+    assert "Data Sources" in r["next_steps"][0] and "Data Sources" in r["headline"] and "Data Sources" in r["checks"][0]["fix"]
+    assert "Settings" not in r["headline"]  # the three connections are not under Settings in the product
 
 
 def test_a_target_that_the_server_refuses_to_connect_to_is_a_result_too(tmp_path):
