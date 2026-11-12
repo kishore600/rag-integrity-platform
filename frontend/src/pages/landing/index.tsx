@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import type { Session } from "@/types/api";
 import { Hero } from "./hero";
 import { LandingFooter, LandingNav } from "./nav";
+import { Scenarios, UseCases } from "./scenarios";
 import { Detects, Faq, FinalCta, Features, HowItWorks, Problem, Security, Stack } from "./sections";
 
 /** What a signed-out visitor sees at "/". Everything on it is true of the product; there are no invented customers or numbers. */
@@ -25,6 +26,8 @@ export default function Landing({ session }: { session: Session }) {
         <Problem />
         <HowItWorks />
         <Detects />
+        <Scenarios />
+        <UseCases />
         <Features />
         <Security />
         <Stack />

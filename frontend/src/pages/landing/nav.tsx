@@ -3,9 +3,9 @@ import { Logo } from "@/components/brand/logo";
 import { Container } from "./ui";
 
 const LINKS = [
-  { href: "#problem", label: "The problem" },
   { href: "#how", label: "How it works" },
-  { href: "#detects", label: "What it finds" },
+  { href: "#scenarios", label: "Scenarios" },
+  { href: "#use-cases", label: "Use cases" },
   { href: "#security", label: "Security" },
   { href: "#faq", label: "FAQ" },
 ];

@@ -324,8 +324,12 @@ data from the API: nothing is sample data, and anything the product does not do 
 
 ### The landing page, sign-in and Create account
 Before you sign in, `/` is a public **landing page**: what the product does, the six ways a RAG index fails silently, how it works in three
-steps, the issue types it finds, what you get, how it is secured, which tools it works with, and a short FAQ. It states nothing that is
-not true of the product (no customer logos or statistics) and has **Sign in** and **Get started** buttons and a **User guide** link. Sign-in
+steps, the issue types it finds, **13 real scenarios** (grouped as *Missing from search*, *Out of date*, *Left behind*, *Records disagree*
+and *Wrong customer*; each says what goes wrong, what users notice, what RAGGuard shows and how it gets fixed; they are the same 13 faults
+the practice lab plants, and a test keeps the two lists equal), **six moments to use it** (after every ingestion run, before changing the
+embedding model, when content is deleted, when you serve several customers, when a user says an answer is wrong, when someone asks for
+proof), what you get, how it is secured, which tools it works with, and a short FAQ. It states nothing that is not true of the product (no
+customer logos or statistics) and has **Sign in** and **Get started** buttons and a **User guide** link. Sign-in
 lives at `/login` and sign-up at `/signup`; any other address you open while signed out asks you to sign in and then lands where you were
 going (except `/help`, which is public, see below). Once signed in, those two addresses lead straight to the app. The brand mark is a
 faceted shield holding a check drawn as a three-node path (source, manifest and index agreeing); its source is
