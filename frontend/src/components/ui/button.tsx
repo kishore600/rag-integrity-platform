@@ -15,7 +15,10 @@ export const buttonVariants = cva(
         "danger-outline": "border border-line bg-workspace text-critical shadow-card hover:bg-critical-bg",
         link: "h-auto p-0 text-brand hover:text-brand-hover hover:underline",
       },
-      size: { sm: "h-8 px-3 text-support", md: "h-9 px-3.5", lg: "h-10 px-4", icon: "h-9 w-9 p-0", "icon-sm": "h-8 w-8 p-0" },
+      // Small is 12px/16px (the `support` size). It is written as `text-[12px]` on purpose: tailwind-merge (inside `cn`) does not know our
+      // `text-support` / `text-body` names are font sizes, takes them for colours, and drops the variant's `text-white` / `text-critical`
+      // (white text on the purple Set up button came out dark). An arbitrary size is recognised as a size, so the colour stays.
+      size: { sm: "h-8 px-3 text-[12px] leading-4", md: "h-9 px-3.5", lg: "h-10 px-4", icon: "h-9 w-9 p-0", "icon-sm": "h-8 w-8 p-0" },
     },
     defaultVariants: { variant: "secondary", size: "md" },
   },
