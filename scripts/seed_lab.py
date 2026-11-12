@@ -6,7 +6,7 @@ It never reads `.env` or the app's RAGI_* settings, so it cannot be pointed at y
 any host that is not this computer or one of the lab's containers. Safe to re-run: it recreates the lab's tables and collections.
 
 Variables (all optional; the defaults match docker-compose.lab.yml run from your computer):
-    LAB_S3_ENDPOINT   http://127.0.0.1:9000        LAB_S3_BUCKET  docs   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY  minioadmin
+    LAB_S3_ENDPOINT   http://127.0.0.1:9000        LAB_S3_BUCKET  docs   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY  test
     LAB_PG_URL        postgresql://postgres:postgres@127.0.0.1:55432/postgres
     LAB_QDRANT_URL    http://127.0.0.1:6333        LAB_QDRANT_API_KEY (none)
 """
@@ -47,8 +47,8 @@ def main() -> int:
         assert_local(label, urlparse(url).hostname)
 
     s3 = boto3.client("s3", region_name="us-east-1", endpoint_url=s3_url,
-                      aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin"),
-                      aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin"))
+                      aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", "test"),
+                      aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", "test"))
     wait_for("S3", lambda: s3.list_buckets())
     engine = create_engine(normalize_db_url(pg_url), connect_args={"prepare_threshold": None})
     wait_for("PostgreSQL", lambda: engine.connect().close())

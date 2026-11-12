@@ -159,7 +159,7 @@ def test_the_lab_refuses_anything_that_is_not_local(label, host):
         lab.assert_local(label, host)
 
 
-@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "minio", "postgres", "qdrant"])
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "s3", "postgres", "qdrant"])
 def test_the_lab_accepts_its_own_hosts(host):
     lab.assert_local("S3", host)
 
@@ -168,7 +168,8 @@ def test_the_compose_file_is_local_only_and_has_both_labs():
     yaml = pytest.importorskip("yaml")
     compose = yaml.safe_load((ROOT / "docker-compose.lab.yml").read_text(encoding="utf-8"))
     services = compose["services"]
-    assert set(services) == {"postgres", "qdrant", "minio", "seed", "worker", "app-lab", "app-bills"}
+    assert set(services) == {"postgres", "qdrant", "s3", "seed", "worker", "app-lab", "app-bills"}
+    assert services["s3"]["image"].startswith("motoserver/moto:") and ":latest" not in services["s3"]["image"]  # pinned, official
     for name, svc in services.items():
         for port in svc.get("ports", []):
             assert port.startswith("127.0.0.1:"), f"{name} publishes {port} to the whole network"
@@ -179,3 +180,8 @@ def test_the_compose_file_is_local_only_and_has_both_labs():
         assert services[app]["environment"]["RAGI_DATABASE_URL"].startswith("sqlite:")
     assert services["seed"]["command"] == ["python", "scripts/seed_lab.py"]
     assert any(p.endswith(":5432") for p in services["postgres"]["ports"]) and not any(p.startswith("127.0.0.1:5432:") for p in services["postgres"]["ports"])
+    # the fake S3 is reached by the same address in the compose file, the seed step and the answer sheet
+    endpoint = "http://s3:5000"
+    assert services["s3"]["ports"] == ["127.0.0.1:9000:5000"] and "s3" in services["seed"]["depends_on"]
+    assert services["seed"]["environment"]["LAB_S3_ENDPOINT"] == services["app-lab"]["environment"]["RAGI_S3_ENDPOINT_URL"] == endpoint
+    assert services["worker"]["environment"]["S3_ENDPOINT_URL"] == endpoint and f"`{endpoint}`" in lab.workbook_markdown()

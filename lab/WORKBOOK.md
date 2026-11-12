@@ -47,8 +47,8 @@ A miniature of the real setup: files at `bills/<bill>/<document>.pdf` in the buc
 | Page | Field | Value |
 |---|---|---|
 | Data Sources, Amazon S3 | Bucket / Key prefix / Region | `bills-lab` / `bills/` / `us-east-1` |
-| | Custom endpoint | `http://minio:9000` |
-| | Access key ID / Secret access key | `minioadmin` / `minioadmin` |
+| | Custom endpoint | `http://s3:5000` |
+| | Access key ID / Secret access key | `test` / `test` (the lab's fake S3 accepts any keys) |
 | | Content hash | `etag` |
 | | Key pattern (regex) | `^(?P<document_id>[^/]+)/(?P=document_id)\.pdf$` |
 | | Look up files from the manifest | on |

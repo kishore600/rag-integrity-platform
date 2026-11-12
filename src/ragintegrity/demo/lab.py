@@ -1,6 +1,6 @@
 """The practice lab: documents with every fault planted on purpose, to explore RAGGuard on your own computer.
 
-Two small worlds, both written into *local* S3 (MinIO), PostgreSQL and Qdrant by ``scripts/seed_lab.py``:
+Two small worlds, both written into *local* S3 (moto), PostgreSQL and Qdrant by ``scripts/seed_lab.py``:
 
 * **Lab A, "the 30 documents".** 27 documents across three tenants where each of the 13 kinds of fault is planted on exactly one
   document (so you know the right answer), plus 3 practice documents whose IDs are written as a number, a decimal and text, and one
@@ -32,7 +32,7 @@ LAB_SEED = 2026
 LAB_DOCS_PER_TENANT = 9  # 3 tenants x 9 = 27 documents, plus the 3 numeric-ID documents = 30
 LAB_NOW = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)  # only used to generate the workbook the same way every time
 # Where the lab may write. Seeding DROPS and recreates tables and collections, so anything else is refused.
-LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "minio", "postgres", "qdrant", "host.docker.internal")
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "s3", "postgres", "qdrant", "host.docker.internal")
 
 # One of each fault. The order is the order of the workbook.
 LAB_PLAN = (
@@ -422,8 +422,8 @@ def workbook_markdown() -> str:
         "a real customer. The addresses are the ones the app inside Docker uses to reach the other containers.", "",
         "| Page | Field | Value |", "|---|---|---|",
         "| Data Sources, Amazon S3 | Bucket / Key prefix / Region | `bills-lab` / `bills/` / `us-east-1` |",
-        "| | Custom endpoint | `http://minio:9000` |",
-        "| | Access key ID / Secret access key | `minioadmin` / `minioadmin` |",
+        "| | Custom endpoint | `http://s3:5000` |",
+        "| | Access key ID / Secret access key | `test` / `test` (the lab's fake S3 accepts any keys) |",
         "| | Content hash | `etag` |",
         r"| | Key pattern (regex) | `^(?P<document_id>[^/]+)/(?P=document_id)\.pdf$` |",
         "| | Look up files from the manifest | on |",

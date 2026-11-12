@@ -2,7 +2,7 @@
 
 Learn RAGGuard by using it on **your own computer**, with data you can break and fix without risking anything.
 
-You get your own S3 (MinIO), PostgreSQL and Qdrant, filled with **30 documents that have every kind of fault planted on purpose**, and
+You get your own S3 (a fake one called "moto"), PostgreSQL and Qdrant, filled with **30 documents that have every kind of fault planted on purpose**, and
 two copies of RAGGuard to explore them:
 
 | | Address | What it is | You do |
@@ -23,7 +23,7 @@ docker info
 ```
 
   If that prints a long report, you are ready. If it says it cannot connect to the Docker API, open Docker Desktop and wait.
-- Free these ports: `6333`, `8000`, `8001`, `9000`, `9001`, `55432` (the lab uses 55432 for PostgreSQL on purpose, so it does not clash
+- Free these ports: `6333`, `8000`, `8001`, `9000`, `55432` (the lab uses 55432 for PostgreSQL on purpose, so it does not clash
   with a Postgres you may already run on 5432).
 - About 3 GB of disk space, and 3 to 6 minutes the first time (it downloads images and builds one).
 
@@ -87,7 +87,7 @@ This is the part that matches what a customer does, and what you did with your o
 
 1. Open http://localhost:8001 and **create an account** (any email and password; they stay on your computer).
 2. It shows *Connect your data*. On **Data Sources** open each card and type the values from the **Lab B table in
-   [`WORKBOOK.md`](WORKBOOK.md#lab-b-mini-bills-practise-the-real-sign-up-and-settings-flow)** (bucket `bills-lab`, endpoint `http://minio:9000`,
+   [`WORKBOOK.md`](WORKBOOK.md#lab-b-mini-bills-practise-the-real-sign-up-and-settings-flow)** (bucket `bills-lab`, endpoint `http://s3:5000`,
    the key pattern, the column map, the payload field map). Press **Save**, then **Test connection**.
 3. Under **Settings → Policy** set **Grace period** to `0`, **Required payload fields** to `document_id`, and switch on
    **Only audit documents found in the source (S3)**.
@@ -128,8 +128,8 @@ See what each container is saying:
 docker compose -f docker-compose.lab.yml logs --tail 50
 ```
 
-MinIO's own web page (to see the files): http://localhost:9001 (user `minioadmin`, password `minioadmin`). Qdrant's web page (to see the
-pieces): http://localhost:6333/dashboard.
+The fake S3 has no web page of its own: see the files on the app's **Documents** page. Qdrant's web page (to see the pieces):
+http://localhost:6333/dashboard.
 
 ## 7. If something goes wrong
 

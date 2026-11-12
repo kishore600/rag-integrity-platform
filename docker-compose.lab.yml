@@ -1,4 +1,4 @@
-# The PRACTICE LAB: your own S3 (MinIO), PostgreSQL and Qdrant on your computer, filled with 30 documents that have every fault
+# The PRACTICE LAB: your own S3 (moto), PostgreSQL and Qdrant on your computer, filled with 30 documents that have every fault
 # planted on purpose, and two copies of RAGGuard to explore them with.
 #
 #   docker compose -f docker-compose.lab.yml up --build       then open  http://localhost:8000  (Lab A)  and  http://localhost:8001  (Lab B)
@@ -17,9 +17,9 @@ x-app: &app
   build: .
   image: ragguard-lab:local
 
-x-s3: &s3-keys
-  AWS_ACCESS_KEY_ID: minioadmin
-  AWS_SECRET_ACCESS_KEY: minioadmin
+x-s3: &s3-keys   # moto accepts any keys; these are just placeholders
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
 
 services:
   postgres:
@@ -36,26 +36,22 @@ services:
     image: qdrant/qdrant:v1.12.4
     ports: ["127.0.0.1:6333:6333"]
 
-  minio:
-    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]   # 9001 is MinIO's own web page (minioadmin / minioadmin)
+  s3:   # "moto": a program that pretends to be Amazon S3 (it keeps the files in memory; the seed step refills it on every start)
+    image: motoserver/moto:5.0.28
+    ports: ["127.0.0.1:9000:5000"]   # moto listens on 5000 inside; you can reach it from your computer on 9000
 
   seed:
     <<: *app
     command: ["python", "scripts/seed_lab.py"]
     environment:
       <<: *s3-keys
-      LAB_S3_ENDPOINT: http://minio:9000
+      LAB_S3_ENDPOINT: http://s3:5000
       LAB_PG_URL: postgresql://postgres:postgres@postgres:5432/postgres
       LAB_QDRANT_URL: http://qdrant:6333
     depends_on:
       postgres: { condition: service_healthy }
       qdrant: { condition: service_started }
-      minio: { condition: service_started }
+      s3: { condition: service_started }
     restart: "no"
 
   worker:   # the reference repair worker: stands in for YOUR ingestion pipeline when RAGGuard asks it to re-index
@@ -64,7 +60,7 @@ services:
     environment:
       RAGI_WORKER_AUTOSTART: "1"
       S3_BUCKET: docs
-      S3_ENDPOINT_URL: http://minio:9000
+      S3_ENDPOINT_URL: http://s3:5000
       AWS_REGION: us-east-1
       <<: *s3-keys
       QDRANT_URL: http://qdrant:6333
@@ -81,7 +77,7 @@ services:
       RAGI_MODE: live
       RAGI_DATABASE_URL: sqlite:////tmp/lab-a.db      # a throwaway ledger inside the container (never your real database)
       RAGI_S3_BUCKET: docs
-      RAGI_S3_ENDPOINT_URL: http://minio:9000
+      RAGI_S3_ENDPOINT_URL: http://s3:5000
       RAGI_S3_REGION: us-east-1
       RAGI_MANIFEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
       RAGI_MANIFEST_CHUNK_TABLE: rag_chunk_manifest
