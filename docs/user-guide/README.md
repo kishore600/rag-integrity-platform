@@ -4,7 +4,7 @@ RAGGuard tells you when your RAG index is wrong, before your users do. It compar
 
 This guide explains every page, every section, every field and every value in the product, and walks you from a new account to a verified fix. It is written for someone who has never seen the product. You can read it from top to bottom, or jump to the page you are on. You can also watch the [narrated video walkthrough](19-video-walkthrough.md), which follows the same path.
 
-> **Read it inside the product.** Everything in this guide, and the video, is also built into RAGGuard: choose **Help and user guide** in the account menu, or open the address `/help`. You can read it before you have an account (the landing page has a **User guide** link).
+> **Read it inside the product.** Everything in this guide, and the video, is also built into RAGGuard: choose **Help and user guide** at the bottom of the left menu (or in the account menu), or open the address `/help`. You can read it before you have an account (the landing page has a **User guide** link).
 
 > **About the screenshots.** They come from a demo workspace that is connected to a synthetic knowledge base (three tenants, a few hundred documents, and about 50 deliberate faults). Your numbers, names and documents will differ. The layout, the labels and the meaning of every value are the same.
 

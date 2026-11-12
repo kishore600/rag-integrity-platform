@@ -310,8 +310,9 @@ data from the API: nothing is sample data, and anything the product does not do 
 
 **The frame around every page.**
 - **Left menu** (dark, 250 px; a slide-out drawer on a phone), ten pages: *Overview, Data Sources, Reconciliation, Integrity Issues* (with the
-  number of open issues), *Isolation, Documents, Audit History, Integrations, Alerts, Settings*. At the bottom a card says **LIVE** (your own systems) or
-  **DEMO** (synthetic data), the workspace name and the version.
+  number of open issues), *Isolation, Documents, Audit History, Integrations, Alerts, Settings*. Below them, set apart by a line, **Help and user
+  guide** opens the video and the user guide (`/help`, see below); it is a link to help, not an eleventh page. At the bottom a card says **LIVE**
+  (your own systems) or **DEMO** (synthetic data), the workspace name and the version.
 - **Top bar**: a search box (type, then choose *Documents* or *Integrity issues*; press `/` anywhere to focus it), **Run audit**, a bell
   (open issues by severity and when the last audit ran), and your account menu (email, workspace, Settings, **Help and user guide**,
   **Sign out**).
@@ -333,8 +334,8 @@ faceted shield holding a check drawn as a three-node path (source, manifest and 
 ### Help and user guide
 `/help` shows the narrated walkthrough video and the whole user guide inside the product. It is **public**: a visitor who is not signed in
 sees it with a slim header (**Sign in**, **Get started**), and a signed-in user sees it inside the normal frame. Signed-in users reach it
-from **Help and user guide** in the account menu; visitors from **User guide** on the landing page. There is no entry in the left menu,
-which keeps it at the ten pages above.
+from **Help and user guide** at the bottom of the left menu (highlighted while you are on any Help page) and in the account menu; visitors
+from **User guide** on the landing page.
 - **`/help`**: the video player (a button for each part of the video, with its time; captions from the player's captions control; the
   poster is the title card), then every chapter as a card, grouped as in `docs/user-guide/README.md` (*Set up*, *The pages*, *Putting it to
   work*).

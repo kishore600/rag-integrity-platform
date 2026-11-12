@@ -15,7 +15,7 @@ A six-minute narrated video shows two parts of RAGGuard in action: the **Documen
 
 ## Where the video is
 
-**Watch it in the product.** The video plays on the Help page: choose **Help and user guide** in the account menu, or open the address `/help` (you do not need an account). It has a button for each part of the video, so you can jump to one, and a captions control in the player. The same page lists every chapter of this guide.
+**Watch it in the product.** The video plays on the Help page: choose **Help and user guide** at the bottom of the left menu (or in the account menu), or open the address `/help` (you do not need an account). It has a button for each part of the video, so you can jump to one, and a captions control in the player. The same page lists every chapter of this guide.
 
 | File | What it is |
 |---|---|

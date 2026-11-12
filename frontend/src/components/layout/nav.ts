@@ -1,4 +1,4 @@
-import { Bell, Database, FileText, GitCompareArrows, History, LayoutDashboard, Lock, Plug, Settings, ShieldAlert, type LucideIcon } from "lucide-react";
+import { Bell, BookOpen, Database, FileText, GitCompareArrows, History, LayoutDashboard, Lock, Plug, Settings, ShieldAlert, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   to: string;
@@ -21,3 +21,9 @@ export const NAV: NavItem[] = [
   { to: "/alerts", label: "Alerts", icon: Bell },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
+
+/**
+ * The way into the user guide and the video. It sits below the ten pages, set apart, because it is help about the product and not one of
+ * its pages (the account menu has the same link). `/help` is public, so the landing page links to it too.
+ */
+export const HELP_ITEM: NavItem = { to: "/help", label: "Help and user guide", icon: BookOpen };

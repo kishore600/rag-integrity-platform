@@ -187,7 +187,7 @@ Once you are in, every page sits inside the same frame: a dark sidebar on the le
 
 ### The sidebar
 
-The sidebar holds the RAGGuard mark at the top, ten menu items, and the environment card at the bottom. The current page is highlighted. On screens narrower than 1024 pixels the sidebar is hidden and opens as a drawer (see [Phones and small windows](#phones-and-small-windows)).
+The sidebar holds the RAGGuard mark at the top, ten menu items, a **Help and user guide** link set apart below them, and the environment card at the bottom. The current page is highlighted. On screens narrower than 1024 pixels the sidebar is hidden and opens as a drawer (see [Phones and small windows](#phones-and-small-windows)).
 
 | Menu item | Page title | Address | What the page is for | Chapter |
 |---|---|---|---|---|
@@ -201,6 +201,7 @@ The sidebar holds the RAGGuard mark at the top, ten menu items, and the environm
 | **Integrations** | Integrations | `/integrations` | "Connect RAGGuard to the rest of your stack." The repair webhook and API keys. | [Integrations](12-integrations.md) |
 | **Alerts** | Alerts | `/alerts` | "Get told when an audit finds something new." | [Alerts](13-alerts.md) |
 | **Settings** | Settings | `/settings` | "Your workspace, the pipeline you expect, and your account." | [Settings](14-settings.md) |
+| **Help and user guide** (below a thin line) | Help and user guide | `/help` | "Watch the walkthrough, or read a chapter for every page." The video and every chapter of this guide, inside the product. It is help about the product, not an eleventh page. | [The video walkthrough](19-video-walkthrough.md) |
 
 The menu uses capitals in two words (for example **Data Sources**) where the page title does not (for example "Data sources"). They are the same page.
 
@@ -334,7 +335,7 @@ At the far right of the top bar is your avatar: a round badge with your initials
 |---|---|
 | Your email, and below it your workspace name | Information only. On a single-user server it reads "Operator" and "Demo workspace" or "Single-user server". |
 | **Settings** | Opens the **Settings** page. |
-| **Help and user guide** | Opens the Help pages inside the product, address `/help`: the video walkthrough and every chapter of this guide. See [The video walkthrough](19-video-walkthrough.md#where-the-video-is). |
+| **Help and user guide** | Opens the Help pages inside the product, address `/help`: the video walkthrough and every chapter of this guide. The same link is at the bottom of the left menu. See [The video walkthrough](19-video-walkthrough.md#where-the-video-is). |
 | **Sign out** (in red) | Ends your session and returns you to the landing page. Only shown on a hosted server. If signing out fails you see the notice "Couldn't sign out" with the reason. |
 
 ### The demo banner
