@@ -1,0 +1,115 @@
+# The PRACTICE LAB: your own S3 (MinIO), PostgreSQL and Qdrant on your computer, filled with 30 documents that have every fault
+# planted on purpose, and two copies of RAGGuard to explore them with.
+#
+#   docker compose -f docker-compose.lab.yml up --build       then open  http://localhost:8000  (Lab A)  and  http://localhost:8001  (Lab B)
+#   docker compose -f docker-compose.lab.yml down -v          to stop it and throw everything away
+#
+# Read lab/README.md first. Everything here is throwaway and local: all ports are bound to 127.0.0.1, the passwords below are
+# defaults that protect nothing, and no .env file is read, so none of your real settings can leak in.
+#
+#   Lab A  http://localhost:8000   "live" mode, preloaded: just press Run audit and compare with lab/WORKBOOK.md.
+#                                  Has the reference repair worker, so you can also fix problems (plan, trigger, verify, clean up).
+#   Lab B  http://localhost:8001   the multi-user app, EMPTY: create an account and type the settings in, like a real customer.
+
+name: ragguard-lab
+
+x-app: &app
+  build: .
+  image: ragguard-lab:local
+
+x-s3: &s3-keys
+  AWS_ACCESS_KEY_ID: minioadmin
+  AWS_SECRET_ACCESS_KEY: minioadmin
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports: ["127.0.0.1:55432:5432"]   # 55432, not 5432: a Postgres of your own may already be using 5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      retries: 20
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports: ["127.0.0.1:6333:6333"]
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]   # 9001 is MinIO's own web page (minioadmin / minioadmin)
+
+  seed:
+    <<: *app
+    command: ["python", "scripts/seed_lab.py"]
+    environment:
+      <<: *s3-keys
+      LAB_S3_ENDPOINT: http://minio:9000
+      LAB_PG_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      LAB_QDRANT_URL: http://qdrant:6333
+    depends_on:
+      postgres: { condition: service_healthy }
+      qdrant: { condition: service_started }
+      minio: { condition: service_started }
+    restart: "no"
+
+  worker:   # the reference repair worker: stands in for YOUR ingestion pipeline when RAGGuard asks it to re-index
+    <<: *app
+    command: ["uvicorn", "examples.reference_worker.worker:app", "--host", "0.0.0.0", "--port", "9000"]
+    environment:
+      RAGI_WORKER_AUTOSTART: "1"
+      S3_BUCKET: docs
+      S3_ENDPOINT_URL: http://minio:9000
+      AWS_REGION: us-east-1
+      <<: *s3-keys
+      QDRANT_URL: http://qdrant:6333
+      MANIFEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      RAGI_REPAIR_WEBHOOK_SECRET: local-lab-secret
+    depends_on:
+      seed: { condition: service_completed_successfully }
+
+  app-lab:   # Lab A: preloaded, no sign-in
+    <<: *app
+    ports: ["127.0.0.1:8000:8000"]
+    environment:
+      <<: *s3-keys
+      RAGI_MODE: live
+      RAGI_DATABASE_URL: sqlite:////tmp/lab-a.db      # a throwaway ledger inside the container (never your real database)
+      RAGI_S3_BUCKET: docs
+      RAGI_S3_ENDPOINT_URL: http://minio:9000
+      RAGI_S3_REGION: us-east-1
+      RAGI_MANIFEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      RAGI_MANIFEST_CHUNK_TABLE: rag_chunk_manifest
+      RAGI_QDRANT_URL: http://qdrant:6333
+      RAGI_QDRANT_COLLECTIONS: kb_main
+      RAGI_QDRANT_CHECK_VECTORS: "true"
+      RAGI_GRACE_MINUTES: "0"          # the lab's files were created seconds ago
+      RAGI_TARGET_PARSER_VERSION: parser-2.1
+      RAGI_TARGET_CHUNKING_VERSION: recursive-v2
+      RAGI_TARGET_CHUNK_SIZE: "400"
+      RAGI_TARGET_CHUNK_OVERLAP: "40"
+      RAGI_TARGET_EMBEDDING_MODEL: demo-embed-v2
+      RAGI_TARGET_EMBEDDING_DIM: "16"
+      RAGI_TARGET_PREPROCESSING: clean-v1
+      RAGI_REPAIR_WEBHOOK_URL: http://worker:9000/ragi-webhook
+      RAGI_REPAIR_WEBHOOK_SECRET: local-lab-secret
+      RAGI_PUBLIC_BASE_URL: http://app-lab:8000
+    depends_on:
+      seed: { condition: service_completed_successfully }
+      worker: { condition: service_started }
+
+  app-bills:   # Lab B: the multi-user app, empty. You create an account and enter the settings.
+    <<: *app
+    ports: ["127.0.0.1:8001:8000"]
+    environment:
+      RAGI_MODE: app
+      RAGI_DATABASE_URL: sqlite:////tmp/lab-bills.db  # throwaway
+      RAGI_SECRET_KEY: lab-only-secret-key-lab-only-secret-key-1234
+      RAGI_ALLOW_PRIVATE_HOSTS: "true"                 # lets it reach the other containers (a hosted app refuses private addresses)
+    depends_on:
+      seed: { condition: service_completed_successfully }

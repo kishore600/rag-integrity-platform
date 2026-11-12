@@ -1035,6 +1035,15 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 - **Scheduled audits**: serverless has no scheduler. Create an API key on Integrations and call `POST /api/audits` from GitHub Actions or cron.
 - **Large corpora**: audit per tenant, or run `ragi audit` outside serverless.
 
+### 14.5 The practice lab (learn it on your own computer)
+`docker compose -f docker-compose.lab.yml up --build` starts a private S3 (MinIO), PostgreSQL and Qdrant on your computer, fills them with
+**30 documents that carry every kind of fault, planted once each**, and runs two copies of the app: **Lab A** (http://localhost:8000, live
+mode, already connected, with the reference repair worker so you can run the whole fix loop) and **Lab B** (http://localhost:8001, the
+multi-user app, empty, for practising sign-up and entering the settings of a "bills" setup like a real customer). Lab A also holds three
+documents whose Qdrant ID is a number, a decimal and text, and one duplicated manifest row. `lab/WORKBOOK.md` is the answer sheet (generated
+by running the real audit on the lab, and checked by a test); `lab/README.md` is the step-by-step guide. The lab reads no `.env`, binds every
+port to 127.0.0.1, keeps a throwaway ledger inside each container, and its seeding script refuses any address that is not local.
+
 ---
 
 ## 15. Verification status

@@ -69,6 +69,7 @@ Other ways to run it:
 | `ragi demo` | seed + audit in the terminal, print a summary |
 | `docker run -p 8000:8000 ghcr.io/kishore600/rag-integrity-platform` | the demo, containerised (image published by CI) |
 | `docker compose up --build` | a **live** stack: MinIO (S3) + Postgres + Qdrant + seeded faults + reference worker + the app |
+| `docker compose -f docker-compose.lab.yml up --build` | the **practice lab**: 30 documents with every fault planted once, an answer sheet, and two copies of the app (see [lab/README.md](lab/README.md)) |
 | `ragi audit --fail-on high` | one audit from cron / CI; exits 2 if anything at or above `high` remains |
 
 ## What it detects
