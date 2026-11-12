@@ -108,6 +108,49 @@ def test_the_duplicated_manifest_row_is_a_warning_not_a_finding(seeded):
     assert warning["code"] == "duplicate_manifest_ids" and warning["count"] == 1
 
 
+def test_the_repair_loop_works_on_lab_a(seeded, monkeypatch):
+    """plan -> trigger -> the reference worker re-indexes -> verify -> approve cleanup -> verify -> audit, on the lab's own data.
+
+    The lab's manifest has NO unique key (the duplicated row exercise removed it), which once made the worker fail silently.
+    """
+    import importlib.util
+    import sys
+
+    from fastapi.testclient import TestClient
+
+    from ragintegrity import repair as repair_module
+
+    world, s3, qd, eng, tmp = seeded
+    spec = importlib.util.spec_from_file_location("reference_worker_lab", ROOT / "examples" / "reference_worker" / "worker.py")
+    rw = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = rw
+    spec.loader.exec_module(rw)
+    secret = "local-lab-secret"
+    settings = Settings(_env_file=None, mode="live", database_url=f"sqlite:///{tmp / 'ledger-repair.db'}", s3_region="us-east-1", grace_minutes=0,
+                        manifest_database_url=f"sqlite:///{tmp / 'manifest.db'}", s3_bucket="docs", manifest_chunk_table="rag_chunk_manifest",
+                        qdrant_collections="kb_main", qdrant_check_vectors=True, repair_webhook_url="http://worker:9000/ragi-webhook",
+                        repair_webhook_secret=secret, **{f"target_{k}": v for k, v in TARGET_FP.to_dict().items()})
+    svc = IntegrityService(settings, Ledger(settings.database_url),
+                           Connectors(S3Source(settings, client=s3), PostgresManifest(settings, engine=eng), QdrantIndex(settings, client=qd)))
+    svc.ledger.init()
+    worker = TestClient(rw.create_app(rw.Worker(s3, "docs", qd, eng), secret, background=False))
+    monkeypatch.setattr(repair_module.httpx, "post",
+                        lambda url, content=None, headers=None, timeout=None: worker.post("/ragi-webhook", content=content, headers=headers))
+
+    svc.run_audit(probe=True)
+    assert svc.ledger.issue_counts()["open"] == 14
+    plan = svc.repairs.trigger(svc.repairs.create_plan()["id"])
+    assert plan["status"] == "triggered"
+    plan = svc.repairs.verify(plan["id"])
+    assert plan["status"] == "cleanup_pending"
+    plan = svc.repairs.verify(svc.repairs.approve_cleanup(plan["id"])["id"])
+    assert plan["status"] == "completed"
+    svc.run_audit(probe=True)
+    left = svc.ledger.issue_counts()["open"]
+    assert left < 14, "the repair loop fixed nothing"
+    assert not any(i["type"] in ("missing_embedding", "false_success", "stale_embedding") for i in svc.ledger.list_issues(status="open", limit=500)[0])
+
+
 # ------------------------------------------------------------------------------------- Lab B
 def test_lab_b_with_the_settings_the_workbook_tells_you_to_type(seeded):
     svc, run, by = audit(seeded, "B")

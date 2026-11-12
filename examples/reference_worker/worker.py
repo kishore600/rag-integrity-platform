@@ -92,14 +92,18 @@ class Worker:
         }
         cols = ", ".join(MANIFEST_COLS)
         vals = ", ".join(f":{c}" for c in MANIFEST_COLS)
-        upd = ", ".join(f"{c} = excluded.{c}" for c in MANIFEST_COLS if c not in ("tenant_id", "document_id"))
+        sets = ", ".join(f"{c} = :{c}" for c in MANIFEST_COLS if c not in ("tenant_id", "document_id"))
         with self.engine.begin() as c:
             # keep the previously recorded ACL hash: this toy pipeline does not compute ACLs
             existing = c.execute(text(f"SELECT acl_hash FROM {self.q}rag_document_manifest WHERE tenant_id=:t AND document_id=:d"),
                                  {"t": tenant, "d": doc}).first()
             row["acl_hash"] = existing[0] if existing else None
-            c.execute(text(f"INSERT INTO {self.q}rag_document_manifest ({cols}) VALUES ({vals}) "
-                           f"ON CONFLICT (tenant_id, document_id) DO UPDATE SET {upd}"), row)
+            # UPDATE, then INSERT when nothing was there. Not "INSERT ... ON CONFLICT": that needs a unique key on
+            # (tenant_id, document_id), and many real manifest tables have none (the practice lab's duplicate-row exercise removes it).
+            updated = c.execute(text(f"UPDATE {self.q}rag_document_manifest SET {sets} WHERE tenant_id = :tenant_id AND document_id = :document_id"),
+                                row).rowcount
+            if not updated:
+                c.execute(text(f"INSERT INTO {self.q}rag_document_manifest ({cols}) VALUES ({vals})"), row)
             c.execute(text(f"DELETE FROM {self.q}rag_chunk_manifest WHERE tenant_id=:t AND document_id=:d"), {"t": tenant, "d": doc})
             if chunk_rows:
                 c.execute(text(f"INSERT INTO {self.q}rag_chunk_manifest (tenant_id, document_id, chunk_id, chunk_index, chunk_hash) "

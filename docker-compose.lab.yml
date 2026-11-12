@@ -57,6 +57,8 @@ services:
   worker:   # the reference repair worker: stands in for YOUR ingestion pipeline when RAGGuard asks it to re-index
     <<: *app
     command: ["uvicorn", "examples.reference_worker.worker:app", "--host", "0.0.0.0", "--port", "9000"]
+    healthcheck:
+      disable: true   # the app image's health check looks at port 8000 and would wrongly mark this worker (port 9000) "unhealthy"
     environment:
       RAGI_WORKER_AUTOSTART: "1"
       S3_BUCKET: docs

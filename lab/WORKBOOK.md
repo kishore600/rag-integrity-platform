@@ -46,7 +46,7 @@ A miniature of the real setup: files at `bills/<bill>/<document>.pdf` in the buc
 
 | Page | Field | Value |
 |---|---|---|
-| Data Sources, Amazon S3 | Bucket / Key prefix / Region | `bills-lab` / `bills/` / `us-east-1` |
+| Data Sources, Amazon S3 | Bucket / Key prefix / Region | `bills-lab` / `bills/` / `us-east-1` (**keep the slash at the end of the prefix**: without it the key pattern matches nothing, the audit sees 0 documents and shows "0 issues") |
 | | Custom endpoint | `http://s3:5000` |
 | | Access key ID / Secret access key | `test` / `test` (the lab's fake S3 accepts any keys) |
 | | Content hash | `etag` |

@@ -87,7 +87,7 @@ This is the part that matches what a customer does, and what you did with your o
 
 1. Open http://localhost:8001 and **create an account** (any email and password; they stay on your computer).
 2. It shows *Connect your data*. On **Data Sources** open each card and type the values from the **Lab B table in
-   [`WORKBOOK.md`](WORKBOOK.md#lab-b-mini-bills-practise-the-real-sign-up-and-settings-flow)** (bucket `bills-lab`, endpoint `http://s3:5000`,
+   [`WORKBOOK.md`](WORKBOOK.md#lab-b-mini-bills-practise-the-real-sign-up-and-settings-flow)** (bucket `bills-lab`, key prefix `bills/` **with the slash**, endpoint `http://s3:5000`,
    the key pattern, the column map, the payload field map). Press **Save**, then **Test connection**.
 3. Under **Settings → Policy** set **Grace period** to `0`, **Required payload fields** to `document_id`, and switch on
    **Only audit documents found in the source (S3)**.
@@ -139,6 +139,8 @@ http://localhost:6333/dashboard.
 | "port is already allocated" | Something else uses that port. Close it, or change the left-hand number in `docker-compose.lab.yml`. |
 | The seed step fails | Run it again: `docker compose -f docker-compose.lab.yml run --rm seed`. It is safe to repeat. |
 | A page is empty or an audit says "setup required" | Lab A: reload and press **Run audit**. Lab B: finish the four steps in section 4. |
+| Lab B says **0 documents, 0 issues** | Almost always the **Key prefix**: it must be `bills/` **with the slash at the end**. Without it the key pattern cannot match, RAGGuard finds no source documents, and "only audit documents found in the source" then leaves nothing to compare. Fix the prefix, press **Test connection** (the *Key pattern* line must turn green), then **Run audit**. |
+| In Lab A, **Trigger repair** was accepted but **Verify now** says the documents are not fixed | Check the worker: `docker compose -f docker-compose.lab.yml logs worker`. (An old version of the worker failed on the lab's keyless manifest table. Update it with `docker compose -f docker-compose.lab.yml up -d --build --no-deps worker`, then press **Verify now** and **Send repair again**.) |
 | Everything is a mess | `docker compose -f docker-compose.lab.yml down -v`, then start again. |
 | Docker will not start at all | You can still explore with the built-in demo: `ragi serve --demo` (fake data with faults planted, no Docker needed). |
 

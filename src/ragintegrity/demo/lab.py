@@ -421,7 +421,8 @@ def workbook_markdown() -> str:
         "**create an account** (any email and password, they stay on your computer) and type these into the pages, exactly as you would for "
         "a real customer. The addresses are the ones the app inside Docker uses to reach the other containers.", "",
         "| Page | Field | Value |", "|---|---|---|",
-        "| Data Sources, Amazon S3 | Bucket / Key prefix / Region | `bills-lab` / `bills/` / `us-east-1` |",
+        "| Data Sources, Amazon S3 | Bucket / Key prefix / Region | `bills-lab` / `bills/` / `us-east-1` (**keep the slash at the end of the prefix**: "
+        "without it the key pattern matches nothing, the audit sees 0 documents and shows \"0 issues\") |",
         "| | Custom endpoint | `http://s3:5000` |",
         "| | Access key ID / Secret access key | `test` / `test` (the lab's fake S3 accepts any keys) |",
         "| | Content hash | `etag` |",
