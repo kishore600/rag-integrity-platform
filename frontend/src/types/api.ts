@@ -44,9 +44,36 @@ export interface RunWarning {
   examples?: { tenant_id: string; document_id: string; copies: number; found_in: string[] }[];
 }
 
+/** How complete and how reliable the scan of the vector index was (GUIDE.md 3.12). Absent on runs recorded before it existed. */
+export interface ScanBlock {
+  status: "completed" | "partial" | "failed" | "in_progress";
+  complete: boolean;
+  /** true while the result is not final: a partial audit reports only the documents it finished. */
+  provisional: boolean;
+  mode: "sliced" | "single_pass";
+  points_scanned: number;
+  estimated_total: number | null;
+  percent: number | null;
+  pages: number;
+  retries: number;
+  recovered_errors: number;
+  unrecoverable_errors: number;
+  rate_limited: number;
+  waited_seconds: number;
+  slices_total: number;
+  slices_done: number;
+  documents_done: number | null;
+  documents_total: number | null;
+  checkpoint: [string, string] | null;
+  resumed_from: string | null;
+  stopped_because: string | null;
+}
+
 export interface AuditStats {
   /** Absent on runs recorded before ID warnings existed: treat as none. */
   warnings?: RunWarning[];
+  scan?: ScanBlock;
+  deletion_check?: { documents_checked: number; with_remaining_vectors: number; verified_gone: number };
   source_documents?: number;
   manifest_rows?: number;
   index_points?: number;
@@ -69,7 +96,7 @@ export interface AuditRun {
   kind: "full" | "scoped" | "verify";
   trigger: string;
   scope: { tenant?: string; documents?: number };
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "partial" | "failed";
   started_at: string;
   finished_at: string | null;
   stats: AuditStats;
@@ -83,8 +110,19 @@ export interface TenantHealth {
   health_score: number | null;
 }
 
+/** An interrupted full audit that can be continued (GUIDE.md 3.12). */
+export interface ResumableAudit {
+  run_id: string;
+  finished_at: string | null;
+  documents_done: number | null;
+  documents_total: number | null;
+  percent: number | null;
+  stopped_because: string | null;
+}
+
 export interface Overview {
   mode: string;
+  resumable_audit?: ResumableAudit | null;
   demo: boolean;
   documents: { total: number; by_status: Record<string, number>; health_score: number | null; tenants: TenantHealth[] };
   issues: { open: number; by_severity: Record<Severity, number>; by_type: Record<string, number>; resolved: number; ignored: number };
@@ -365,9 +403,55 @@ export interface CreatedApiKey {
   note: string;
 }
 
+/** One step a notification offers. A `link` opens a page of the app; a `post` calls one of two known endpoints (see hooks/use-notification-actions.ts). */
+export interface NotificationAction {
+  id: string;
+  label: string;
+  kind: "link" | "post";
+  target: string;
+  primary?: boolean;
+  body?: Record<string, unknown>;
+}
+
+/** What an audit told the workspace when it finished, and what to do about it. */
+export interface AppNotification {
+  id: string;
+  kind: "audit_completed" | "audit_partial" | "audit_failed";
+  tone: "success" | "info" | "warning" | "critical";
+  title: string;
+  body: string;
+  details: string[];
+  run_id: string | null;
+  actions: NotificationAction[];
+  created_at: string;
+  read_at: string | null;
+  /** The id of the action that was taken from this notification, if any. */
+  done_action: string | null;
+  emailed_at: string | null;
+}
+
+export interface NotificationList {
+  items: AppNotification[];
+  unread: number;
+}
+
+/** The answer of the deletion check (GUIDE.md 3.13): only the numbers the notification button reports. */
+export interface DeletionCheckResult {
+  summary: {
+    documents_checked: number;
+    verified_deleted: number;
+    deletion_mismatch: number;
+    manifest_not_updated: number;
+    not_deleted: number;
+    vectors_remaining: number;
+    retrievable: number;
+  };
+  note?: string;
+}
+
 export interface AuditStartResponse {
   run_id: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "partial" | "failed";
   stats?: AuditStats;
 }
 
@@ -375,6 +459,8 @@ export interface AuditRequest {
   tenant?: string;
   documents?: { tenant_id: string; document_id: string }[];
   probe?: boolean;
+  /** Continue the last audit that stopped part-way, from its checkpoint (a full audit only: leave out tenant and documents). */
+  resume?: boolean;
 }
 
 /** One line of GET /api/connections: the live health of a connected system, as measured by the server. */

@@ -250,6 +250,23 @@ def build_tables(schema: str | None) -> tuple[MetaData, dict[str, Table]]:
         Column("retrieved_doc_ids", J, nullable=False),
     )
     Index("ix_query_log_ts", t["query_log"].c.workspace_id, t["query_log"].c.ts)
+    t["notifications"] = Table(
+        "notifications", md,
+        Column("id", String(36), primary_key=True),
+        Column("workspace_id", String(36), nullable=False),
+        Column("created_at", ts(), nullable=False),
+        Column("kind", String(24), nullable=False),  # audit_completed | audit_partial | audit_failed
+        Column("tone", String(12), nullable=False),  # success | info | warning | critical
+        Column("title", Text, nullable=False),
+        Column("body", Text, nullable=False),
+        Column("details", J, nullable=False),  # short lines (for example the top new issues)
+        Column("run_id", String(36)),
+        Column("actions", J, nullable=False),  # what the person can do about it (see notifications.py)
+        Column("read_at", ts()),
+        Column("done_action", String(32)),  # the action that was taken from the notification, if any
+        Column("emailed_at", ts()),
+    )
+    Index("ix_notifications_ws_created", t["notifications"].c.workspace_id, t["notifications"].c.created_at)
     return md, t
 
 
@@ -277,6 +294,28 @@ def _public(row: Any) -> dict[str, Any]:
         if isinstance(v, datetime):
             out[k] = iso(v)
     return out
+
+
+def partial_stats_from_progress(progress: dict[str, Any], reason: str) -> dict[str, Any]:
+    """The statistics of an audit that was killed after finishing whole slices, rebuilt from its last progress note."""
+    carry = progress.get("carry") or {}
+    by_status = carry.get("documents_by_status") or {}
+    total = sum(by_status.values())
+    healthy = by_status.get("healthy", 0) + by_status.get("pending", 0)
+    by_type = carry.get("findings_by_type") or {}
+    return {
+        "documents_total": total, "documents_by_status": by_status, "findings_total": sum(by_type.values()),
+        "findings_by_type": by_type, "findings_by_severity": carry.get("findings_by_severity") or {},
+        "health_score": round(100.0 * healthy / total, 1) if total else 100.0,
+        "scan": {
+            "status": "partial", "complete": False, "provisional": True, "mode": "sliced",
+            "percent": progress.get("percent"), "documents_done": progress.get("documents_done"),
+            "documents_total": progress.get("documents_total"), "slices_done": progress.get("slices_done"),
+            "slices_total": progress.get("slices_total"), "points_scanned": progress.get("points_scanned"),
+            "estimated_total": progress.get("estimated_total"), "checkpoint": progress.get("checkpoint"),
+            "checkpoints_saved": progress.get("slices_done"), "stopped_because": reason, "resumed_from": progress.get("resumed_from"),
+        },
+    }
 
 
 def _public_run(row: Any) -> dict[str, Any]:
@@ -341,7 +380,7 @@ class Ledger:
 
     def reset(self) -> None:
         with self.engine.begin() as c:
-            for name in ("issue_events", "issues", "documents", "audit_runs", "repair_events", "repair_plans", "query_log"):
+            for name in ("issue_events", "issues", "documents", "audit_runs", "repair_events", "repair_plans", "query_log", "notifications"):
                 c.execute(delete(self.t[name]).where(self._w(name)))
 
     # ------------------------------------------------------------------ runs
@@ -359,10 +398,50 @@ class Ledger:
                 msg = "abandoned: the process running it stopped"
                 if isinstance(progress, dict) and progress.get("phase"):
                     msg += f" (last step: {progress['phase']}, {progress.get('elapsed_seconds', '?')} s in)"
-                c.execute(update(runs).where(runs.c.id == run_id, runs.c.status == "running")
-                          .values(status="failed", finished_at=now, error=msg))
+                values: dict[str, Any] = {"status": "failed", "finished_at": now, "error": msg}
+                checkpoint = progress.get("checkpoint") if isinstance(progress, dict) else None
+                if checkpoint:  # it had finished whole slices of the scan before it was killed: those are reported, so it is partial
+                    values.update(status="partial", stats=partial_stats_from_progress(progress, msg),
+                                  error=msg + f"; {progress.get('documents_done', '?')} of {progress.get('documents_total', '?')} "
+                                  "documents were checked and reported before it stopped. Resume the audit to continue.")
+                c.execute(update(runs).where(runs.c.id == run_id, runs.c.status == "running").values(**values))
                 retired += 1
         return retired
+
+    def latest_resumable_run(self) -> dict[str, Any] | None:
+        """The partial full audit that a resumed audit would continue: the newest full run that is not a failure, if it is partial.
+        (A completed full audit after it makes it history: the ledger has moved on.)"""
+        for run in self.list_runs(limit=20, kind="full"):
+            if run["status"] == "failed":
+                continue  # a failed attempt (for example a resume that could not reach the index) does not hide the checkpoint
+            if run["status"] == "partial" and ((run.get("stats") or {}).get("scan") or {}).get("checkpoint"):
+                return run
+            return None
+        return None
+
+    def source_present_keys(self) -> frozenset[tuple[str, str]]:
+        """Documents the last audits saw in the source: after a later audit, the ones now missing are the deleted candidates."""
+        d = self.t["documents"]
+        with self.engine.connect() as c:
+            return frozenset((r[0], r[1]) for r in c.execute(
+                select(d.c.tenant_id, d.c.document_id).where(self._w("documents"), d.c.source_present == 1)))
+
+    def sweep_missing(self, run_id: str, seen: set[tuple[str, str]], after: tuple[str, str] | None = None) -> RunDiff:
+        """After a COMPLETE sliced audit: documents and open issues the ledger still holds for documents that exist nowhere any
+        more (not in the source, the manifest or the index) are closed and removed, exactly as one full-scope audit does.
+        When an audit resumed, only documents after the resume point are swept (the earlier ones were handled by the slices
+        of the run it continued)."""
+        docs, issues = self.t["documents"], self.t["issues"]
+        with self.engine.connect() as c:
+            known = {(r[0], r[1]) for r in c.execute(select(docs.c.tenant_id, docs.c.document_id).where(self._w("documents")))}
+            known |= {(r[0], r[1]) for r in c.execute(
+                select(issues.c.tenant_id, issues.c.document_id).where(self._w("issues"), issues.c.status == "open"))}
+        stale = sorted(k for k in known - seen if k != ("*", "*") and (after is None or k > after))
+        diff = RunDiff()
+        for i in range(0, len(stale), 2000):
+            part = self.apply_run(run_id, [], [], Scope(keys=frozenset(stale[i:i + 2000])))
+            diff.resolved += part.resolved
+        return diff
 
     def set_progress(self, run_id: str, phase: str, **info: Any) -> None:
         """Record where a running audit is, so a run that is killed still shows how far it got."""
@@ -406,6 +485,87 @@ class Ledger:
             q = q.where(t.c.status == status)
         with self.engine.connect() as c:
             return [_public_run(r) for r in c.execute(q).mappings()]
+
+    # ------------------------------------------------------------------ notifications (one list per workspace)
+    NOTIFICATIONS_KEPT = 200
+
+    def add_notification(self, *, kind: str, tone: str, title: str, body: str, run_id: str | None,
+                         actions: list[dict[str, Any]], details: list[str] | None = None) -> str:
+        """Record what an audit found and what to do about it. Only the newest NOTIFICATIONS_KEPT are kept."""
+        t = self.t["notifications"]
+        nid = str(uuid.uuid4())
+        with self.engine.begin() as c:
+            # "newest" is decided by this time, so it must be strictly increasing: two notifications made within one clock tick
+            # (Windows ticks about every 15 ms) would otherwise tie, and the newest could be listed last or cleaned up first
+            now = utcnow()
+            latest = aware(c.execute(select(func.max(t.c.created_at)).where(self._w("notifications"))).scalar())
+            if latest is not None and now <= latest:
+                now = latest + timedelta(microseconds=1)
+            c.execute(insert(t).values(id=nid, workspace_id=self.ws, created_at=now, kind=kind, tone=tone, title=title[:300],
+                                       body=body[:2000], details=[d[:300] for d in (details or [])[:10]], run_id=run_id, actions=actions))
+            old = c.execute(select(t.c.id).where(self._w("notifications")).order_by(t.c.created_at.desc(), t.c.id)
+                            .offset(self.NOTIFICATIONS_KEPT)).scalars().all()
+            if old:
+                c.execute(delete(t).where(self._w("notifications"), t.c.id.in_(old)))
+        return nid
+
+    def list_notifications(self, limit: int = 30, unread_only: bool = False) -> tuple[list[dict[str, Any]], int]:
+        """(newest first, how many are unread in all)."""
+        t = self.t["notifications"]
+        q = select(t).where(self._w("notifications")).order_by(t.c.created_at.desc(), t.c.id).limit(limit)
+        if unread_only:
+            q = q.where(t.c.read_at.is_(None))
+        with self.engine.connect() as c:
+            rows = [_public(r) for r in c.execute(q).mappings()]
+            unread = c.execute(select(func.count()).select_from(t).where(self._w("notifications"), t.c.read_at.is_(None))).scalar_one()
+        return rows, int(unread)
+
+    def mark_notification_read(self, notification_id: str) -> bool:
+        t = self.t["notifications"]
+        with self.engine.begin() as c:
+            found = c.execute(select(t.c.id).where(self._w("notifications"), t.c.id == notification_id)).first()
+            if found is None:
+                return False
+            c.execute(update(t).where(self._w("notifications"), t.c.id == notification_id, t.c.read_at.is_(None)).values(read_at=utcnow()))
+        return True
+
+    def mark_all_notifications_read(self) -> int:
+        t = self.t["notifications"]
+        with self.engine.begin() as c:
+            return c.execute(update(t).where(self._w("notifications"), t.c.read_at.is_(None)).values(read_at=utcnow())).rowcount or 0
+
+    def get_notification(self, notification_id: str) -> dict[str, Any] | None:
+        t = self.t["notifications"]
+        with self.engine.connect() as c:
+            row = c.execute(select(t).where(self._w("notifications"), t.c.id == notification_id)).mappings().first()
+        return _public(row) if row else None
+
+    def mark_notification_done(self, notification_id: str, action: str) -> bool:
+        """The person took one of the notification's actions: it is read, and remembers which."""
+        t = self.t["notifications"]
+        with self.engine.begin() as c:
+            if c.execute(select(t.c.id).where(self._w("notifications"), t.c.id == notification_id)).first() is None:
+                return False
+            c.execute(update(t).where(self._w("notifications"), t.c.id == notification_id).values(done_action=action[:32]))
+            c.execute(update(t).where(self._w("notifications"), t.c.id == notification_id, t.c.read_at.is_(None)).values(read_at=utcnow()))
+        return True
+
+    def mark_notification_emailed(self, notification_id: str) -> None:
+        t = self.t["notifications"]
+        with self.engine.begin() as c:
+            c.execute(update(t).where(self._w("notifications"), t.c.id == notification_id).values(emailed_at=utcnow()))
+
+    def notification_emails_since(self, since: datetime) -> int:
+        t = self.t["notifications"]
+        with self.engine.connect() as c:
+            return int(c.execute(select(func.count()).select_from(t).where(
+                self._w("notifications"), t.c.emailed_at.is_not(None), t.c.emailed_at >= since)).scalar_one())
+
+    def workspace_emails(self) -> list[str]:
+        """The sign-in addresses of this workspace's own users: the people its alert emails go to."""
+        u = self.t["users"]
+        with self.engine.connect() as c:
+            return [r[0] for r in c.execute(select(u.c.email).where(u.c.workspace_id == self.ws).order_by(u.c.created_at))]
 
     # ------------------------------------------------------------------ scoping helpers
     def _scope_clause(self, table: str, scope: Scope | None):

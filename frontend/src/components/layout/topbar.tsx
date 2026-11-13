@@ -1,62 +1,118 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Bell, BookOpen, ChevronDown, LogOut, Menu, Play, Settings as SettingsIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { NotificationItem } from "@/components/notifications/notification-item";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, Tip } from "@/components/ui/menus";
 import { errorMessage, post } from "@/lib/api";
 import { formatNumber, initials, timeAgo } from "@/lib/format";
 import { links } from "@/lib/links";
-import { qk, useOverview, useSession } from "@/hooks/queries";
+import { qk, useMarkAllNotificationsRead, useNotifications, useOverview, useSession } from "@/hooks/queries";
 import { useRunAudit } from "@/hooks/use-run-audit";
 import { GlobalSearch } from "./global-search";
 
 function NotificationsMenu() {
   const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
   const session = useSession().data;
   const overview = useOverview(session ? (session.app ? !!session.ready : true) : false).data;
+  const list = useNotifications(10);
+  const readAll = useMarkAllNotificationsRead();
+  const items = list.data?.items ?? [];
+  const unread = list.data?.unread ?? 0;
   const sev = overview?.issues.by_severity;
-  const open = overview?.issues.open ?? 0;
-  const urgent = (sev?.critical ?? 0) + (sev?.high ?? 0);
+  const openIssues = overview?.issues.open ?? 0;
   const last = overview?.latest_run;
 
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  function go(path: string) {
+    setOpen(false);
+    navigate(path);
+  }
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative" aria-label={`Notifications${urgent ? `, ${urgent} critical or high issues` : ""}`}>
-          <Bell className="h-[18px] w-[18px]" />
-          {urgent > 0 ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-critical ring-2 ring-white" aria-hidden /> : null}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-80">
-        <DropdownMenuLabel className="font-medium text-ink">Needs attention</DropdownMenuLabel>
-        {overview ? (
-          <>
-            <div className="px-2.5 pb-2 text-body text-ink">
-              {open === 0 ? "No open integrity issues." : <><span className="font-semibold tabular-nums">{formatNumber(open)}</span> open issue{open === 1 ? "" : "s"}</>}
-            </div>
-            {open > 0 ? (
-              <div className="flex flex-wrap gap-1.5 px-2.5 pb-2">
-                {(["critical", "high", "medium", "low"] as const).map((s) =>
-                  sev?.[s] ? (
-                    <Badge key={s} tone={s === "critical" ? "critical" : s === "high" ? "warning" : s === "medium" ? "info" : "neutral"}>
-                      {sev[s]} {s}
-                    </Badge>
-                  ) : null,
-                )}
-              </div>
-            ) : null}
-            <div className="px-2.5 pb-1 text-support text-ink-2">{last ? `Last audit ${timeAgo(last.finished_at ?? last.started_at)} (${last.status})` : "No audit has run yet."}</div>
-          </>
-        ) : (
-          <div className="px-2.5 pb-2 text-support text-ink-2">Connect your data sources to see alerts.</div>
-        )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => navigate(links.issues())}>View integrity issues</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => navigate("/alerts")}>Alert settings</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <div ref={box} className="relative">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="relative"
+        aria-label={`Notifications${unread ? `, ${unread} unread` : ""}`}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-controls="notifications-panel"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Bell className="h-[18px] w-[18px]" />
+        {unread > 0 ? (
+          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-critical px-1 text-[10px] font-semibold leading-none text-white ring-2 ring-white" aria-hidden>
+            {unread > 9 ? "9+" : unread}
+          </span>
+        ) : null}
+      </Button>
+      {open ? (
+        <div
+          id="notifications-panel"
+          role="dialog"
+          aria-label="Notifications"
+          className="anim-pop fixed inset-x-3 top-16 z-50 overflow-hidden rounded-card border border-line bg-workspace shadow-pop sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-1.5 sm:w-[420px]"
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5">
+            <h2 className="text-card text-ink">Notifications{unread ? <span className="ml-2 text-support font-normal text-ink-2">{unread} unread</span> : null}</h2>
+            <Button variant="ghost" size="sm" disabled={unread === 0} loading={readAll.isPending} onClick={() => readAll.mutate()}>
+              Mark all read
+            </Button>
+          </div>
+          <div className="border-b border-line px-3 py-2 text-support text-ink-2">
+            {overview ? (
+              <>
+                {openIssues === 0 ? "No open integrity issues." : `${formatNumber(openIssues)} open issue${openIssues === 1 ? "" : "s"}`}
+                {openIssues > 0 && (sev?.critical || sev?.high) ? ` (${sev?.critical ?? 0} critical, ${sev?.high ?? 0} high)` : ""}
+                {" · "}
+                {last ? `last audit ${timeAgo(last.finished_at ?? last.started_at)} (${last.status})` : "no audit has run yet"}
+              </>
+            ) : (
+              "Connect your data sources to see alerts."
+            )}
+          </div>
+          <div className="max-h-[min(60vh,520px)] overflow-y-auto">
+            {list.isError ? (
+              <p className="px-3 py-4 text-support text-ink-2">Notifications could not be loaded. They will be tried again shortly.</p>
+            ) : items.length === 0 ? (
+              <p className="px-3 py-4 text-support text-ink-2">{list.isPending ? "Loading…" : "Nothing yet. After an audit finishes, what it found and the next step appear here."}</p>
+            ) : (
+              <ul className="divide-y divide-line" aria-label="Latest notifications">
+                {items.map((n) => (
+                  <NotificationItem key={n.id} n={n} compact onNavigate={() => setOpen(false)} />
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line px-3 py-2.5 text-support">
+            <button type="button" className="text-brand hover:underline" onClick={() => go(links.notifications())}>See all notifications</button>
+            <button type="button" className="text-brand hover:underline" onClick={() => go(links.issues())}>Integrity issues</button>
+            <button type="button" className="text-brand hover:underline" onClick={() => go("/alerts")}>Alert settings</button>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

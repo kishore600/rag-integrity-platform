@@ -14,6 +14,7 @@ import type {
   ConnectionStatus,
   CreatedApiKey,
   DocumentDetail,
+  DeletionCheckResult,
   DocumentRow,
   DrillRequest,
   DrillResult,
@@ -21,6 +22,7 @@ import type {
   IsolationView,
   IssueDetail,
   Issue,
+  NotificationList,
   Overview,
   Paged,
   PlanRequest,
@@ -85,6 +87,35 @@ export function useStartAudit() {
     mutationFn: (req: AuditRequest = {}) => post<AuditStartResponse>("/api/audits", req),
     onSettled: () => invalidateData(qc),
   });
+}
+
+// ---- notifications -----------------------------------------------------------------------------------------
+/** What the audits told this workspace. It changes when an audit finishes (invalidateData refreshes it) and, for audits started elsewhere, every 30 seconds while the tab is open. */
+export const useNotifications = (limit = 30, enabled = true) =>
+  useQuery({
+    queryKey: ["notifications", limit],
+    queryFn: () => get<NotificationList>(`/api/notifications${qs({ limit })}`),
+    enabled,
+    retry: noRetryOnClientError,
+    placeholderData: keepPreviousData,
+    refetchInterval: () => (typeof document !== "undefined" && document.visibilityState === "visible" ? 30_000 : false),
+  });
+
+function useNotificationMutation<V>(fn: (v: V) => Promise<unknown>) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: fn, onSettled: () => qc.invalidateQueries({ queryKey: ["notifications"] }) });
+}
+
+export const useMarkNotification = () => useNotificationMutation((id: string) => post(`/api/notifications/${encodeURIComponent(id)}/read`));
+export const useMarkAllNotificationsRead = () => useNotificationMutation((_: void) => post("/api/notifications/read-all"));
+/** Remember that a button of a notification was pressed (the button itself has already done its work through its own endpoint). */
+export const useNotificationDone = () =>
+  useNotificationMutation(({ id, action }: { id: string; action: string }) => post(`/api/notifications/${encodeURIComponent(id)}/done`, { action }));
+
+/** Looks, and records what it finds as a scoped run: it changes the issue list, so every read is refreshed afterwards. */
+export function useDeletionCheck() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (_: void) => post<DeletionCheckResult>("/api/deletion-check", {}), onSettled: () => invalidateData(qc) });
 }
 
 // ---- issues ------------------------------------------------------------------------------------------------

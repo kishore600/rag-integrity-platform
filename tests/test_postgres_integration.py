@@ -67,7 +67,7 @@ def test_supabase_migrations_apply_in_order_and_match_the_models(clean_pg):
         rls = {r[0]: r[1] for r in c.execute(text(
             "select relname, relrowsecurity from pg_class c join pg_namespace n on n.oid = c.relnamespace "
             "where n.nspname = 'ragi' and relkind = 'r'"))}
-    assert len(rls) == 13 and all(rls.values()), rls
+    assert len(rls) == 14 and all(rls.values()), rls
 
 
 def test_the_destructive_migration_refuses_to_drop_a_ledger_that_has_data(clean_pg):

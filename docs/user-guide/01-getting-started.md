@@ -69,7 +69,7 @@ A RAG system can go wrong while every background job reports success. The applic
 | Show how serious each issue is and whether bad content can really be retrieved | Run a chatbot |
 | Plan repairs and estimate their cost | Carry out repairs itself: your worker does that |
 | Send signed repair requests to your worker and verify the result against the real index | Remove vectors without your approval |
-| Alert you through a Slack-compatible webhook, and run audits from scripts through API keys | Send email alerts, or connect to Slack, Jira or PagerDuty directly (marked **Not available yet** in the interface) |
+| Notify you in the app and by email after every audit, alert you through a Slack-compatible webhook, and run audits from scripts through API keys | Connect to Slack, Jira or PagerDuty directly (marked **Not available yet** in the interface) |
 
 ---
 

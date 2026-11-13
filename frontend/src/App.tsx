@@ -21,6 +21,7 @@ const Documents = lazy(() => import("@/pages/documents"));
 const AuditHistory = lazy(() => import("@/pages/audit-history"));
 const Integrations = lazy(() => import("@/pages/integrations"));
 const Alerts = lazy(() => import("@/pages/alerts"));
+const Notifications = lazy(() => import("@/pages/notifications"));
 const Settings = lazy(() => import("@/pages/settings"));
 // Help (the user guide and the video) is one chunk with three entry points.
 const HelpHome = lazy(() => import("@/pages/help").then((m) => ({ default: m.HelpHome })));
@@ -103,6 +104,7 @@ export default function App() {
         <Route path="audit-history/:runId" element={<AuditHistory />} />
         <Route path="integrations" element={<Integrations />} />
         <Route path="alerts" element={<Alerts />} />
+        <Route path="notifications" element={<Notifications />} />
         <Route path="settings" element={<Settings />} />
         <Route path="help" element={<HelpHome />} />
         <Route path="help/:chapter" element={<HelpChapter />} />

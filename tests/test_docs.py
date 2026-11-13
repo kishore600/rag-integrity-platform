@@ -135,7 +135,8 @@ def test_numbers_quoted_in_the_guide_match_the_code():
     assert 'hit(f"register:ip:{ip}", 5, 3600)' in app_py
     assert 'hit(f"test:{p.workspace_id}", 30, 600)' in app_py
     assert 'hit(f"password:{p.user_id}", 10, 900)' in app_py
-    assert 'hit(f"setup-check:{p.workspace_id}", 20, 600)' in app_py and "20 setup checks per workspace per 10 minutes" in GUIDE
+    assert 'hit(f"setup-check:{p.workspace_id}", 20, 600)' in app_py and 'hit(f"deletion-check:{p.workspace_id}", 20, 600)' in app_py
+    assert "20 setup checks and 20 deletion checks per workspace per 10 minutes" in GUIDE
 
 
 def test_every_setup_check_and_id_warning_is_documented():
@@ -152,3 +153,91 @@ def test_every_setup_check_and_id_warning_is_documented():
                  "INDEX_LOOKUP_SECONDS"):
         assert f"{getattr(coverage, name):,}" in section, f"3.10 does not state {name} = {getattr(coverage, name):,}"
     assert f"starts at {round(coverage.ALIGNED * 100)}%" in section and f"{round(coverage.PARTIAL * 100)}%" in section
+
+
+def _section(start: str, end: str) -> str:
+    return GUIDE[GUIDE.index(start):GUIDE.index(end)]
+
+
+def test_version_integrity_section_names_every_verdict_and_every_table_row():
+    from ragintegrity.engine import versions
+
+    section = _section("### 3.11 ", "### 3.12 ")
+    assert not missing((f"`{v}`" for v in versions.TITLES), section), "3.11 does not name every verdict"
+    for prop in ("Source version", "Source hash", "Chunk count (any revision)", "Chunks of the current revision", "Chunk IDs", "Chunk hashes"):
+        assert prop in section, prop
+    for word in ("current", "older_revision", "older_config", "revision_unknown"):
+        assert f"`{word}`" in section, word
+    for status in ("match", "mismatch", "partial", "unknown"):
+        assert f"`{status}`" in section, status
+
+
+def test_scan_reliability_section_matches_the_code():
+    import inspect
+
+    from ragintegrity.connectors.base import ScanStats
+    from ragintegrity.connectors.resilience import TRANSIENT_STATUS, call_with_retry
+    from ragintegrity.engine.audit import SLICE_DOCUMENTS, scan_block
+
+    section = _section("### 3.12 ", "### 3.13 ")
+    params = inspect.signature(call_with_retry).parameters
+    assert params["attempts"].default == 4 and "up to 4 times" in section
+    assert params["base_delay"].default == 0.5 and "0.5 s" in section
+    assert params["max_delay"].default == 10.0 and "at most 10 s" in section
+    resilience_src = (ROOT / "src" / "ragintegrity" / "connectors" / "resilience.py").read_text(encoding="utf-8")
+    assert "min(float(value), 60.0)" in resilience_src and "at most 60 s" in section
+    assert not missing((f"`{s}`" for s in sorted(TRANSIENT_STATUS)), section), "3.12 does not list every retried HTTP status"
+    assert SLICE_DOCUMENTS == 5000 and "default 5000" in section and Settings.model_fields["audit_slice_documents"].default == SLICE_DOCUMENTS
+    block = scan_block("completed", ScanStats(), mode="sliced")
+    assert not missing((f"`{k}`" for k in block), section), "3.12 does not document every stats.scan field"
+    for state in ("running", "completed", "partial", "failed"):
+        assert f"`{state}`" in section, state
+    assert "`resumable_audit`" in section and "--resume" in section and '"resume": true' in section
+
+
+def test_deletion_verification_section_matches_the_code():
+    import inspect
+
+    from ragintegrity.engine import deletions
+    from ragintegrity.service import IntegrityService
+
+    section = _section("### 3.13 ", "---\n\n## 4. ")
+    assert not missing((f"`{v}`" for v in deletions.VERDICTS), section), "3.13 does not name every verdict"
+    assert deletions.PROBES_PER_DOCUMENT == 3 and "up to 3 of the document's chunks" in section
+    assert deletions.TOP_K == 10 and "top 10" in section
+    assert inspect.signature(IntegrityService.verify_deletions).parameters["max_documents"].default == 200 and "At most 200 per check" in section
+    for check in ("Source document", "Manifest status", "Vector chunks found", "Retrieval test"):
+        assert check in section, check
+    for field in ("documents_checked", "with_remaining_vectors", "verified_gone"):
+        assert f"`{field}`" in section, field
+
+
+def test_notifications_section_matches_the_code():
+    from ragintegrity import mailer, notifications
+    from ragintegrity.ledger import Ledger
+
+    section = _section("### 3.14 ", "---\n\n## 4. ")
+    samples = [
+        {"status": "completed", "stats": {"findings_total": 0}},
+        {"status": "completed", "stats": {"findings_total": 3, "findings_by_severity": {"critical": 1}, "findings_by_type": {"orphan_vector": 1}}},
+        {"status": "completed", "stats": {"findings_total": 3, "findings_by_severity": {"high": 3}}},
+        {"status": "completed", "stats": {"findings_total": 3, "findings_by_severity": {"low": 3}}},
+        {"status": "partial", "stats": {"findings_total": 1, "findings_by_severity": {"high": 1}, "scan": {"documents_done": 1, "documents_total": 2}}},
+        {"status": "failed", "stats": {}},
+    ]
+    labels, kinds = set(), set()
+    for s in samples:
+        n = notifications.compose(run_id="r", kind="full", trigger="manual", diff=None, error="x", **s)
+        kinds.add(n.kind)
+        labels.update(a["label"] for a in n.actions)
+    assert not missing(labels, section), "3.14 does not name every button"
+    assert not missing((f"`{k}`" for k in kinds), section), "3.14 does not name every notification kind"
+    assert not missing((f"`{t}`" for t in notifications.POST_TARGETS), section), "3.14 does not name every endpoint a button can call"
+    assert not missing((f"`{c}`" for c in notifications.EMAIL_WHEN), section) and "`Email me`" not in section and "*Email me*" in section
+    assert notifications.EMAILS_PER_HOUR == 12 and "At most 12 emails an hour per workspace" in section
+    assert Ledger.NOTIFICATIONS_KEPT == 200 and "newest 200 per workspace" in section
+    assert mailer.TIMEOUT_SECONDS == 8 and "at most 8 seconds" in section
+    assert not missing((f"`{m}`" for m in mailer.SECURITY_MODES), section)
+    smtp = [f"`RAGI_{n.upper()}`" for n in Settings.model_fields if n.startswith("smtp_")]
+    assert len(smtp) == 6 and not missing(smtp, section), "3.14 does not name every mail setting"
+    assert not missing(("`RAGI_APP_URL`", "`RAGI_ALERT_EMAIL_TO`", "Auto-Submitted"), section)

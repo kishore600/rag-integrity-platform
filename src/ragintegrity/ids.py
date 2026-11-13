@@ -65,3 +65,24 @@ def loose_id(text: str) -> str:
     t = text.strip().lower()
     stripped = t.lstrip("0")
     return stripped if _DIGITS.match(t) and stripped else t
+
+
+_HASH_PREFIX = re.compile(r"^(sha-?256|sha-?1|sha-?512|md5)[:=]", re.IGNORECASE)
+
+
+def normalize_hash(value: Any) -> str | None:
+    """A content hash written the way every system writes it: trimmed, lower case, without quotes or an algorithm prefix.
+
+    ``ABCD…``, ``abcd…``, ``sha256:abcd…`` and an ETag in quotes are the same hash. Without this, a payload that stores
+    the hash with a ``sha256:`` prefix looks stale against a file whose hash is bare hex, for every document."""
+    if value is None:
+        return None
+    text = str(value).strip().strip('"').strip("'").strip()
+    text = _HASH_PREFIX.sub("", text).strip().lower()
+    return text or None
+
+
+def same_hash(a: Any, b: Any) -> bool:
+    """True when both sides name the same hash (see normalize_hash); False when either side has none."""
+    na, nb = normalize_hash(a), normalize_hash(b)
+    return na is not None and nb is not None and na == nb

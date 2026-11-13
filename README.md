@@ -135,6 +135,8 @@ See [docs/repair-webhook.md](docs/repair-webhook.md) and the runnable [reference
 cp .env.example .env     # then edit; secrets stay in the environment, never in the ledger
 RAGI_MODE=live ragi connections     # tests S3, the manifest DB, Qdrant and the ledger, naming whichever is misconfigured
 RAGI_MODE=live ragi setup-check    # do S3, the manifest and Qdrant use the same document IDs? (read-only, takes seconds)
+RAGI_MODE=live ragi verify-deletions   # were deleted documents really removed from the index, and can a search still return them? (read-only)
+RAGI_MODE=live ragi audit --resume      # continue an audit that stopped part-way, from its last checkpoint
 RAGI_MODE=live ragi serve
 ```
 

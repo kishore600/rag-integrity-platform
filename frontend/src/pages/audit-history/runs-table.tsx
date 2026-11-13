@@ -21,6 +21,7 @@ const STATUS_OPTIONS = [
   { value: "", label: "All statuses" },
   { value: "running", label: "Running" },
   { value: "completed", label: "Completed" },
+  { value: "partial", label: "Partial" },
   { value: "failed", label: "Failed" },
 ];
 const KIND_OPTIONS = [

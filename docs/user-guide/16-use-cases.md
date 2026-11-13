@@ -161,7 +161,7 @@ To fail on "critical or high" instead, replace the second call with `GET /api/ov
 - Ignored issues do not count, because `status=open` excludes them.
 - The audit appears in **Audit history** with the trigger **Api**.
 
-**Not available yet:** email alerts, and digest and quiet hours. **Workaround:** add an alert webhook on the **Alerts** page (Step 15 of the journey) so new issues also reach Slack, or make your CI system send the failure message. The Slack, Jira and PagerDuty integrations are marked **Not available yet** on **Integrations**.
+**Not available yet:** quiet hours. After every audit started through the API you also get a notification in the app and, when the operator has set up email, an email (see the **Alerts** page). To have new issues reach Slack as well, add an alert webhook there (Step 15 of the journey), or make your CI system send the failure message. The Slack, Jira and PagerDuty integrations are marked **Not available yet** on **Integrations**.
 
 **If something does not work:** see "API key problems" in [Troubleshooting](18-troubleshooting.md).
 

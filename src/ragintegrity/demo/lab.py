@@ -465,7 +465,8 @@ BILLS_EXERCISES: tuple[tuple[str, str, str], ...] = (
      "Without the lookup the app lists the bucket and finds files the table does not know (it also gets slow on a huge bucket)."),
     ("Turn **off** *Only audit documents found in the source*",
      "11 documents, 8 findings, health 27%: orphan vectors for bill `2200001`, orphan-row warnings for `3300001` to `3300003`, "
-     "orphan vectors for `8000001` and `9000001`, plus the two real ones.",
+     "orphan vectors for `8000001` and `9000001` (all the orphan vectors are **critical**: the search test finds their pieces at rank 1), "
+     "plus the two real ones.",
      "Why the switch exists: the key pattern skips most documents, so everything the pattern skips looks like a leftover. "
      "On a big shared index the audit would also read every piece and run out of time."),
     ("Turn **off both** switches",

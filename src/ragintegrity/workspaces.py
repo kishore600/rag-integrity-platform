@@ -133,8 +133,12 @@ SPECS: dict[str, Spec] = {
     ),
     "alerts": Spec(
         "Alerts",
-        "Slack-compatible incoming webhook, notified only about new, reopened or escalated issues.",
+        "After every audit: a notification in the app and an email, each with the next step. Plus an optional Slack-compatible webhook "
+        "for new, reopened or escalated issues.",
         (
+            Field("email_when", "alert_email_when", "Email me", type="enum", choices=("always", "attention", "never"),
+                  help="always: after every audit. attention: only when an audit fails or stops part-way, or finds a new issue at or above the "
+                       "minimum severity. never: no email. The notification in the app is always created."),
             Field("webhook_url", "alert_webhook_url", "Webhook URL", type="url", secret=True, placeholder="https://hooks.slack.com/services/..."),
             Field("min_severity", "alert_min_severity", "Minimum severity", type="enum", choices=("critical", "high", "medium", "low")),
         ),
@@ -269,7 +273,8 @@ def overlay(base: Settings, rows: dict[str, dict[str, Any]]) -> Settings:
     """The engine Settings for one workspace. Anything the workspace did not set falls back to the *default*, never to
     the platform's environment, so one deployment's env can never leak into a user's connections."""
     defaults = Settings.model_fields
-    upd: dict[str, Any] = {"mode": "live", "audit_interval_minutes": 0, "public_base_url": None}
+    # alert_email_to is the operator's own address (single-user modes): a workspace's emails go to the workspace's users only
+    upd: dict[str, Any] = {"mode": "live", "audit_interval_minutes": 0, "public_base_url": None, "alert_email_to": None}
     for kind, spec in SPECS.items():
         data = rows.get(kind) or {"config": {}, "secrets": {}}
         for f in spec.fields:

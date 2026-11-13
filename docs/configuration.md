@@ -50,6 +50,8 @@ Set `RAGI_SOURCE_DOCUMENTS_ONLY=true` when the manifest or the vector index is s
 S3 inventory (chosen by `RAGI_S3_KEY_PATTERN`) then defines the corpus, other manifest rows and vectors are ignored, and only
 the matching points are read from Qdrant with a server-side filter. Left-over-vector findings are not produced in this mode.
 
+**Large indexes, checkpoints and resuming.** With that setting on, the vector index is read for a slice of documents at a time (`RAGI_AUDIT_SLICE_DOCUMENTS`, default 5000). Each finished slice is recorded at once, so an audit that stops part-way (a timeout, a cluster that stays unreachable, a killed serverless function) ends `partial` with everything before the stop already reported, and `ragi audit --resume` (or `POST /api/audits {"resume": true}`) continues after the last checkpoint. Requests that fail for a reason that can pass (timeouts, rate limits, HTTP 5xx) are retried with backoff first. An incomplete scan never reports a document as missing. See GUIDE.md 3.12.
+
 Use a database role that can only `SELECT`; the connector additionally opens every transaction `READ ONLY`.
 
 ## Vector index (Qdrant)
@@ -88,3 +90,5 @@ drift. `medium`: duplicates, superseded vectors, chunking drift, count mismatche
 * **Alerts**: `RAGI_ALERT_WEBHOOK_URL` (Slack incoming-webhook compatible). Only *new*, *reopened* or *escalated* issues at or
   above `RAGI_ALERT_MIN_SEVERITY` are sent, so a steady state is silent.
 * **Cost estimates**: `RAGI_EMBEDDING_PRICE_PER_MTOK` and `RAGI_CHUNK_SIZE_TOKENS` feed the reindex recommendations.
+
+* **Notifications and email**: after every audit that finishes, a notification is added under the bell, each with its next-step buttons (Resume audit, Run it again, Review the issues, Verify deletions), and an email with the same content is sent when `RAGI_ALERT_EMAIL_WHEN` allows it (`always`, `attention` or `never`). Email needs the mail account: `RAGI_SMTP_HOST` and `RAGI_SMTP_FROM` (plus `RAGI_SMTP_PORT`, `RAGI_SMTP_USER`, `RAGI_SMTP_PASSWORD`, `RAGI_SMTP_SECURITY`), `RAGI_ALERT_EMAIL_TO` in single-user modes (app mode emails each workspace's own users), and `RAGI_APP_URL` for the links. See GUIDE.md 3.14.
