@@ -71,6 +71,25 @@ services:
     depends_on:
       seed: { condition: service_completed_successfully }
 
+  worker-bills:   # the repair worker for Lab B: the same webhook, but it knows the bills layout (bucket bills-lab, bill_chunks, bill_documents)
+    <<: *app
+    command: ["uvicorn", "examples.reference_worker.worker:app", "--host", "0.0.0.0", "--port", "9000"]
+    healthcheck:
+      disable: true   # the app image's health check looks at port 8000 and would wrongly mark this worker (port 9000) "unhealthy"
+    environment:
+      RAGI_WORKER_AUTOSTART: "1"
+      RAGI_WORKER_KIND: bills
+      S3_ENDPOINT_URL: http://s3:5000
+      AWS_REGION: us-east-1
+      <<: *s3-keys
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: bill_chunks
+      MANIFEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      MANIFEST_TABLE: bill_documents
+      RAGI_REPAIR_WEBHOOK_SECRET: local-lab-secret
+    depends_on:
+      seed: { condition: service_completed_successfully }
+
   app-lab:   # Lab A: preloaded, no sign-in
     <<: *app
     ports: ["127.0.0.1:8000:8000"]

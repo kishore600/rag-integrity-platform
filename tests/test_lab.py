@@ -151,7 +151,63 @@ def test_the_repair_loop_works_on_lab_a(seeded, monkeypatch):
     assert not any(i["type"] in ("missing_embedding", "false_success", "stale_embedding") for i in svc.ledger.list_issues(status="open", limit=500)[0])
 
 
+def reference_worker_module():
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("reference_worker_lab", ROOT / "examples" / "reference_worker" / "worker.py")
+    rw = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = rw
+    spec.loader.exec_module(rw)
+    return rw
+
+
 # ------------------------------------------------------------------------------------- Lab B
+def test_the_repair_loop_works_on_lab_b(seeded, monkeypatch):
+    """Lab B's two broken bills are repaired by the bills worker: plan -> trigger -> worker -> verify -> audit is clean.
+
+    The first reference worker only knows Lab A's layout; asked to repair a bill it failed in the background with NoSuchKey
+    and "Verify now" then said the documents were not fixed. Lab B has its own worker, started with RAGI_WORKER_KIND=bills.
+    """
+    from fastapi.testclient import TestClient
+
+    from ragintegrity import repair as repair_module
+
+    _world, s3, qd, eng, tmp = seeded
+    rw = reference_worker_module()
+    secret = "local-lab-secret"
+    settings = Settings(_env_file=None, mode="live", database_url=f"sqlite:///{tmp / 'ledger-repair-b.db'}", s3_region="us-east-1", grace_minutes=0,
+                        manifest_database_url=f"sqlite:///{tmp / 'manifest.db'}", s3_bucket="bills-lab", s3_prefix="bills/", s3_key_pattern=SAME_NUMBER,
+                        s3_lookup_from_manifest=True, s3_hash_mode="etag", manifest_table="bill_documents", manifest_column_map=COLUMN_MAP,
+                        qdrant_collections="bill_chunks", qdrant_payload_map='{"document_id":"source_id"}', source_documents_only=True,
+                        required_payload_fields="document_id", repair_webhook_url="http://worker-bills:9000/ragi-webhook", repair_webhook_secret=secret)
+    svc = IntegrityService(settings, Ledger(settings.database_url),
+                           Connectors(S3Source(settings, client=s3), PostgresManifest(settings, engine=eng), QdrantIndex(settings, client=qd)))
+    svc.ledger.init()
+    worker = TestClient(rw.create_app(rw.BillsWorker(s3, qd, eng), secret, background=False))
+    sent = []
+
+    def deliver(url, content=None, headers=None, timeout=None):
+        sent.append(url)
+        return worker.post("/ragi-webhook", content=content, headers=headers)
+
+    monkeypatch.setattr(repair_module.httpx, "post", deliver)
+
+    assert svc.run_audit(probe=True).stats["findings_total"] == 2
+    plan = svc.repairs.create_plan()
+    assert sorted(i["document_id"] for i in plan["items"]) == ["2300004", "2300005"]
+    assert all(i["source_uri"].startswith("s3://bills-lab/bills/") for i in plan["items"])  # what the worker reads the file from
+    plan = svc.repairs.verify(svc.repairs.trigger(plan["id"])["id"])
+    assert sent and plan["status"] == "completed", [i for i in plan["items"] if i["status"] != "completed"]
+    run = svc.run_audit(probe=True)
+    assert (run.stats["documents_total"], run.stats["findings_total"], run.stats["health_score"]) == (5, 0, 100.0)
+    # the worker is idempotent: sending the same repair again must not duplicate pieces
+    again = {"phase": "reindex", "items": [{"document_id": "2300004", "source_uri": "s3://bills-lab/bills/2300004/2300004.pdf"}]}
+    before = qd.count("bill_chunks").count
+    assert rw.BillsWorker(s3, qd, eng).handle(again) == 1
+    assert qd.count("bill_chunks").count == before
+
+
 def test_lab_b_with_the_settings_the_workbook_tells_you_to_type(seeded):
     svc, run, by = audit(seeded, "B")
     assert run.stats["documents_total"] == 5 and run.stats["findings_total"] == 2 and run.stats["health_score"] == 60.0
@@ -211,7 +267,9 @@ def test_the_compose_file_is_local_only_and_has_both_labs():
     yaml = pytest.importorskip("yaml")
     compose = yaml.safe_load((ROOT / "docker-compose.lab.yml").read_text(encoding="utf-8"))
     services = compose["services"]
-    assert set(services) == {"postgres", "qdrant", "s3", "seed", "worker", "app-lab", "app-bills"}
+    assert set(services) == {"postgres", "qdrant", "s3", "seed", "worker", "worker-bills", "app-lab", "app-bills"}
+    assert services["worker-bills"]["environment"]["RAGI_WORKER_KIND"] == "bills" and "RAGI_WORKER_KIND" not in services["worker"]["environment"]
+    assert "http://worker-bills:9000/ragi-webhook" in lab.workbook_markdown()  # the address the workbook tells you to type exists
     assert services["s3"]["image"].startswith("motoserver/moto:") and ":latest" not in services["s3"]["image"]  # pinned, official
     for name, svc in services.items():
         for port in svc.get("ports", []):

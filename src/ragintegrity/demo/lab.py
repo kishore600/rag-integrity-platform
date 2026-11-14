@@ -435,7 +435,9 @@ def workbook_markdown() -> str:
         "| | Payload field map (JSON) | `{\"document_id\":\"source_id\"}` |",
         "| Settings, Policy | Grace period (minutes) | `0` (the files were created seconds ago; with the default 10 two documents show as *pending*) |",
         "| | Required payload fields | `document_id` |",
-        "| | Only audit documents found in the source (S3) | on |", "",
+        "| | Only audit documents found in the source (S3) | on |",
+        "| Integrations, Repair webhook | Webhook URL / Signing secret | `http://worker-bills:9000/ragi-webhook` / `local-lab-secret` "
+        "(only needed for the repair practice at the end) |", "",
         "Save each group, press **Check setup** on Data Sources, then **Run audit**. What each document should give:", "",
         "| Bill | Document | Type | Planted | With these settings |", "|---|---|---|---|---|",
     ]
@@ -455,7 +457,17 @@ def workbook_markdown() -> str:
         "| # | Change | What you should see | What it teaches |", "|---|---|---|---|",
     ]
     lines += [f"| {i} | {change} | {see} | {teach} |" for i, (change, see, teach) in enumerate(BILLS_EXERCISES, 1)]
-    lines.append("")
+    lines += [
+        "", "### Repair practice: fix the two broken bills", "",
+        "Put the settings back as in the first table (and save the repair webhook from its last row), run the audit, then:", "",
+        "1. **Integrity Issues**: tick both open issues (`2300004`, `2300005`) and press **Create repair plan**.",
+        "2. Open the plan and press **Trigger repair**. RAGGuard sends a signed request to the Lab B worker (`worker-bills`).",
+        "3. Press **Verify now**. The worker found each file from its address in the plan, wrote its pieces into `bill_chunks` and marked the "
+        "row `is_indexed` in `bill_documents`, so both bills show **Completed**.",
+        "4. **Run audit** again: **5 documents compared, 0 findings, health 100%**.", "",
+        "Lab A has its own worker, so a repair there never touches Lab B (and the other way round). A worker is *your* pipeline: it must know "
+        "where your files live and how your vectors and table are laid out, which is why the two labs need two workers.", "",
+    ]
     return "\n".join(lines)
 
 

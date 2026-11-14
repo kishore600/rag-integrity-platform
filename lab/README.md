@@ -8,7 +8,7 @@ two copies of RAGGuard to explore them:
 | | Address | What it is | You do |
 |---|---|---|---|
 | **Lab A** | http://localhost:8000 | 30 documents, already connected | Press **Run audit** and compare with the answer sheet. Then fix problems with a repair plan. |
-| **Lab B** | http://localhost:8001 | A miniature of the real "bills" setup, **empty** | Create an account and type the settings in, exactly as a real customer would. |
+| **Lab B** | http://localhost:8001 | A miniature of the real "bills" setup, **empty** | Create an account and type the settings in, exactly as a real customer would. Then repair its two broken bills. |
 | Answer sheet | [`WORKBOOK.md`](WORKBOOK.md) | Every planted fault, what RAGGuard should show, the fix | Keep it open next to the app. |
 
 Nothing here touches your real systems: it reads no `.env` file, every port is bound to your own computer, and the lab's seeding script
@@ -95,6 +95,14 @@ This is the part that matches what a customer does, and what you did with your o
 5. **Run audit**. Expected: **5 documents, 2 findings** (one critical, one high), health 60%.
 6. Do the four **exercises** at the end of the workbook: change one setting at a time and see how the answer changes. They teach what each
    switch is for, and where the blind spots are.
+7. **Repair the two broken bills.** Lab B has its own worker (`worker-bills`), because a worker is *your* pipeline and Lab B's files, vectors and
+   table are laid out differently from Lab A's. Open **Integrations → Repair webhook → Configure**, type the address
+   `http://worker-bills:9000/ragi-webhook` and the signing secret `local-lab-secret`, press **Check settings** and **Save**. Then follow
+   **Repair practice** at the end of the workbook: create a plan for both open issues, **Trigger repair**, **Verify now**, **Run audit**.
+   Expected: **5 documents, 0 findings, health 100%**.
+
+   (Do not use `http://worker:9000/...` here: that worker belongs to Lab A. It accepts the request and then cannot find Lab B's files, so
+   **Verify now** reports the bills as not fixed.)
 
 ## 5. Which gap shows up where
 
@@ -141,6 +149,7 @@ http://localhost:6333/dashboard.
 | A page is empty or an audit says "setup required" | Lab A: reload and press **Run audit**. Lab B: finish the four steps in section 4. |
 | Lab B says **0 documents, 0 issues** | Almost always the **Key prefix**: it must be `bills/` **with the slash at the end**. Without it the key pattern cannot match, RAGGuard finds no source documents, and "only audit documents found in the source" then leaves nothing to compare. Fix the prefix, press **Test connection** (the *Key pattern* line must turn green), then **Run audit**. |
 | In Lab A, **Trigger repair** was accepted but **Verify now** says the documents are not fixed | Check the worker: `docker compose -f docker-compose.lab.yml logs worker`. (An old version of the worker failed on the lab's keyless manifest table. Update it with `docker compose -f docker-compose.lab.yml up -d --build --no-deps worker`, then press **Verify now** and **Send repair again**.) |
+| In Lab B, **Trigger repair** was accepted but **Verify now** says the bills are not fixed | The repair webhook points at the wrong worker, or the Lab B worker is not running. The address must be `http://worker-bills:9000/ragi-webhook` (not `http://worker:9000/...`, which is Lab A's). Check it is up with `docker compose -f docker-compose.lab.yml logs worker-bills`. If you updated the project, start it with `docker compose -f docker-compose.lab.yml up -d --build` so the new worker exists. |
 | Everything is a mess | `docker compose -f docker-compose.lab.yml down -v`, then start again. |
 | Docker will not start at all | You can still explore with the built-in demo: `ragi serve --demo` (fake data with faults planted, no Docker needed). |
 
