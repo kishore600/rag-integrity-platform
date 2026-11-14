@@ -22,9 +22,10 @@ jobs:
       matrix:
         python: ["3.10", "3.12"]
     services:
-      # A real Postgres: runs the Supabase migration, the Postgres ledger and the read-only manifest connector.
+      # A real Postgres with the pgvector extension: runs the Supabase migrations, the Postgres ledger, the read-only manifest
+      # connector and the read-only pgvector index connector (each test works in its own schema).
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_PASSWORD: postgres
         ports: ["5432:5432"]
@@ -39,6 +40,7 @@ jobs:
         ports: ["6333:6333"]
     env:
       RAGI_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      RAGI_TEST_PGVECTOR_URL: postgresql://postgres:postgres@localhost:5432/postgres
       RAGI_TEST_QDRANT_URL: http://localhost:6333
       RAGI_TEST_QDRANT_KEY: ci-test-api-key
       RAGI_TEST_S3_ENDPOINT: http://127.0.0.1:5556

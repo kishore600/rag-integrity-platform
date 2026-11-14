@@ -465,3 +465,72 @@ def test_notifications_need_a_signed_in_user_and_changes_need_the_same_origin(tm
         assert anonymous.post("/api/notifications/read-all").status_code in (401, 403)
         signup(c)
         assert c.post("/api/notifications/read-all", headers={"Origin": "http://evil.example.com"}).status_code == 403
+
+
+# ------------------------------------------------------------------------------------------------ the Send test email button
+def test_the_test_email_goes_to_the_signed_in_workspaces_own_address_and_to_nobody_else(tmp_path, smtp):
+    c, app, settings = make(tmp_path, **smtp.settings)
+    with c:
+        alice, bob = TestClient(c.app), TestClient(c.app)
+        signup(alice, "alice@example.com")
+        signup(bob, "bob@example.com")
+        first = alice.post("/api/alerts/test-email")
+        assert first.status_code == 200 and first.json() == {"ok": True, "sent": 1, "to": ["alice@example.com"]}
+        assert [e[1] for e in smtp.envelopes] == [["alice@example.com"]]  # not Bob, and not the operator
+        m = smtp.messages[0]
+        assert m["Subject"] == "[RAGGuard] This is a test email from RAGGuard" and m["To"] == "alice@example.com"
+        text = m.get_body(("plain",)).get_content()
+        assert "test" in text.lower() and "Nothing was found or changed" in text and "Open Alert settings" in text
+        assert bob.post("/api/alerts/test-email").json()["to"] == ["bob@example.com"]
+        assert [e[1] for e in smtp.envelopes] == [["alice@example.com"], ["bob@example.com"]]
+        # a test email is not an audit result: no notification is created and the hourly cap is untouched
+        assert alice.get("/api/notifications").json() == {"items": [], "unread": 0}
+
+
+def test_without_a_mail_account_the_test_email_says_what_is_missing_and_sends_nothing(tmp_path):
+    c, *_ = make(tmp_path)
+    with c:
+        signup(c)
+        body = c.post("/api/alerts/test-email").json()
+        assert body["ok"] is False and body["sent"] == 0 and body["to"] == []
+        assert "RAGI_SMTP_HOST" in body["reason"] and "RAGI_SMTP_FROM" in body["reason"]
+
+
+def test_a_mail_server_that_refuses_the_test_email_is_reported_without_echoing_the_password(tmp_path):
+    c, *_ = make(tmp_path, smtp_host="127.0.0.1", smtp_port=1, smtp_from="a@example.com", smtp_security="none",
+                 smtp_user="mailer", smtp_password="s3cret-pass-word")
+    with c:
+        signup(c)
+        r = c.post("/api/alerts/test-email")
+        body = r.json()
+        assert r.status_code == 200 and body["ok"] is False and body["sent"] == 0 and body["reason"].startswith("The mail server did not accept it")
+        assert "s3cret-pass-word" not in r.text
+
+
+def test_the_test_email_cannot_be_used_to_flood_an_inbox(tmp_path, smtp):
+    c, *_ = make(tmp_path, **smtp.settings)
+    with c:
+        signup(c)
+        codes = [c.post("/api/alerts/test-email").status_code for _ in range(6)]
+        assert codes == [200, 200, 200, 200, 200, 429] and len(smtp.messages) == 5
+
+
+def test_the_test_email_needs_a_signed_in_user_and_the_same_origin(tmp_path, smtp):
+    c, *_ = make(tmp_path, **smtp.settings)
+    with c:
+        assert TestClient(c.app).post("/api/alerts/test-email").status_code in (401, 403)
+        signup(c)
+        assert c.post("/api/alerts/test-email", headers={"Origin": "http://evil.example.com"}).status_code == 403
+        assert smtp.messages == []
+
+
+def test_in_single_user_mode_the_test_email_goes_to_the_configured_addresses_and_is_limited_per_process(tmp_path, smtp):
+    svc = service(tmp_path, PointIndex(clean_points()), alert_email_to="ops@example.com, not an address", **smtp.settings)
+    first = svc.send_test_email()
+    assert first == {"ok": True, "sent": 1, "to": ["ops@example.com"]} and smtp.messages[0]["To"] == "ops@example.com"
+    for _ in range(notifications.TEST_EMAILS - 1):
+        assert svc.send_test_email()["ok"] is True
+    limited = svc.send_test_email()
+    assert limited["ok"] is False and limited["rate_limited"] is True and len(smtp.messages) == notifications.TEST_EMAILS
+    nobody = service(tmp_path, PointIndex(clean_points()), name="nobody", **smtp.settings).send_test_email()
+    assert nobody["ok"] is False and "RAGI_ALERT_EMAIL_TO" in nobody["reason"]

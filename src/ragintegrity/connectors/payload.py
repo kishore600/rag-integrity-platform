@@ -8,7 +8,7 @@ from ..ids import normalize_id
 from ..models import Fingerprint, IndexedChunk
 
 CANONICAL_FIELDS = (
-    "tenant_id", "document_id", "chunk_id", "chunk_index", "chunk_hash", "source_hash", "source_version",
+    "tenant_id", "document_id", "chunk_id", "chunk_index", "chunk_total", "chunk_hash", "source_hash", "source_version",
     "parser_version", "chunking_version", "chunk_size", "chunk_overlap", "embedding_model",
     "embedding_model_version", "embedding_dim", "preprocessing", "acl_hash",
 )
@@ -95,6 +95,7 @@ def payload_to_chunk(
         source_version=_s(raw["source_version"]),
         fingerprint=fp,
         acl_hash=_s(raw["acl_hash"]),
+        chunk_total=_i(raw["chunk_total"]),
         vector_checked=check_vector,
         vector_ok=vector_is_usable(vector, vector_name) if check_vector else True,
         present_fields=present,

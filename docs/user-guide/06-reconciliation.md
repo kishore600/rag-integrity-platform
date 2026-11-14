@@ -52,7 +52,7 @@ Everything on this page except the Documents table describes the latest **full**
 
 ### Run your first full audit
 
-1. Make sure all three systems are connected. If they are not, the page shows "Connect your data first" and the buttons are disabled. See [Connect your data sources](04-data-sources.md).
+1. Make sure your source and your vector index are connected (a manifest is optional). If they are not, the page shows "Connect your data first" and the buttons are disabled. See [Connect your data sources](04-data-sources.md).
 2. Click **Run full audit**. The button changes to **Audit running** with a spinner and a notice appears in the corner.
 3. Wait. The page checks for progress every 3 seconds and updates itself when the audit ends. The audit runs on the server, not in your browser, and a notice tells you when it finishes, whichever page you are on.
 4. When it finishes, read the Three-way comparison, then the Results card. If the Findings number is above zero, click **View all issues** and continue in [Integrity issues](07-integrity-issues.md).

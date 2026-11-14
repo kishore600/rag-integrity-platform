@@ -1,11 +1,14 @@
 import { RefreshCw, Server } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { PageHeader } from "@/components/shared/page";
 import { Skeleton } from "@/components/shared/states";
+import { useSaveSettings } from "@/hooks/queries";
+import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import type { ConnectionStatus } from "@/types/api";
-import { EnvNote, QueryGate, StateBadge, useSystems, type SystemStatus } from "../_settings-form";
+import { EnvNote, QueryGate, StateBadge, useSystems, type IndexType, type SystemStatus } from "../_settings-form";
 import { SetupCheckCard } from "./setup-check";
 import { SetupGuide, TrustPoints } from "./setup-guide";
 import { SystemCard } from "./system-card";
@@ -41,8 +44,52 @@ function LedgerCard({ ledger }: { ledger: ConnectionStatus }) {
   );
 }
 
+/** "Where are your vectors stored?": Qdrant or pgvector. Saved on its own, so the card below it changes at once. */
+function IndexChoice({ indexType }: { indexType: IndexType }) {
+  const save = useSaveSettings();
+  function choose(type: IndexType) {
+    if (type === indexType || save.isPending) return;
+    save.mutate({ kind: "index", values: { type } }, { onError: (err) => toast.error("Couldn't save that choice", { description: errorMessage(err) }) });
+  }
+  const options: { value: IndexType; label: string; hint: string }[] = [
+    { value: "qdrant", label: "Qdrant", hint: "A Qdrant server or Qdrant Cloud" },
+    { value: "pgvector", label: "pgvector (PostgreSQL)", hint: "A table with a vector column: Supabase, Neon, AWS RDS, Postgres" },
+  ];
+  return (
+    <Card>
+      <div className="px-5 py-4">
+        <h2 className="text-card text-ink" id="index-choice">Where are your vectors stored?</h2>
+        <div role="radiogroup" aria-labelledby="index-choice" className="mt-3 grid gap-3 sm:grid-cols-2">
+          {options.map((o) => {
+            const on = o.value === indexType;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                disabled={save.isPending}
+                onClick={() => choose(o.value)}
+                className={cn("rounded-card border p-3 text-left transition-colors", on ? "border-brand bg-brand-light" : "border-line bg-workspace hover:bg-surface")}
+              >
+                <span className="flex items-center gap-2 text-body font-medium text-ink">
+                  <span className={cn("flex h-4 w-4 items-center justify-center rounded-full border", on ? "border-brand" : "border-ink-3")} aria-hidden>
+                    {on ? <span className="h-2 w-2 rounded-full bg-brand" /> : null}
+                  </span>
+                  {o.label}
+                </span>
+                <span className="mt-1 block text-support text-ink-2">{o.hint}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function SystemGrid({ systems, appMode, healthError }: { systems: SystemStatus[]; appMode: boolean; healthError?: unknown }) {
-  const current = appMode ? systems.find((s) => !s.configured)?.kind : undefined;
+  const current = appMode ? systems.find((s) => !s.configured && !s.optional)?.kind : undefined;
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {systems.map((s, i) => (
@@ -53,12 +100,12 @@ function SystemGrid({ systems, appMode, healthError }: { systems: SystemStatus[]
 }
 
 export default function DataSourcesPage() {
-  const { appMode, settings, connections, systems, ledger, refresh, fetching } = useSystems();
+  const { appMode, settings, connections, systems, indexType, ledger, refresh, fetching } = useSystems();
 
   const header = (
     <PageHeader
       title="Data sources"
-      description="The three systems RAGGuard compares."
+      description="Your documents and your vector index, plus an optional manifest: the systems RAGGuard compares."
       actions={
         <Button variant="secondary" onClick={() => void refresh()} disabled={fetching}>
           <RefreshCw className={cn("h-4 w-4", fetching && "animate-spin")} aria-hidden />
@@ -76,6 +123,7 @@ export default function DataSourcesPage() {
           {(view) => (
             <div className="space-y-6">
               {!view.ready ? <SetupGuide systems={systems} /> : null}
+              <IndexChoice indexType={indexType} />
               <SystemGrid systems={systems} appMode healthError={connections.error} />
               {view.ready ? <SetupCheckCard /> : null}
               {ledger ? <LedgerCard ledger={ledger} /> : null}

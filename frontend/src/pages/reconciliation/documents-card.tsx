@@ -9,7 +9,7 @@ import { DataTable } from "@/components/shared/data-table";
 import { FilterBar, FilterSelect } from "@/components/shared/filters";
 import { DocStateBadge, SeverityBadge } from "@/components/shared/status";
 import { EmptyState, ErrorState } from "@/components/shared/states";
-import { useDocuments } from "@/hooks/queries";
+import { useDocuments, useManifestConnected } from "@/hooks/queries";
 import { cn } from "@/lib/cn";
 import { documentName, formatNumber } from "@/lib/format";
 import { links } from "@/lib/links";
@@ -28,9 +28,10 @@ const VIEWS: { id: View; label: string; match: (d: DocumentRow) => boolean }[] =
 ];
 
 function Presence({ doc }: { doc: DocumentRow }) {
+  const manifestConnected = useManifestConnected(); // with no manifest connected there is nothing to be present in
   const places: [string, number][] = [
     ["Source", doc.source_present],
-    ["Manifest", doc.manifest_present],
+    ...(manifestConnected ? ([["Manifest", doc.manifest_present]] as [string, number][]) : []),
     ["Index", doc.index_present],
   ];
   return (
@@ -86,7 +87,7 @@ const columns: ColumnDef<DocumentRow>[] = [
     ),
   },
   { id: "status", header: "Status", accessorFn: (d) => d.status, cell: ({ row }) => <DocStateBadge doc={row.original} /> },
-  { id: "presence", header: "Source / Manifest / Index", enableSorting: false, cell: ({ row }) => <Presence doc={row.original} /> },
+  { id: "presence", header: "Where it exists", enableSorting: false, cell: ({ row }) => <Presence doc={row.original} /> },
   {
     id: "chunks",
     header: "Chunks",

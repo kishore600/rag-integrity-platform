@@ -68,6 +68,10 @@ RAGI_QDRANT_PAYLOAD_MAP={"document_id":"doc_id","tenant_id":"meta.tenant","sourc
 tenants over collections work as-is. `RAGI_QDRANT_CHECK_VECTORS=true` also fetches vectors to find empty/all-zero
 embeddings (slower, more memory on the Qdrant side). Named vectors: `RAGI_QDRANT_VECTOR_NAME`.
 
+**The manifest is optional.** Leave `RAGI_MANIFEST_DATABASE_URL` unset and the audit compares your S3 files with the vector index directly (it needs a `source_hash` on every vector to recognise a changed file). With a manifest it can also check what the pipeline claimed. See GUIDE.md 3.15.
+
+**pgvector instead of Qdrant.** Set `RAGI_INDEX_TYPE=pgvector`, `RAGI_PGVECTOR_DATABASE_URL` (a role that can only SELECT) and `RAGI_PGVECTOR_TABLE`; `RAGI_PGVECTOR_COLUMN_MAP` points our names at your columns or at a key inside a JSON column (`{"document_id": "cmetadata.doc_id"}`). `RAGI_PGVECTOR_DISTANCE` is `cosine`, `l2` or `inner_product`. See GUIDE.md 3.16.
+
 Required payload fields default to `document_id` and `source_hash` (plus `tenant_id` once more than one tenant exists);
 override with `RAGI_REQUIRED_PAYLOAD_FIELDS`.
 

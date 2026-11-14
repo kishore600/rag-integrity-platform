@@ -1,5 +1,5 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, CircleCheck, FileQuestion, Loader2, TriangleAlert } from "lucide-react";
+import { ArrowLeft, CircleCheck, FileQuestion, Info, Loader2, TriangleAlert } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -119,8 +119,8 @@ function RunView({ run }: { run: AuditRun }) {
   const statTiles: { label: string; value: ReactNode; hint?: string }[] = [];
   if (s.documents_total !== undefined) statTiles.push({ label: "Documents", value: formatNumber(s.documents_total), hint: "compared in total" });
   if (s.source_documents !== undefined) statTiles.push({ label: "Source documents", value: formatNumber(s.source_documents), hint: "in Amazon S3" });
-  if (s.manifest_rows !== undefined) statTiles.push({ label: "Manifest rows", value: formatNumber(s.manifest_rows), hint: "in PostgreSQL" });
-  if (s.index_points !== undefined) statTiles.push({ label: "Index vectors", value: formatNumber(s.index_points), hint: "in Qdrant" });
+  if (s.manifest_rows !== undefined && s.manifest?.connected !== false) statTiles.push({ label: "Manifest rows", value: formatNumber(s.manifest_rows), hint: "in PostgreSQL" });
+  if (s.index_points !== undefined) statTiles.push({ label: "Index vectors", value: formatNumber(s.index_points), hint: "in the vector index" });
   if (s.retrieval_probes !== undefined) statTiles.push({ label: "Retrieval probes", value: formatNumber(s.retrieval_probes), hint: "queries sent to the index" });
   if (s.health_score !== undefined) {
     statTiles.push({
@@ -166,6 +166,20 @@ function RunView({ run }: { run: AuditRun }) {
             <p className="text-body text-ink">
               This audit is still running. It started {timeAgo(run.started_at)}, and this page updates when it finishes.
             </p>
+          </div>
+        ) : null}
+
+        {s.manifest?.connected === false ? (
+          <div className="rounded-card border border-line bg-surface px-4 py-3" role="note">
+            <p className="flex items-center gap-2 text-card text-ink">
+              <Info className="h-4 w-4 text-ink-2" aria-hidden /> This audit ran without a manifest
+            </p>
+            <p className="mt-1 text-body text-ink">It compared your files with the vector index directly. These checks need a manifest, so they were not run:</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5 text-body text-ink-2">
+              {(s.manifest.checks_not_run ?? []).map((c) => (
+                <li key={c} className="break-words">{c}</li>
+              ))}
+            </ul>
           </div>
         ) : null}
 

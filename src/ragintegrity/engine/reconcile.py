@@ -70,6 +70,7 @@ class ReconcileConfig:
     now: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     vector_sizes: dict[str, int | None] = field(default_factory=dict)
     required_fields: list[str] = field(default_factory=list)
+    has_manifest: bool = True  # False: no manifest is connected, so no document is expected to have a manifest row
 
 
 @dataclass
@@ -234,6 +235,9 @@ def _check_missing(key: DocKey, s: SourceDoc, m: ManifestRow | None, cfg: Reconc
     if m and status in INFLIGHT_STATUSES:
         ev["stuck_in_flight_since"] = m.updated_at
         reason = f"The pipeline has had this document in '{m.processing_status}' since {m.updated_at}."
+    elif not cfg.has_manifest:
+        reason = ("No vector in the index carries this document's id, although the file is in the source. It was never indexed, "
+                  "or it was indexed under a different id (the Setup check shows whether the ids line up).")
     elif m is None:
         reason = "The document has never been picked up by the pipeline (no manifest row)."
     elif status in FAILED_STATUSES:
@@ -363,7 +367,8 @@ def _check_indexed(
         out.append(drift)
 
     # ---- metadata ---------------------------------------------------------------------------
-    meta = _check_metadata(key, s, m, ix, base_ev, is_stale, live, explained_count=partial is not None or leftover_found)
+    meta = _check_metadata(key, s, m, ix, base_ev, is_stale, live, explained_count=partial is not None or leftover_found,
+                           cfg_has_manifest=cfg.has_manifest)
     if meta:
         out.append(meta)
 
@@ -398,9 +403,11 @@ def _check_partial(
             else:  # payloads without chunk ids: compare chunk indexes instead
                 have_idx = {i for i in chunks.values() if i is not None}
                 missing += [f"{coll}:{cid}" for i, cid in sorted(by_index.items()) if i not in have_idx]
-    elif m and m.expected_chunk_count:
-        method = "expected_chunk_count"
-        expected_total = m.expected_chunk_count
+    elif (m and m.expected_chunk_count) or ix.payload_total():
+        # the manifest's count when there is one; otherwise the total the vectors themselves declare (a payload field)
+        from_manifest = bool(m and m.expected_chunk_count)
+        method = "expected_chunk_count" if from_manifest else "payload_chunk_total"
+        expected_total = (m.expected_chunk_count if from_manifest else ix.payload_total()) or 0
         for coll, chunks in live.items():
             idx = {i for i in chunks.values() if i is not None}
             if idx:
@@ -449,7 +456,7 @@ def _check_leftover_chunks(
     answering queries. They are caught here when the payload cannot say which revision a point belongs to (when it can,
     they are already ``stale`` and reported as superseded vectors)."""
     expected_ids = set(chunk_rows) if chunk_rows else set()
-    expected_total = m.expected_chunk_count if m and m.expected_chunk_count else None
+    expected_total = m.expected_chunk_count if m and m.expected_chunk_count else ix.payload_total()
     if not expected_ids and expected_total is None:
         return None
     expected_indexes = {r.chunk_index for r in chunk_rows.values() if r.chunk_index is not None} if chunk_rows else set()
@@ -471,7 +478,8 @@ def _check_leftover_chunks(
     total = sum(len(v) for v in extra.values())
     expected = len(expected_ids) or expected_total
     ev = {**base_ev, "unexpected_chunks": _trim(sorted(chunks)), "unexpected_chunk_count": len(chunks),
-          "expected_chunks": expected, "method": "chunk_manifest" if expected_ids else "expected_chunk_count",
+          "expected_chunks": expected,
+          "method": "chunk_manifest" if expected_ids else ("expected_chunk_count" if (m and m.expected_chunk_count) else "payload_chunk_total"),
           **_removal(extra)}
     return _finding(
         IssueType.SUPERSEDED_ACTIVE, Severity.MEDIUM, key,
@@ -530,7 +538,7 @@ def _check_drift(
 
 def _check_metadata(
     key: DocKey, s: SourceDoc, m: ManifestRow | None, ix: DocIndexState, base_ev: dict, is_stale: bool, live: int,
-    explained_count: bool = False,
+    explained_count: bool = False, cfg_has_manifest: bool = True,
 ) -> Finding | None:
     problems: list[dict[str, Any]] = []
 
@@ -548,7 +556,7 @@ def _check_metadata(
                        "although the document's own hash says the index is current: the chunking may have changed since, "
                        f"or the two sides compute chunk hashes differently (for example chunk {ix.chunk_hash_examples[0]['chunk_id']}).",
         })
-    if m is None and live > 0 and not is_stale:
+    if m is None and live > 0 and not is_stale and cfg_has_manifest:
         problems.append({
             "code": "untracked_in_manifest", "severity": "medium",
             "message": "Vectors exist for a current document but the pipeline has no manifest row for it.",
@@ -699,6 +707,20 @@ def _derived_stats(result: ReconcileResult) -> dict[str, Any]:
         "findings_by_severity": {k: by_sev.get(k, 0) for k in sorted(SEVERITY_RANK, key=lambda x: -SEVERITY_RANK[x])},
         "health_score": round(100.0 * healthy / total, 1) if total else 100.0,
     }
+
+
+# What an audit cannot check when no manifest is connected, in plain words. The guide (3.15) lists the same checks.
+CHECKS_NEEDING_A_MANIFEST = (
+    "The pipeline said it succeeded, but nothing is indexed (only the manifest records what the pipeline claimed).",
+    "The number of chunks the manifest expects against the number indexed, and a stale index found only through the manifest's hash.",
+    "Manifest rows for documents that no longer exist, and documents the manifest marks deleted.",
+    "Permission (ACL) hashes recorded in the manifest, the manifest's status values, and a manifest that lags behind the index.",
+)
+
+
+def manifest_block(connected: bool) -> dict[str, Any]:
+    """The run's own record of whether a manifest took part, and if not, which checks were therefore left out."""
+    return {"connected": True} if connected else {"connected": False, "checks_not_run": list(CHECKS_NEEDING_A_MANIFEST)}
 
 
 def _stats(result: ReconcileResult, source: dict, manifest: dict, agg: IndexAggregator) -> dict[str, Any]:

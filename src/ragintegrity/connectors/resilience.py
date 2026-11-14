@@ -24,7 +24,8 @@ _TRANSIENT_NAMES = frozenset({
     "ConnectError", "ReadError", "WriteError", "RemoteProtocolError", "ProtocolError", "ConnectionError", "ServerDisconnectedError",
 })
 _TRANSIENT_WORDS = ("timed out", "timeout", "temporarily unavailable", "connection reset", "connection aborted", "broken pipe",
-                    "server disconnected", "too many requests", "service unavailable")
+                    "server disconnected", "too many requests", "service unavailable", "server closed the connection",
+                    "connection is lost", "terminating connection", "canceling statement due to statement timeout")
 
 
 def retry_after_seconds(exc: BaseException) -> float | None:

@@ -91,7 +91,7 @@ RAGGuard works with S3-compatible stores such as MinIO, Cloudflare R2 and Supaba
 
 ## Before you start
 
-You need three things that already exist in your own environment, plus an account.
+You need two things that already exist in your own environment, plus an account. A third, the manifest, is optional.
 
 ### 1. An S3 bucket with your documents
 
@@ -100,16 +100,18 @@ You need three things that already exist in your own environment, plus an accoun
 - Object keys that RAGGuard can split into a tenant and a document id. The default **Key pattern** expects `tenant/path/to/document.pdf`, for example `customer-a/policies/leave-policy.md`. For a bucket with no tenants, set the pattern to `^(?P<document_id>.+)$`.
 - A way to know when a file changes. The simplest is a SHA-256 stored with each object under the metadata key `sha256`. Alternatives are **Content hash** `compute` (RAGGuard downloads and hashes) or `etag` (quick start, less reliable).
 
-### 2. A PostgreSQL manifest table
+### 2. A PostgreSQL manifest table (optional)
 
-This is the table your ingestion pipeline writes after it processes each document. By default RAGGuard looks for `rag_document_manifest` in the `public` schema, and you can change both. You can also map your own column names.
+**Skip this if your pipeline records nothing.** Audits work without a manifest: RAGGuard compares your files with the vector index directly (see [The manifest is optional](04-data-sources.md#the-manifest-is-optional-and-your-vectors-can-live-in-pgvector)). This is the table your ingestion pipeline writes after it processes each document. By default RAGGuard looks for `rag_document_manifest` in the `public` schema, and you can change both. You can also map your own column names.
 
 - **Minimum:** a `document_id` column. It is the only mandatory column, and any other column your table lacks is simply skipped.
 - **Recommended:** `tenant_id`, `source_uri`, `source_hash`, `source_version`, `processing_status`, `expected_chunk_count`, `indexed_chunk_count`, `indexed_version` and `updated_at`. Add the pipeline columns (`parser_version`, `chunking_version`, `chunk_size`, `chunk_overlap`, `embedding_model`, `embedding_model_version`, `embedding_dim`, `preprocessing`) and `acl_hash` if you have them.
 - Optional: a second table with one row per chunk (`tenant_id`, `document_id`, `chunk_id`, `chunk_index`, `chunk_hash`), which lets RAGGuard name exactly which chunks are missing.
 - A database role that can only `SELECT`. RAGGuard also opens every transaction read-only.
 
-### 3. A Qdrant collection
+### 3. A vector index: a Qdrant collection, or a pgvector table
+
+Vectors in PostgreSQL with pgvector (Supabase, Neon, AWS RDS) work too: choose **pgvector** on Data Sources and give it the table.
 
 - A Qdrant URL that RAGGuard can reach. For Qdrant Cloud it looks like `https://your-cluster.cloud.qdrant.io:6333`. Add an API key if the cluster requires one.
 - **Minimum payload on every vector:** `document_id` and `source_hash` (the same value your pipeline stored in the manifest), plus `tenant_id` if you have more than one tenant.
@@ -174,10 +176,10 @@ The screenshots and the video that go with this guide come from a hosted test wo
 
 ## Ten-minute quick start
 
-If your three systems are ready, you can reach your first result in about ten minutes. The audit itself takes as long as your corpus needs. Each step names the chapter that explains it in detail.
+If your systems are ready, you can reach your first result in about ten minutes. The audit itself takes as long as your corpus needs. Each step names the chapter that explains it in detail.
 
 1. **Open RAGGuard and create your account.** Press **Create your workspace** on the landing page, type your email and a password of at least 10 characters, and press **Create account**. You land on the Overview, which asks you to connect your data. See [Sign in and find your way around](03-interface-and-sign-in.md).
-2. **Connect your three systems.** Open **Data Sources**. For each of Amazon S3, PostgreSQL and Qdrant press **Configure**, fill in the form, press **Test connection**, read the result lines, then press **Save**. See [Connect your data sources](04-data-sources.md). The **Run audit** button stays disabled, with the tooltip "Connect your data sources first", until all three are saved.
+2. **Connect your source and your index.** Open **Data Sources**. For Amazon S3 and for your vector index (Qdrant, or pgvector: choose it under **Where are your vectors stored?**) press **Configure**, fill in the form, press **Test connection**, read the result lines, then press **Save**. A manifest is optional. See [Connect your data sources](04-data-sources.md). The **Run audit** button stays disabled, with the tooltip "Connect your data sources first", until the source and the index are saved.
 3. **Run your first audit.** Press **Run audit** in the top bar, or **Run first audit** on the Overview. A notice appears when the audit starts and another when it finishes. See [Sign in and find your way around](03-interface-and-sign-in.md#the-run-audit-button) and [Reconciliation](06-reconciliation.md).
 4. **Read the results.** Start on the [Overview](05-overview.md): the health score, the number of open issues and the worst problems. Then open **Integrity Issues** to read each issue's evidence ([Integrity issues](07-integrity-issues.md)), **Isolation** to check that no customer's documents are indexed under another customer ([Isolation](20-isolation.md)), and **Documents** to see every document's state ([Documents](10-documents.md)).
 5. **Fix what you found.** Create a repair plan from the issues you want fixed, send it to your worker, verify it and approve cleanup ([Repair plans](08-repair-plans.md)). Your worker must be set up first ([Integrations](12-integrations.md)). To see what a pipeline change would affect before you make it, use [Impact analysis](09-impact-analysis.md).
@@ -289,7 +291,7 @@ If the server has closed sign-ups, the landing page shows only the **Sign in** b
 
 ## Tips and common mistakes
 
-- **Connect all three systems before you expect results.** **Run audit** stays disabled until the source, the manifest and the index are all saved.
+- **Connect your source and your index before you expect results.** **Run audit** stays disabled until both are saved. The manifest is optional.
 - **Make the hash match.** The most common reason every document looks stale is that the hash your pipeline stores is not the one RAGGuard reads from S3. Use the same value in all three places.
 - **Check the key pattern.** If most documents show as missing or orphaned, the tenant and document id RAGGuard derives from S3 keys probably differ from the ones in your manifest and index. **Test connection** shows an example key and what RAGGuard made of it.
 - **Do not judge a fresh upload.** A document changed in the last few minutes shows as **Pending**, not broken. That is the grace period working.

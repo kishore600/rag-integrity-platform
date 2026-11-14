@@ -53,7 +53,7 @@ export default function ReconciliationPage() {
   const header = (
     <PageHeader
       title="Reconciliation"
-      description="Compare your source documents, your manifest and your vector index."
+      description="Compare your source documents with your vector index, and with your manifest if you connected one."
       actions={
         <>
           {needsSetup ? null : <ExportMenu disabledReason={exportReason} />}
@@ -77,7 +77,7 @@ export default function ReconciliationPage() {
           <EmptyState
             icon={Plug}
             title="Connect your data first"
-            description="Reconciliation compares your S3 documents, your PostgreSQL manifest and your Qdrant index. Connect all three to run your first audit."
+            description="Reconciliation compares your S3 documents with your vector index (and your manifest, if you connect one). Connect your source and your index to run your first audit."
             action={
               <LinkButton variant="primary" to="/data-sources">
                 Go to Data Sources
@@ -111,7 +111,7 @@ export default function ReconciliationPage() {
             <EmptyState
               icon={GitCompareArrows}
               title="No full audit has finished yet"
-              description="Run a full audit to count what your source, manifest and index each hold and to list every difference."
+              description="Run a full audit to count what your source and your index each hold (and your manifest, if you connected one) and to list every difference."
               action={fullAuditButton()}
             />
           </Card>

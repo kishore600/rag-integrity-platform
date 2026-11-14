@@ -194,6 +194,44 @@ def render_email(n: Notification, base: str | None) -> tuple[str, str, str]:
     return subject, text, html
 
 
+# ---------------------------------------------------------------------------------------------------- the test email
+TEST_EMAILS = 5  # per 10 minutes, per process (the hosted app also limits per workspace)
+TEST_WINDOW_SECONDS = 600
+
+
+def test_notification() -> Notification:
+    """The message of the "Send test email" button: it says what it is, so nobody mistakes it for an audit result."""
+    return Notification(
+        "test", "success", "This is a test email from RAGGuard",
+        "If you can read this, RAGGuard can email you after each audit. Nothing was found or changed: this message was sent only because "
+        "someone pressed Send test email on the Alerts page.",
+        details=["It was sent with the mail account the operator of this RAGGuard set up.",
+                 "After an audit finishes you get a message like this one with the next step as buttons."],
+        actions=[action("open_alerts", "Open Alert settings", "link", "/alerts")])
+
+
+def send_test_email(settings: Settings, ledger: Ledger) -> dict[str, Any]:
+    """Send one test message to the people an alert would go to, and say in plain words what happened. Never raises."""
+    if not mailer.configured(settings):
+        return {"ok": False, "sent": 0, "to": [],
+                "reason": "No mail account is set up on this deployment. The operator sets RAGI_SMTP_HOST and RAGI_SMTP_FROM "
+                          "(and RAGI_SMTP_USER, RAGI_SMTP_PASSWORD) in the server's environment."}
+    try:
+        to = _recipients(settings, ledger)
+    except Exception as exc:
+        log.warning("could not read the recipients of the test email: %s", type(exc).__name__)
+        return {"ok": False, "sent": 0, "to": [], "reason": "The addresses to send it to could not be read."}
+    good = [a for a in to if mailer.valid_address(a)]
+    if not good:
+        return {"ok": False, "sent": 0, "to": [], "reason": "There is no address to send it to. In single-user mode set RAGI_ALERT_EMAIL_TO."}
+    subject, text, html = render_email(test_notification(), settings.link_base)
+    result = mailer.send(settings, good, subject, text, html)
+    out: dict[str, Any] = {"ok": bool(result["sent"]) and not result["failed"], "sent": result["sent"], "to": good}
+    if result["error"]:
+        out["reason"] = f"The mail server did not accept it: {result['error']}"
+    return out
+
+
 # ---------------------------------------------------------------------------------------------------- delivery
 def _recipients(settings: Settings, ledger: Ledger) -> list[str]:
     own = ledger.workspace_emails()  # app mode: the workspace's own users. Nobody else can ever be a recipient there.

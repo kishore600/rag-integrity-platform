@@ -5,7 +5,7 @@ import { useOverview, useSession, useStartAudit } from "./queries";
 
 /**
  * Starts an audit and narrates it. One hook for every "Run audit" button, so they behave identically:
- * disabled until the three connections exist, disabled while a run is in progress, and toasts for start / finish / failure.
+ * disabled until the source and the vector index are connected, disabled while a run is in progress, and toasts for start / finish / failure.
  */
 export function useRunAudit() {
   const session = useSession().data;
@@ -17,7 +17,7 @@ export function useRunAudit() {
   /** `onStarted` runs once the server has accepted the request (a notification uses it to remember that its button was pressed). */
   function run(req: AuditRequest = {}, opts: { onStarted?: () => void } = {}) {
     if (running) return;
-    const id = toast.loading("Running audit…", { description: "Comparing source, manifest and index" });
+    const id = toast.loading("Running audit…", { description: "Comparing your source with your vector index" });
     start.mutate(req, {
       onSuccess: (r) => {
         opts.onStarted?.();

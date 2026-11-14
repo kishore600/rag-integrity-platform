@@ -99,7 +99,7 @@ def _row(key: DocKey, reason: str, c: Any, findings: list[Finding], probes: int,
 
     checks = [
         {"check": "Source document", "result": "Still in the source" if s else "Deleted", "status": "mismatch" if s else "ok"},
-        {"check": "Manifest status", "result": status if m else "no manifest row",
+        {"check": "Manifest status", "result": status if m else ("no manifest row" if c.has_manifest else "no manifest connected"),
          "status": "ok" if (m is None or _norm(status) in DELETED_STATUSES) else "mismatch"},
         {"check": "Vector chunks found", "result": vectors, "status": "mismatch" if vectors and not s else "ok"},
     ]
@@ -120,7 +120,8 @@ def _row(key: DocKey, reason: str, c: Any, findings: list[Finding], probes: int,
                               "(create a repair plan from the audit's issue; nothing is deleted until you approve it)."),
         "manifest_not_updated": "The vectors are gone. Mark the document deleted (or remove its row) in the processing manifest.",
         "not_deleted": "The document still exists in the source. If it should be deleted, delete it there first.",
-        "verified_deleted": "Nothing to do: the document is gone from the source, the manifest and the index.",
+        "verified_deleted": ("Nothing to do: the document is gone from the source, the manifest and the index." if c.has_manifest
+                             else "Nothing to do: the document is gone from the source and the index."),
     }[verdict]
     return {
         "tenant_id": key[0], "document_id": key[1], "reason": reason, "verdict": verdict, "title": VERDICTS[verdict],
@@ -141,7 +142,7 @@ def verify_deletions(
     scope = Scope(keys=frozenset(candidates))
     plain = dataclasses.replace(opts, source_only=False, prior_source_keys=None, probe=False)
     c = collect(source, manifest, index, plain, scope)
-    result = reconcile(c.source, c.manifest, c.chunk_rows, c.agg, _config(index, plain, c.required), scope)
+    result = reconcile(c.source, c.manifest, c.chunk_rows, c.agg, _config(index, plain, c.required, c.has_manifest), scope)
     rows = [_row(key, reason, c, result.findings, probes_per_document, top_k, index) for key, reason in sorted(candidates.items())]
 
     by_key = {r["tenant_id"] + "\0" + r["document_id"]: r for r in rows}

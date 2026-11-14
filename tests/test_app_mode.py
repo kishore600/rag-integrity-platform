@@ -158,11 +158,12 @@ def test_change_password_flow(client):
 def test_settings_view_hides_secrets_and_tracks_readiness(client):
     signup(client)
     v = client.get("/api/settings").json()
-    assert v["ready"] is False and v["missing"] == ["s3", "manifest", "qdrant"]
+    assert v["ready"] is False and v["missing"] == ["s3", "qdrant"]  # the manifest is optional: S3 and the index are enough
     assert not any(k["configured"] for k in v["kinds"])  # a brand-new workspace has nothing configured, optional groups included
     client.put("/api/settings/policy", json={"values": {"grace_minutes": 3}})
     assert next(k for k in client.get("/api/settings").json()["kinds"] if k["kind"] == "policy")["configured"] is True
-    assert {k["kind"] for k in v["kinds"]} == {"s3", "manifest", "qdrant", "pipeline", "repair", "alerts", "policy"}
+    assert {k["kind"] for k in v["kinds"]} == {"s3", "manifest", "qdrant", "index", "pgvector", "pipeline", "repair", "alerts", "policy"}
+    assert {k["kind"] for k in v["kinds"] if k["required_for_audit"]} == {"s3", "qdrant"}
     r = client.put("/api/settings/s3", json={"values": {"bucket": "my-docs", "access_key_id": "AKIAEXAMPLE", "secret_access_key": "TOPSECRET-123",
                                                           "region": "us-east-1", "hash_mode": "compute"}})
     assert r.status_code == 200
@@ -171,7 +172,7 @@ def test_settings_view_hides_secrets_and_tracks_readiness(client):
     fields = {f["name"]: f for f in s3["fields"]}
     assert s3["configured"] is True and fields["bucket"]["value"] == "my-docs" and fields["hash_mode"]["value"] == "compute"
     assert fields["secret_access_key"]["value"] is None and fields["secret_access_key"]["has_value"] is True
-    assert r.json()["missing"] == ["manifest", "qdrant"]
+    assert r.json()["missing"] == ["qdrant"]
 
 
 def test_omitted_secret_is_kept_and_empty_string_clears_it(client):

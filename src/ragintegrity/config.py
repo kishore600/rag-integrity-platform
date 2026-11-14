@@ -92,6 +92,16 @@ class Settings(BaseSettings):
     qdrant_page_size: int = 1000
     default_tenant: str = "default"  # tenant to assume when a payload has no tenant field
 
+    # --- vector index: pgvector (PostgreSQL), an alternative to Qdrant ---------------------------------------
+    index_type: str = "qdrant"  # qdrant | pgvector: where the vectors live
+    pgvector_database_url: str | None = None
+    pgvector_schema: str = "public"
+    pgvector_table: str | None = None
+    pgvector_column_map: str = ""  # JSON: {"document_id": "doc_id", "source_hash": "metadata.hash", "vector": "embedding"}
+    pgvector_distance: str = "cosine"  # cosine | l2 | inner_product: the operator the table's index uses (for the retrieval probe)
+    pgvector_check_vectors: bool = False  # also read the vectors to find empty / all-zero embeddings (slower)
+    pgvector_page_size: int = 1000
+
     # --- target pipeline fingerprint (what *should* be in the index) -------------------------------
     target_parser_version: str | None = None
     target_chunking_version: str | None = None
@@ -173,6 +183,14 @@ class Settings(BaseSettings):
     @property
     def manifest_chunk_columns(self) -> dict[str, str]:
         return self._json_map(self.manifest_chunk_column_map, "RAGI_MANIFEST_CHUNK_COLUMN_MAP")
+
+    @property
+    def pgvector_columns(self) -> dict[str, str]:
+        return self._json_map(self.pgvector_column_map, "RAGI_PGVECTOR_COLUMN_MAP")
+
+    @property
+    def uses_pgvector(self) -> bool:
+        return (self.index_type or "qdrant").lower() == "pgvector"
 
     @property
     def is_demo(self) -> bool:

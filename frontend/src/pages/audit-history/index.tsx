@@ -37,7 +37,7 @@ function AuditHistoryList() {
           <EmptyState
             icon={Plug}
             title="No audits yet"
-            description="Connect your S3 source, PostgreSQL manifest and Qdrant index, then run your first audit. Every audit is recorded here."
+            description="Connect your S3 source and your vector index, then run your first audit. Every audit is recorded here."
             action={
               <LinkButton variant="primary" to="/data-sources">
                 Go to Data Sources

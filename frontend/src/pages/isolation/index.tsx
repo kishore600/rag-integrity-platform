@@ -66,7 +66,7 @@ export default function IsolationPage() {
           <EmptyState
             icon={Plug}
             title="Connect your data first"
-            description="Isolation is checked from a full audit of your S3 documents, your PostgreSQL manifest and your Qdrant index. Connect all three, then run your first audit."
+            description="Isolation is checked from a full audit of your S3 documents and your vector index. Connect both, then run your first audit."
             action={
               <LinkButton variant="primary" to="/data-sources">
                 Go to Data Sources

@@ -87,7 +87,9 @@ def test_unconfigured_live_mode_names_each_broken_connector(tmp_path):
     by_name = {c["name"]: c for c in svc.connections()}
     assert by_name["Issue ledger"]["ok"]
     assert not by_name["S3 source"]["ok"] and "RAGI_S3_BUCKET" in by_name["S3 source"]["detail"]
-    assert not by_name["Manifest (Postgres)"]["ok"] and "RAGI_MANIFEST_DATABASE_URL" in by_name["Manifest (Postgres)"]["detail"]
+    # the manifest is optional: with no manifest database it is "not connected", which is fine
+    assert by_name["Processing manifest"]["ok"] and "Not connected" in by_name["Processing manifest"]["detail"]
+    assert by_name["Processing manifest"]["info"] == {"connected": False, "optional": True}
     assert not by_name["Vector index (Qdrant)"]["ok"] and "RAGI_QDRANT_URL" in by_name["Vector index (Qdrant)"]["detail"]
     with pytest.raises(ConnectorError):
         svc.run_audit()  # and an audit fails loudly instead of reporting a clean index

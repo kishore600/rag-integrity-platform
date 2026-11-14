@@ -50,6 +50,7 @@ class DocIndexState:
     fp_all: Counter = field(default_factory=Counter)
     fp_objs: dict[str, Fingerprint] = field(default_factory=dict)
     acl: Counter = field(default_factory=Counter)
+    chunk_totals: Counter = field(default_factory=Counter)  # chunk_total values the live points declared
     missing_fields: Counter = field(default_factory=Counter)
     empty_vector_ids: list[tuple[str, str]] = field(default_factory=list)  # (collection, point_id)
     outdated_conflicts: dict[str, dict] = field(default_factory=dict)
@@ -88,6 +89,10 @@ class DocIndexState:
                 if len(examples) < 10:
                     examples.append(ck)
         return drop, dup_chunks, examples
+
+    def payload_total(self) -> int | None:
+        """How many chunks the current version has, according to the vectors themselves (the most common value they declare)."""
+        return self.chunk_totals.most_common(1)[0][0] if self.chunk_totals else None
 
     def live_chunks(self) -> dict[str, dict[str, int | None]]:
         """{collection: {chunk_key: chunk_index}} for live (fresh/unknown) points."""
@@ -175,6 +180,8 @@ class IndexAggregator:
         st.fp_all[fk] += 1
         if cls in LIVE_CLASSES:
             st.fp_live[fk] += 1
+            if c.chunk_total:
+                st.chunk_totals[c.chunk_total] += 1
 
         for f in self.ctx.required_fields:
             if f not in c.present_fields:

@@ -625,6 +625,17 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
                 raise HTTPException(429, "Too many setup checks. Try again in a few minutes.")
         return s.setup_check()
 
+    # ------------------------------------------------------------------ the Send test email button
+    @app.post("/api/alerts/test-email")
+    def alerts_test_email(request: Request, s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:
+        if multi:
+            # it makes the platform's mail account send a message: keep it from being used to flood an inbox
+            assert state is not None and state.accounts is not None
+            p = get_principal(request)
+            if not state.accounts.hit(f"test-email:{p.workspace_id}", 5, 600):
+                raise HTTPException(429, "Too many test emails. Try again in a few minutes.")
+        return s.send_test_email()
+
     # ------------------------------------------------------------------ deletion and retrieval verification
     @app.post("/api/deletion-check")
     def deletion_check(request: Request, req: DeletionCheckRequest | None = None, s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:

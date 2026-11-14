@@ -6,7 +6,7 @@
 import type { Issue, IssueType, RepairAction, Severity, DocumentRow } from "@/types/api";
 import { shortHash } from "./format";
 
-export type DataSource = "Amazon S3" | "PostgreSQL" | "Qdrant";
+export type DataSource = "Amazon S3" | "Manifest" | "Vector index";
 
 interface Meta {
   label: string;
@@ -18,64 +18,64 @@ export const ISSUE_META: Record<IssueType, Meta> = {
   missing_embedding: {
     label: "Missing embeddings",
     why: "The document exists at the source but nothing about it is searchable, so users get no answer from it. When the pipeline reported success, job status alone would never have caught this.",
-    sources: ["Amazon S3", "Qdrant"],
+    sources: ["Amazon S3", "Vector index"],
   },
   partial_index: {
     label: "Partial index",
     why: "Only part of the document is searchable. Answers can be silently incomplete, and the missing chunks are exactly the ones nobody notices are gone.",
-    sources: ["Qdrant", "PostgreSQL"],
+    sources: ["Vector index", "Manifest"],
   },
   stale_embedding: {
     label: "Stale document version",
     why: "The source changed but the index still describes the previous version, so users are served outdated content with full confidence.",
-    sources: ["Amazon S3", "Qdrant"],
+    sources: ["Amazon S3", "Vector index"],
   },
   superseded_active: {
     label: "Superseded vectors active",
     why: "The latest version is indexed, but older-generation vectors still answer queries and can outrank the current content.",
-    sources: ["Qdrant"],
+    sources: ["Vector index"],
   },
   orphan_vector: {
     label: "Orphan vectors",
     why: "The document was deleted at the source but its vectors remain searchable, so deleted or withdrawn content can still be returned to users.",
-    sources: ["Amazon S3", "Qdrant"],
+    sources: ["Amazon S3", "Vector index"],
   },
   duplicate_chunk: {
     label: "Duplicate chunks",
     why: "The same chunk is indexed more than once (typically a retried job), which skews ranking and wastes storage and tokens.",
-    sources: ["Qdrant"],
+    sources: ["Vector index"],
   },
   metadata_inconsistent: {
     label: "Metadata mismatch",
     why: "The source, the manifest and the vector payloads disagree (counts, versions, ACL hash, missing fields). Permission filters and freshness checks depend on this metadata being right.",
-    sources: ["PostgreSQL", "Qdrant"],
+    sources: ["Manifest", "Vector index"],
   },
   pipeline_drift: {
     label: "Pipeline drift",
     why: "Vectors were built with a different parser, chunker or embedding model than the target. Mixed embedding spaces degrade retrieval quality in ways that are hard to see.",
-    sources: ["PostgreSQL", "Qdrant"],
+    sources: ["Manifest", "Vector index"],
   },
   empty_embedding: {
     label: "Empty embeddings",
     why: "Points exist with a missing or all-zero vector, so they can never be retrieved correctly.",
-    sources: ["Qdrant"],
+    sources: ["Vector index"],
   },
   tenant_mismatch: {
     label: "Tenant mismatch",
     why: "Vectors are tagged with the wrong tenant, which can leak one customer's content to another. Treat as a security incident.",
-    sources: ["Qdrant"],
+    sources: ["Vector index"],
   },
   manifest_orphan: {
     label: "Orphan manifest row",
     why: "The manifest still lists a document that no longer exists at the source or in the index. Harmless to users, but it clutters your records.",
-    sources: ["PostgreSQL"],
+    sources: ["Manifest"],
   },
 };
 
 export const ISSUE_TYPES = Object.keys(ISSUE_META) as IssueType[];
 export const issueLabel = (t: string): string => ISSUE_META[t as IssueType]?.label ?? t.replace(/_/g, " ");
 export const issueSources = (t: string): DataSource[] => ISSUE_META[t as IssueType]?.sources ?? [];
-export const DATA_SOURCES: DataSource[] = ["Amazon S3", "PostgreSQL", "Qdrant"];
+export const DATA_SOURCES: DataSource[] = ["Amazon S3", "Manifest", "Vector index"];
 
 export const SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
 export const severityRank: Record<Severity, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };

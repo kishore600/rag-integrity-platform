@@ -201,7 +201,7 @@ def test_deletion_verification_section_matches_the_code():
     from ragintegrity.engine import deletions
     from ragintegrity.service import IntegrityService
 
-    section = _section("### 3.13 ", "---\n\n## 4. ")
+    section = _section("### 3.13 ", "### 3.14 ")
     assert not missing((f"`{v}`" for v in deletions.VERDICTS), section), "3.13 does not name every verdict"
     assert deletions.PROBES_PER_DOCUMENT == 3 and "up to 3 of the document's chunks" in section
     assert deletions.TOP_K == 10 and "top 10" in section
@@ -216,7 +216,7 @@ def test_notifications_section_matches_the_code():
     from ragintegrity import mailer, notifications
     from ragintegrity.ledger import Ledger
 
-    section = _section("### 3.14 ", "---\n\n## 4. ")
+    section = _section("### 3.14 ", "### 3.15 ")
     samples = [
         {"status": "completed", "stats": {"findings_total": 0}},
         {"status": "completed", "stats": {"findings_total": 3, "findings_by_severity": {"critical": 1}, "findings_by_type": {"orphan_vector": 1}}},
@@ -241,3 +241,30 @@ def test_notifications_section_matches_the_code():
     smtp = [f"`RAGI_{n.upper()}`" for n in Settings.model_fields if n.startswith("smtp_")]
     assert len(smtp) == 6 and not missing(smtp, section), "3.14 does not name every mail setting"
     assert not missing(("`RAGI_APP_URL`", "`RAGI_ALERT_EMAIL_TO`", "Auto-Submitted"), section)
+
+
+def test_the_optional_manifest_section_matches_the_code():
+    from ragintegrity.engine.reconcile import CHECKS_NEEDING_A_MANIFEST
+
+    section = _section("### 3.15 ", "### 3.16 ")
+    assert not missing(CHECKS_NEEDING_A_MANIFEST, section), "3.15 does not list every check a missing manifest leaves out"
+    for word in ("`missing_embedding`", "`stale_embedding`", "`orphan_vector`", "`partial_index`", "`chunk_index`", "`chunk_total`", "`source_hash`",
+                 "`index_revision`", "`manifest_rows`", "`stats.manifest`", "`untracked_in_manifest`", "checks_not_run"):
+        assert word in section, word
+    assert "80%" in section and "optional" in section.lower()
+
+
+def test_the_pgvector_section_matches_the_code():
+    from ragintegrity.connectors import pgvector
+
+    section = _section("### 3.16 ", "---\n\n## 4. ")
+    assert pgvector.FILTER_BATCH == 5000 and "batches of 5,000" in section
+    assert Settings.model_fields["pgvector_page_size"].default == 1000 and "pages of 1,000" in section and "`RAGI_PGVECTOR_PAGE_SIZE`" in section
+    assert pgvector.STATEMENT_TIMEOUT == "45s" and "45-second statement timeout" in section
+    for distance, operator in pgvector.DISTANCES.items():
+        assert f"`{distance}`" in section and f"`{operator}`" in section, distance
+    defaults = pgvector.build_column_map(None)
+    assert defaults["id"] == "id" and defaults["vector"] == "embedding"
+    for key in (*pgvector.EXTRA_FIELDS, "embedding", "document_id", "chunk_total", "RAGI_INDEX_TYPE"):
+        assert f"`{key}`" in section, key
+    assert not missing(["Qdrant", "pgvector (PostgreSQL)"], section)

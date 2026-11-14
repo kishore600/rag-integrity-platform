@@ -3,10 +3,11 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
 import type { SystemKind, SystemStatus } from "../_settings-form";
 
-const STEPS: { kind: SystemKind; title: string; text: string }[] = [
+const STEPS: { kind: SystemKind; title: string; text: string; optional?: boolean }[] = [
   { kind: "s3", title: "Source", text: "Amazon S3 holds the documents that should be searchable." },
-  { kind: "manifest", title: "Manifest", text: "A PostgreSQL table where your pipeline records what it indexed." },
   { kind: "qdrant", title: "Index", text: "Qdrant holds the vectors that answer searches." },
+  { kind: "pgvector", title: "Index", text: "A PostgreSQL table with a pgvector column holds the vectors that answer searches." },
+  { kind: "manifest", title: "Manifest", text: "Optional. A PostgreSQL table where your pipeline records what it indexed. It adds checks, but audits work without it.", optional: true },
 ];
 
 /** The three promises that make connecting safe to do. Shown while setting up, and again as a reminder afterwards. */
@@ -30,15 +31,16 @@ export function TrustPoints({ className }: { className?: string }) {
   );
 }
 
-/** Three steps with the current one highlighted: shown until all three connections are saved. */
+/** The steps with the current one highlighted: shown until the source and the index are saved. The manifest is optional. */
 export function SetupGuide({ systems }: { systems: SystemStatus[] }) {
-  const current = STEPS.findIndex((s) => !systems.find((x) => x.kind === s.kind)?.configured);
+  const steps = STEPS.filter((s) => systems.some((x) => x.kind === s.kind));
+  const current = steps.findIndex((s) => !s.optional && !systems.find((x) => x.kind === s.kind)?.configured);
   return (
     <Card>
-      <CardHeader title="Connect your three systems" description="RAGGuard needs all three before it can run an audit. Start with the highlighted step." />
+      <CardHeader title="Connect your systems" description="RAGGuard needs your documents (S3) and your vector index before it can run an audit. The manifest is optional: add it for extra checks." />
       <CardBody className="space-y-5">
         <ol className="grid gap-3 md:grid-cols-3">
-          {STEPS.map((s, i) => {
+          {steps.map((s, i) => {
             const done = !!systems.find((x) => x.kind === s.kind)?.configured;
             const isCurrent = i === current;
             return (
@@ -58,6 +60,7 @@ export function SetupGuide({ systems }: { systems: SystemStatus[] }) {
                   </span>
                   <h3 className="text-card text-ink">
                     {s.title}
+                    {s.optional ? <span className="ml-1.5 text-support font-normal text-ink-2">(optional)</span> : null}
                     <span className="sr-only">{done ? " (done)" : isCurrent ? " (current step)" : ""}</span>
                   </h3>
                 </div>

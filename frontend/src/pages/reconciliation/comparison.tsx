@@ -22,7 +22,7 @@ const TONE_DOT: Record<Tone, string> = { neutral: "bg-ink-3", brand: "bg-brand",
 export function differences(s: AuditStats): { tone: Tone; text: string }[] {
   const out: { tone: Tone; text: string }[] = [];
   const { source_documents: src, manifest_rows: man, index_points: idx } = s;
-  if (src !== undefined && man !== undefined) {
+  if (src !== undefined && man !== undefined && s.manifest?.connected !== false) {
     const d = man - src;
     const n = Math.abs(d);
     out.push(
@@ -40,17 +40,18 @@ export function differences(s: AuditStats): { tone: Tone; text: string }[] {
 
 export function ThreeWayCard({ run }: { run: AuditRun }) {
   const s = run.stats;
+  const withManifest = s.manifest?.connected !== false; // the manifest is optional: with none there is nothing to count
   const tiles: Tile[] = [
     { key: "source", label: "Source documents", system: "Amazon S3", icon: HardDrive, value: s.source_documents },
-    { key: "manifest", label: "Manifest rows", system: "PostgreSQL", icon: Database, value: s.manifest_rows },
-    { key: "index", label: "Index vectors", system: "Qdrant", icon: Layers, value: s.index_points },
+    ...(withManifest ? [{ key: "manifest", label: "Manifest rows", system: "PostgreSQL", icon: Database, value: s.manifest_rows }] : []),
+    { key: "index", label: "Index vectors", system: "Vector index", icon: Layers, value: s.index_points },
   ];
   const diffs = differences(s);
 
   return (
     <Card>
       <CardHeader
-        title="Three-way comparison"
+        title={withManifest ? "Three-way comparison" : "Comparison with the index"}
         description="What each system holds, as counted by the latest full audit."
         actions={
           <LinkButton variant="secondary" size="sm" to={links.audit(run.id)}>
@@ -59,7 +60,7 @@ export function ThreeWayCard({ run }: { run: AuditRun }) {
         }
       />
       <CardBody className="space-y-5">
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] md:items-stretch">
+        <div className={cn("grid gap-3 md:items-stretch", withManifest ? "md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)]" : "md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]")}>
           {tiles.map((t, i) => (
             <TileWithArrow key={t.key} tile={t} arrow={i < tiles.length - 1} />
           ))}

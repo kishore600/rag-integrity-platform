@@ -135,6 +135,8 @@ class SetupFacts:
     names: dict[str, str] = field(default_factory=dict)  # field and setting names to quote in messages
     source_only: bool = False
     lookup_mode: bool = False
+    manifest_connected: bool = True  # False: no manifest is connected (it is optional): only S3 and the index are compared
+    index_label: str = "Qdrant"  # what the vector store is called in messages ("Qdrant", "pgvector")
     # S3
     source_error: str | None = None
     source: Unique | None = None  # documents found by listing (items are object keys)
@@ -175,7 +177,10 @@ def collect_setup_facts(source: Any, manifest: Any, index: Any, deadline: float 
                         names: dict[str, str] | None = None, source_only: bool = False, lookup_mode: bool = False,
                         explain: Callable[[BaseException], str] = lambda e: f"{type(e).__name__}: {str(e)[:200]}") -> SetupFacts:
     """Take the bounded, read-only look. A system that cannot be read is recorded as an error, and the rest still run."""
-    f = SetupFacts(default_tenant=default_tenant, names=names or {}, source_only=source_only, lookup_mode=lookup_mode)
+    connected = bool(getattr(manifest, "available", True))
+    f = SetupFacts(default_tenant=default_tenant, names=names or {}, source_only=source_only, lookup_mode=lookup_mode and connected,
+                   manifest_connected=connected, index_label=str(getattr(index, "label", "Qdrant")))
+    lookup_mode = f.lookup_mode  # looking files up through the manifest needs a manifest
     for connector in (source, manifest, index):
         if hasattr(connector, "deadline"):
             connector.deadline = deadline
@@ -183,7 +188,7 @@ def collect_setup_facts(source: Any, manifest: Any, index: Any, deadline: float 
     # ---- the processing manifest
     f.manifest = Unique(lambda r: (r.source_uri or "a row with no source address") + (f" (status: {r.processing_status})" if r.processing_status else ""))
     try:
-        with closing(manifest.documents(None)) as rows:
+        with closing(manifest.documents(None) if connected else iter(())) as rows:
             for r in rows:
                 f.manifest_rows += 1
                 f.manifest.add(r.key, r)
@@ -244,7 +249,8 @@ def collect_setup_facts(source: Any, manifest: Any, index: Any, deadline: float 
         else:  # no sampling support: the first points of a plain scan
             f.index_random = False
             for c in islice(index.scan(None), INDEX_SAMPLE):
-                f.index_rows.append({"document_id": c.document_id, "tenant_id": c.tenant_id})
+                f.index_rows.append({"document_id": c.document_id, "tenant_id": c.tenant_id,
+                                     "has_revision": bool(c.source_hash or c.source_version)})
     except Exception as exc:
         f.index_error = str(exc) if isinstance(exc, AuditTimeout) else explain(exc)
 
@@ -339,7 +345,7 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
     limits: list[str] = []
 
     listing_ok = f.source is not None and f.source_error is None
-    manifest_ok = f.manifest is not None and f.manifest_error is None
+    manifest_ok = f.manifest_connected and f.manifest is not None and f.manifest_error is None
     src_keys: set[DocKey] = set(f.source.items) if listing_ok and f.source is not None else set()
     man_keys: set[DocKey] = set(f.manifest.items) if manifest_ok and f.manifest is not None else set()
     multi_tenant = len({k[0] for k in (*src_keys, *man_keys)}) > 1
@@ -398,7 +404,12 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
             checks.append(_check("source_ids_unique", "One file per document ID", "pass", "Every document ID belongs to exactly one file."))
 
     # ---- 3. the manifest
-    if f.manifest_error:
+    if not f.manifest_connected:
+        checks.append(_check("manifest_rows", "Processing manifest", "na",
+                             "Not connected. It is optional: the audit compares the files in S3 with the vector index directly, using the "
+                             "document ID and the file hash stored on each vector. Connect a manifest to also check what the pipeline claimed "
+                             "against what is indexed."))
+    elif f.manifest_error:
         checks.append(_check("manifest_rows", "Rows in the manifest", "fail", f"Could not read the manifest: {f.manifest_error}",
                              "Fix the manifest connection and the table and column names on the Data Sources page, then run this check again."))
     elif f.manifest_rows == 0 and not f.manifest_empty_ids:
@@ -471,7 +482,7 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
                                  numbers={"matched": man_in_src, "of": len(man_keys)}))
 
     # ---- 4b. lookup mode: do the files the manifest names exist?
-    if f.lookup_mode:
+    if f.lookup_mode and f.manifest_connected:
         if f.manifest_error:
             pass
         elif f.lookup_asked == 0:
@@ -557,6 +568,20 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
         checks.append(_check("index_ids", "Document IDs in Qdrant", status, detail, fix,
                              examples=[_quote(sorted({str(raw) for _, raw in idx_docs})[:EXAMPLES])]))
 
+        # ---- 6b. without a manifest, the hash stored on each vector is the only way to tell that a file changed
+        if not f.manifest_connected and all("has_revision" in r for r in rows):
+            with_rev = sum(1 for r in rows if r["has_revision"])
+            if with_rev / len(rows) >= ALIGNED:
+                checks.append(_check("index_revision", "Vectors carry the file's hash", "pass",
+                                     f"{_frac(with_rev, len(rows))} of the sampled points carry the hash (or version) of the file they came from, "
+                                     "so a changed file can be told from an unchanged one."))
+            else:
+                checks.append(_check("index_revision", "Vectors carry the file's hash", "warn",
+                                     f"Only {_frac(with_rev, len(rows))} of the sampled points carry the hash (or version) of their file. Without a manifest "
+                                     "an audit can find missing and deleted documents, but it cannot tell that a changed file still has old vectors.",
+                                     "Store the file's SHA-256 on every vector when it is indexed (the payload field source_hash), and use the same "
+                                     "hash on the S3 side (the S3 hash mode)."))
+
         # ---- 7. S3 documents against the index
         if f.lookup_index_asked and (listing_ok or f.lookup_mode) and f.lookup_index_error:
             checks.append(_check("source_vs_index", "S3 against Qdrant", "warn",
@@ -584,14 +609,16 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
 
         # ---- 8. the index against S3
         known = src_keys | man_keys | f.lookup_docs
+        where = "S3 or the manifest" if f.manifest_connected else "S3"
         if known and idx_docs:
             in_known = sum(1 for k, _ in idx_docs if k in known)
             out = sorted({k[1] for k, _ in idx_docs if k not in known})
             st = _verdict(in_known, len(idx_docs))
-            detail = f"{_frac(in_known, len(idx_docs))} of the sampled points belong to a document that is in S3 or the manifest."
+            detail = f"{_frac(in_known, len(idx_docs))} of the sampled points belong to a document that is in {where}."
             fix = None
             if st != "pass":
-                detail += " The others belong to documents these two do not know (other sources, or documents that were deleted)."
+                detail += (" The others belong to documents these two do not know (other sources, or documents that were deleted)."
+                           if f.manifest_connected else " The others belong to documents S3 does not have (other sources, or documents that were deleted).")
                 if f.source_only:
                     detail += " Your setting 'Only audit documents found in the source (S3)' is on, so they are ignored."
                     st = "pass"
@@ -601,12 +628,13 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
             if f.index_approx_points:
                 detail += f" (The collection holds about {f.index_approx_points:,} points.)"
             checks.append(_check("index_vs_source", "Qdrant against S3", st, detail, fix,
-                                 examples=[f"not in S3 or the manifest: {_quote(out[:EXAMPLES])}"] if out and st != "pass" or (out and f.source_only) else None,
+                                 examples=[f"not in {where}: {_quote(out[:EXAMPLES])}"] if out and st != "pass" or (out and f.source_only) else None,
                                  numbers={"matched": in_known, "of": len(idx_docs)}))
 
     # ---- verdict
     fails = [c for c in checks if c["status"] == "fail"]
     warns = [c for c in checks if c["status"] == "warn"]
+    systems = "the three systems" if f.manifest_connected else "S3 and the index (no manifest is connected)"
     link = {
         "source_to_manifest": _link(src_in_man, len(src_keys)) if listing_ok and manifest_ok else None,
         "manifest_to_source": _link(man_in_src, len(man_keys)) if listing_ok and manifest_ok else None,
@@ -619,12 +647,12 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
                     f"Start with '{fails[0]['name']}'.")
     elif warns:
         status = "needs_attention"
-        headline = f"Almost ready: the three systems mostly line up, with {len(warns)} thing(s) worth a look."
+        headline = f"Almost ready: {systems} mostly line up, with {len(warns)} thing(s) worth a look."
     else:
         status = "ready"
-        headline = "Ready: the three systems line up, so an audit will compare the right documents."
-    return {
-        "status": status, "headline": headline,
+        headline = f"Ready: {systems} line up, so an audit will compare the right documents."
+    report = {
+        "status": status, "headline": headline, "manifest_connected": f.manifest_connected, "index_label": f.index_label,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "duration_seconds": round(duration_seconds, 1) if duration_seconds is not None else None,
         "checks": checks, "coverage": link,
@@ -632,7 +660,7 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
             "source_files": f.source_objects if not f.lookup_mode else None,
             "source_documents": len(src_keys) if listing_ok else None,
             "source_files_skipped": f.source_ignored,
-            "manifest_rows": f.manifest_rows, "manifest_documents": len(man_keys),
+            "manifest_rows": f.manifest_rows, "manifest_documents": len(man_keys), "manifest_connected": f.manifest_connected,
             "index_points_approx": f.index_approx_points, "index_points_sampled": len(rows),
         },
         "id_types_in_index": dict(kinds),
@@ -644,6 +672,33 @@ def build_setup_report(f: SetupFacts, duration_seconds: float | None = None) -> 
         "limits": limits,
         "next_steps": [c["fix"] for c in (*fails, *warns) if c.get("fix")],
     }
+    return _for_index(report, f.index_label)
+
+
+# how the messages above (written for Qdrant) read for another vector store
+INDEX_WORDS = {
+    "pgvector": (("Qdrant", "pgvector"), ("payload field", "mapped column"), ("payload map", "column map"), ("collection(s)", "table"),
+                 ("keyword index on the document ID field", "database index on the document ID column")),
+}
+
+
+def _for_index(value: Any, label: str) -> Any:
+    pairs = INDEX_WORDS.get(label.lower())
+    if not pairs:
+        return value
+
+    def swap(v: Any) -> Any:
+        if isinstance(v, str):
+            for old, new in pairs:
+                v = v.replace(old, new)
+            return v
+        if isinstance(v, list):
+            return [swap(i) for i in v]
+        if isinstance(v, dict):
+            return {k: (swap(i) if k not in ("id", "status", "numbers") else i) for k, i in v.items()}
+        return v
+
+    return swap(value)
 
 
 def _link(matched: int, total: int) -> dict[str, Any]:

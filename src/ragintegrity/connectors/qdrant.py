@@ -221,7 +221,8 @@ class QdrantIndex:
 
         names = self.collections()
         paths = {"document_id": self.pmap["document_id"], "tenant_id": self.pmap["tenant_id"]}
-        include = sorted({self._top_level(p) for p in paths.values()})
+        revision = (self.pmap["source_hash"], self.pmap["source_version"])  # what tells a changed file from an unchanged one
+        include = sorted({self._top_level(p) for p in (*paths.values(), *revision)})
         per = max(1, limit // max(1, len(names)))
         rows: list[dict[str, Any]] = []
         approx = 0
@@ -241,7 +242,8 @@ class QdrantIndex:
             for p in points:
                 pl = p.payload or {}
                 rows.append({"collection": coll, "point_id": str(p.id),
-                             "document_id": _dig(pl, paths["document_id"]), "tenant_id": _dig(pl, paths["tenant_id"])})
+                             "document_id": _dig(pl, paths["document_id"]), "tenant_id": _dig(pl, paths["tenant_id"]),
+                             "has_revision": any(_dig(pl, r) not in (None, "") for r in revision)})
         return {"rows": rows, "random": random_sample, "approx_points": approx, "collections": names}
 
     # --------------------------------------------------------------------------------- probe

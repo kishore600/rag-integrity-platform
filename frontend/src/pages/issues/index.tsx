@@ -35,7 +35,7 @@ export default function IssuesPage() {
           <EmptyState
             icon={Database}
             title="Connect your data sources first"
-            description="RAGGuard needs your S3 source, manifest database and Qdrant index before it can find integrity issues."
+            description="RAGGuard needs your S3 source and your vector index before it can find integrity issues."
             action={<LinkButton variant="primary" to="/data-sources">Go to Data Sources</LinkButton>}
           />
         </Card>

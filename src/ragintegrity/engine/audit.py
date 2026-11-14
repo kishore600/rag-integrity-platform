@@ -50,6 +50,7 @@ from .reconcile import (
     ReconcileResult,
     collection_checks,
     derive_required_fields,
+    manifest_block,
     reconcile,
     refresh_after_escalation,
 )
@@ -235,6 +236,12 @@ class Collected:
     deletion_keys: set[DocKey] = field(default_factory=set)  # source-only: documents gone from the source that are looked for in the index
     scan_keys: list[DocKey] | None = None  # source-only: the documents whose vectors are read (sorted), when the scan was left to the caller
     scan_tenant: str | None = None
+    has_manifest: bool = True  # False: no manifest is connected (the manifest checks are left out, see reconcile.manifest_block)
+
+
+def _reading_index(index: Any) -> str:
+    """The progress step that names the vector store ("Qdrant", "pgvector"): the connector says what it is called."""
+    return f"reading the vector index ({getattr(index, 'label', 'Qdrant')})"
 
 
 def _start_progress(index: Any, opts: AuditOptions, t0: float, stats: ScanStats) -> None:
@@ -244,7 +251,7 @@ def _start_progress(index: Any, opts: AuditOptions, t0: float, stats: ScanStats)
 
     def report(s: ScanStats) -> None:
         pct = round(min(99.9, 100.0 * s.points / s.estimated_total), 1) if s.estimated_total else None
-        _note(opts, t0, "reading the vector index (Qdrant)", points_scanned=s.points, estimated_total=s.estimated_total,
+        _note(opts, t0, _reading_index(index), points_scanned=s.points, estimated_total=s.estimated_total,
               percent=pct, retries=s.retries, recovered_errors=s.recovered_errors)
 
     index.on_progress = report
@@ -262,9 +269,10 @@ def collect(
         if hasattr(connector, "deadline"):
             connector.deadline = dl
     lookup = getattr(source, "lookup", None)
+    has_manifest = bool(getattr(manifest, "available", True))
     src_u: Unique = Unique(lambda d: d.source_uri)
     man_u: Unique = Unique(lambda r: (r.source_uri or "a manifest row") + (f" (status: {r.processing_status})" if r.processing_status else ""))
-    if opts.lookup_from_manifest and lookup is not None:
+    if opts.lookup_from_manifest and lookup is not None and has_manifest:
         # large buckets: read exactly the files the manifest names (one HEAD each) instead of listing everything.
         # This also keeps "re-audit one document" fast: the manifest is queried for just that document.
         _note(opts, t0, "reading the processing manifest")
@@ -311,19 +319,19 @@ def collect(
     agg = IndexAggregator(ctx)
     _start_progress(index, opts, t0, stats)
     if scan and not scan_nothing:
-        _note(opts, t0, "reading the vector index (Qdrant)", source_documents=len(src), manifest_rows=len(man))
+        _note(opts, t0, _reading_index(index), source_documents=len(src), manifest_rows=len(man))
         if hasattr(index, "estimated_points"):
             index.estimated_points()
         agg.add_all(_count(stats, _guard(index.scan(scan_scope, with_vectors=opts.check_vectors), dl, "the vector index")))
     warnings = id_warnings(src_u, man_u, getattr(manifest, "empty_ids", 0) or 0, opts.names)
     return Collected(src, man, chunk_rows, agg, required, started=t0, warnings=warnings, deletion_keys=deletion_keys,
-                     scan_keys=scan_keys, scan_tenant=scope.tenant if scope else None)
+                     scan_keys=scan_keys, scan_tenant=scope.tenant if scope else None, has_manifest=has_manifest)
 
 
-def _config(index: IndexConnector, opts: AuditOptions, required: list[str]) -> ReconcileConfig:
+def _config(index: IndexConnector, opts: AuditOptions, required: list[str], has_manifest: bool = True) -> ReconcileConfig:
     return ReconcileConfig(target=opts.target, grace_minutes=opts.grace_minutes,
                            now=opts.now or datetime.now(timezone.utc), vector_sizes=index.vector_sizes(),
-                           required_fields=required)
+                           required_fields=required, has_manifest=has_manifest)
 
 
 def _deletion_summary(c: Collected, findings: list[Finding]) -> dict[str, Any]:
@@ -352,8 +360,9 @@ def run_reconciliation(
         return _run_sliced(index, opts, scope, c, stats)
 
     _note(opts, c.started, "comparing the three lists", source_documents=len(c.source), manifest_rows=len(c.manifest))
-    result = reconcile(c.source, c.manifest, c.chunk_rows, c.agg, _config(index, opts, c.required), scope)
+    result = reconcile(c.source, c.manifest, c.chunk_rows, c.agg, _config(index, opts, c.required, c.has_manifest), scope)
     result.stats["required_payload_fields"] = c.required
+    result.stats["manifest"] = manifest_block(c.has_manifest)
     result.stats["warnings"] = c.warnings
     if opts.source_only:
         result.stats["source_documents_only"] = True
@@ -378,7 +387,7 @@ def _run_sliced(index: IndexConnector, opts: AuditOptions, scope: Scope | None, 
     slices = [remaining[i:i + size] for i in range(0, len(remaining), size)]
     total_docs = len(keys)
     done_docs = total_docs - len(remaining)
-    cfg = _config(index, opts, c.required)
+    cfg = _config(index, opts, c.required, c.has_manifest)
     totals = _Totals(opts.carry)
     findings: list[Finding] = []
     summaries: list[DocSummary] = []
@@ -416,7 +425,7 @@ def _run_sliced(index: IndexConnector, opts: AuditOptions, scope: Scope | None, 
     result = ReconcileResult(findings=findings, summaries=summaries)
     result.stats = {"source_documents": len(c.source), "manifest_rows": len(c.manifest), "index_points": c.agg.points_seen,
                     **totals.stats(), "required_payload_fields": c.required, "warnings": c.warnings, "source_documents_only": True,
-                    "deletion_check": _deletion_summary(c, findings)}
+                    "deletion_check": _deletion_summary(c, findings), "manifest": manifest_block(c.has_manifest)}
     if probes_done:
         result.stats["retrieval_probes"] = probes_done
 
@@ -455,7 +464,7 @@ def inspect_document(
     key = (tenant, document_id)
     scope = Scope(keys=frozenset({key}))
     c = collect(source, manifest, index, opts, scope)
-    result = reconcile(c.source, c.manifest, c.chunk_rows, c.agg, _config(index, opts, c.required), scope)
+    result = reconcile(c.source, c.manifest, c.chunk_rows, c.agg, _config(index, opts, c.required, c.has_manifest), scope)
     s, m, st = c.source.get(key), c.manifest.get(key), c.agg.states.get(key)
 
     chunks: list[dict[str, Any]] = []
@@ -466,7 +475,7 @@ def inspect_document(
         chunks.sort(key=lambda r: (r["class"], r["chunk_index"] if r["chunk_index"] is not None else -1, r["chunk_id"]))
     expected = sorted((c.chunk_rows or {}).get(key, {}).values(), key=lambda r: (r.chunk_index is None, r.chunk_index))
     return {
-        "tenant_id": tenant, "document_id": document_id,
+        "tenant_id": tenant, "document_id": document_id, "manifest_connected": c.has_manifest,
         "version_check": version_check(s, m, st, (c.chunk_rows or {}).get(key), opts.target),
         "source": asdict(s) if s else None,
         "manifest": ({**{k: v for k, v in asdict(m).items() if k != "fingerprint"}, "fingerprint": m.fingerprint.to_dict()}

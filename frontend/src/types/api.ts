@@ -73,6 +73,8 @@ export interface AuditStats {
   /** Absent on runs recorded before ID warnings existed: treat as none. */
   warnings?: RunWarning[];
   scan?: ScanBlock;
+  /** Whether a manifest took part in this audit, and which checks were left out when it did not. */
+  manifest?: { connected: boolean; checks_not_run?: string[] };
   deletion_check?: { documents_checked: number; with_remaining_vectors: number; verified_gone: number };
   source_documents?: number;
   manifest_rows?: number;
@@ -123,6 +125,9 @@ export interface ResumableAudit {
 export interface Overview {
   mode: string;
   resumable_audit?: ResumableAudit | null;
+  /** False when no manifest is connected (it is optional). */
+  manifest_connected?: boolean;
+  index_type?: "qdrant" | "pgvector";
   demo: boolean;
   documents: { total: number; by_status: Record<string, number>; health_score: number | null; tenants: TenantHealth[] };
   issues: { open: number; by_severity: Record<Severity, number>; by_type: Record<string, number>; resolved: number; ignored: number };
@@ -227,6 +232,7 @@ export interface LiveSnapshot {
   tenant_id: string;
   document_id: string;
   status: string;
+  manifest_connected?: boolean;
   source: { source_uri: string; source_version: string | null; source_hash: string | null; size_bytes: number; last_modified: string | null; hash_reliable: boolean } | null;
   manifest: {
     processing_status: string | null;
@@ -344,7 +350,7 @@ export interface BlastRadius {
 }
 
 // ---- settings (connections) --------------------------------------------------------------------------
-export type SettingsKind = "s3" | "manifest" | "qdrant" | "pipeline" | "repair" | "alerts" | "policy";
+export type SettingsKind = "s3" | "manifest" | "qdrant" | "index" | "pgvector" | "pipeline" | "repair" | "alerts" | "policy";
 export type FieldType = "str" | "int" | "float" | "bool" | "enum" | "url" | "pgurl" | "json" | "ident" | "regex" | "csv";
 
 export interface SettingsField {
@@ -387,6 +393,8 @@ export interface SettingsView {
   kinds: SettingsGroup[];
   ready: boolean;
   missing: SettingsKind[];
+  /** Where this workspace's vectors are: Qdrant (the default) or pgvector. */
+  index_type?: "qdrant" | "pgvector";
 }
 
 export interface ApiKey {
@@ -433,6 +441,15 @@ export interface AppNotification {
 export interface NotificationList {
   items: AppNotification[];
   unread: number;
+}
+
+/** The answer of the Send test email button (POST /api/alerts/test-email). `reason` says in words why nothing was sent. */
+export interface TestEmailResult {
+  ok: boolean;
+  sent: number;
+  to: string[];
+  reason?: string;
+  rate_limited?: boolean;
 }
 
 /** The answer of the deletion check (GUIDE.md 3.13): only the numbers the notification button reports. */
@@ -617,6 +634,10 @@ export interface CoverageLink {
 export interface SetupCheckResult {
   status: SetupStatus;
   headline: string;
+  /** False when no manifest is connected: only S3 and the index were compared. */
+  manifest_connected?: boolean;
+  /** What the vector store is called in the messages ("Qdrant" or "pgvector"). */
+  index_label?: string;
   checks: SetupCheckItem[];
   coverage: { source_to_manifest?: CoverageLink | null; manifest_to_source?: CoverageLink | null; source_to_index?: CoverageLink | null };
   counts: {
@@ -627,6 +648,7 @@ export interface SetupCheckResult {
     manifest_documents?: number | null;
     index_points_approx?: number | null;
     index_points_sampled?: number | null;
+    manifest_connected?: boolean;
   };
   ids_at_a_glance: { source?: string[]; manifest?: string[]; index?: string[] };
   id_types_in_index: Partial<Record<"integer" | "digits" | "text" | "decimal" | "other", number>>;

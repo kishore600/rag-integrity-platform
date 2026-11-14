@@ -91,6 +91,8 @@ class IntegrityService:
         self._ready = False
         self._ready_lock = threading.Lock()
         self._lock = threading.Lock()  # one audit at a time per process (the database enforces it across processes)
+        self._lock_test_mail = threading.Lock()
+        self._test_mail_times: list[float] = []
         self.repairs = RepairManager(self)
 
     # ------------------------------------------------------------------ connectors
@@ -108,7 +110,7 @@ class IntegrityService:
         return AuditOptions(
             target=s.target_fingerprint(), default_tenant=s.default_tenant, required_fields=s.required_fields,
             known_tenants=self.ledger.known_tenants(), grace_minutes=s.grace_minutes,
-            check_vectors=s.qdrant_check_vectors or s.is_demo, source_only=s.source_documents_only,
+            check_vectors=s.qdrant_check_vectors or s.pgvector_check_vectors or s.is_demo, source_only=s.source_documents_only,
             lookup_from_manifest=s.s3_lookup_from_manifest, names=self.id_names(), slice_size=max(1, s.audit_slice_documents),
             probe=s.probe_retrieval if probe is None else probe, probe_max=s.probe_max, probe_top_k=s.probe_top_k,
             deadline=(time.monotonic() + limit) if limit else None,
@@ -118,11 +120,13 @@ class IntegrityService:
     def id_names(self) -> dict[str, str]:
         """The setting names a message about identifiers can quote (the payload field, the manifest column, the key pattern)."""
         from .connectors.payload import build_payload_map
+        from .connectors.pgvector import build_column_map
 
         s = self.settings
         names = {"payload_document_id": "document_id", "manifest_document_id": "document_id", "key_pattern": s.s3_key_pattern}
         try:  # a setting that cannot be read is reported by the connector that needs it, not by a message about names
-            names["payload_document_id"] = build_payload_map(s.payload_map)["document_id"]
+            index_map = build_column_map(s.pgvector_columns) if s.uses_pgvector else build_payload_map(s.payload_map)
+            names["payload_document_id"] = index_map["document_id"]
             names["manifest_document_id"] = s.manifest_columns.get("document_id", "document_id")
         except (ValueError, ConnectorError):
             pass
@@ -215,6 +219,17 @@ class IntegrityService:
             if up is not None:
                 raise up from exc
             raise
+
+    def send_test_email(self) -> dict[str, Any]:
+        """The Send test email button: one message to the people an alert would go to. Limited per process; the API adds a per-workspace limit."""
+        now = time.monotonic()
+        with self._lock_test_mail:
+            self._test_mail_times = [t for t in self._test_mail_times if now - t < notifications.TEST_WINDOW_SECONDS]
+            if len(self._test_mail_times) >= notifications.TEST_EMAILS:
+                return {"ok": False, "sent": 0, "to": [], "rate_limited": True,
+                        "reason": f"Too many test emails: at most {notifications.TEST_EMAILS} every 10 minutes. Try again in a few minutes."}
+            self._test_mail_times.append(now)
+        return notifications.send_test_email(self.settings, self.ledger)
 
     def _announce(self, run_id: str, kind: str, trigger: str, status: str, stats: dict[str, Any], diff: RunDiff,
                   error: str | None = None) -> dict[str, Any]:
@@ -336,6 +351,9 @@ class IntegrityService:
             "cleanup_policy": self.settings.cleanup_policy,
             "repair_webhook_configured": bool(self.settings.repair_webhook_url or self.settings.is_demo),
             "resumable_audit": self._resumable_summary(),
+            # the manifest is optional: the screens say "not connected" instead of calling its absence a fault
+            "manifest_connected": bool(self.settings.manifest_database_url) or self.settings.is_demo,
+            "index_type": "pgvector" if self.settings.uses_pgvector else "qdrant",
         }
 
     def _resumable_summary(self) -> dict[str, Any] | None:
@@ -357,18 +375,23 @@ class IntegrityService:
             out += [c.source.health(), c.manifest.health(), c.index.health()]
         except Exception:
             # building all three failed (misconfiguration): construct them one by one to say *which* is wrong
+            from .connectors.nomanifest import NoManifest
+            from .connectors.pgvector import PgVectorIndex
             from .connectors.postgres import PostgresManifest
             from .connectors.qdrant import QdrantIndex
             from .connectors.s3 import S3Source
 
-            for name, kind, key, factory in (("S3 source", "s3", "s3", S3Source), ("Manifest (Postgres)", "postgres", "manifest", PostgresManifest),
-                                             ("Vector index (Qdrant)", "qdrant", "qdrant", QdrantIndex)):
+            index = (("Vector index (pgvector)", "pgvector", "pgvector", PgVectorIndex) if self.settings.uses_pgvector
+                     else ("Vector index (Qdrant)", "qdrant", "qdrant", QdrantIndex))
+            manifest = (("Manifest (Postgres)", "postgres", "manifest", PostgresManifest) if self.settings.manifest_database_url
+                        else ("Processing manifest", "manifest", "manifest", lambda _s: NoManifest()))
+            for name, kind, key, factory in (("S3 source", "s3", "s3", S3Source), manifest, index):
                 try:
                     if self._guard is not None:
                         self._guard(self.settings, key)  # app mode: refuse private/loopback targets before connecting
                     out.append(factory(self.settings).health())
                 except Exception as exc:
-                    out.append(ConnectionStatus(name, kind, False, f"{type(exc).__name__}: {str(exc)[:200]}"))
+                    out.append(ConnectionStatus(name, kind, False, friendly_error(exc) if as_upstream(exc) else f"{type(exc).__name__}: {str(exc)[:200]}"))
         return [asdict(s) for s in out]
 
     def inspect(self, tenant: str, document_id: str) -> dict[str, Any]:

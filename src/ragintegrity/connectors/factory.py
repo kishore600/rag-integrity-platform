@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from ..config import Settings
 from ..demo.world import DemoIndex, DemoManifest, DemoSource, DemoWorld
-from .base import IndexConnector, ManifestConnector, SourceConnector
+from .base import ConnectorError, IndexConnector, ManifestConnector, SourceConnector
 
 
 @dataclass
@@ -22,8 +22,15 @@ def build_connectors(settings: Settings, world: DemoWorld | None = None) -> Conn
         world = world or DemoWorld()
         return Connectors(DemoSource(world), DemoManifest(world), DemoIndex(world), world)
 
+    from .nomanifest import NoManifest
+    from .pgvector import PgVectorIndex
     from .postgres import PostgresManifest
     from .qdrant import QdrantIndex
     from .s3 import S3Source
 
-    return Connectors(S3Source(settings), PostgresManifest(settings), QdrantIndex(settings))
+    # the manifest is optional: without a manifest database the audit compares the source with the index directly
+    manifest = PostgresManifest(settings) if settings.manifest_database_url else NoManifest()
+    if (settings.index_type or "qdrant").lower() not in ("qdrant", "pgvector"):
+        raise ConnectorError(f"RAGI_INDEX_TYPE must be qdrant or pgvector, not {settings.index_type!r}")
+    index = PgVectorIndex(settings) if settings.uses_pgvector else QdrantIndex(settings)
+    return Connectors(S3Source(settings), manifest, index)

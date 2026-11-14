@@ -31,7 +31,7 @@ const ITEM: Record<SetupCheckStatus, { label: string; tone: Tone; icon: LucideIc
 const COVERAGE: { key: keyof SetupCheckResult["coverage"]; label: string; hint: string }[] = [
   { key: "source_to_manifest", label: "S3 documents found in the manifest", hint: "have a manifest row with the same ID" },
   { key: "manifest_to_source", label: "Manifest rows with a file in S3", hint: "have a file with the same ID" },
-  { key: "source_to_index", label: "S3 documents found in Qdrant", hint: "have pieces in Qdrant under the same ID" },
+  { key: "source_to_index", label: "S3 documents found in the index", hint: "have pieces in the index under the same ID" },
 ];
 
 // "Pass" starts at 80% and "fail" below 20% (GUIDE.md section 3.10); colour the tiles the same way.
@@ -112,16 +112,16 @@ function IdColumn({ title, ids, note }: { title: string; ids: string[] | undefin
   );
 }
 
-function whatWasRead(c: SetupCheckResult["counts"]): string[] {
+function whatWasRead(c: SetupCheckResult["counts"], label = "Qdrant"): string[] {
   const out: string[] = [];
   if (c.source_documents != null) {
     const files = c.source_files != null ? ` from ${formatNumber(c.source_files)} files${c.source_files_skipped ? ` (${formatNumber(c.source_files_skipped)} skipped)` : ""}` : "";
     out.push(`S3: ${formatNumber(c.source_documents)} documents${files}.`);
   }
-  if (c.manifest_rows != null) out.push(`Manifest: ${formatNumber(c.manifest_rows)} rows for ${formatNumber(c.manifest_documents ?? 0)} documents.`);
+  if (c.manifest_rows != null && c.manifest_connected !== false) out.push(`Manifest: ${formatNumber(c.manifest_rows)} rows for ${formatNumber(c.manifest_documents ?? 0)} documents.`);
   if (c.index_points_sampled != null && c.index_points_sampled > 0) {
     const size = c.index_points_approx != null ? `, out of about ${formatNumber(c.index_points_approx)}` : "";
-    out.push(`Qdrant: ${formatNumber(c.index_points_sampled)} points looked at${size}.`);
+    out.push(`${label}: ${formatNumber(c.index_points_sampled)} ${label === "pgvector" ? "rows" : "points"} looked at${size}.`);
   }
   return out;
 }
@@ -131,8 +131,11 @@ function Result({ r }: { r: SetupCheckResult }) {
   const types = Object.entries(r.id_types_in_index ?? {}).filter(([, n]) => (n ?? 0) > 0);
   const glance = r.ids_at_a_glance ?? {};
   const showGlance = (glance.source?.length ?? 0) + (glance.manifest?.length ?? 0) + (glance.index?.length ?? 0) > 0;
-  const showCoverage = COVERAGE.some((c) => r.coverage?.[c.key]);
-  const read = whatWasRead(r.counts ?? {});
+  const withManifest = r.manifest_connected !== false;
+  const tiles = COVERAGE.filter((c) => withManifest || !c.key.includes("manifest")); // no manifest: its two tiles have nothing to measure
+  const showCoverage = tiles.some((c) => r.coverage?.[c.key]);
+  const indexLabel = r.index_label ?? "Qdrant";
+  const read = whatWasRead({ ...(r.counts ?? {}), manifest_connected: r.manifest_connected }, indexLabel);
   const nextSteps = r.next_steps ?? [];
   const checks = r.checks ?? [];
   const limits = r.limits ?? [];
@@ -148,7 +151,7 @@ function Result({ r }: { r: SetupCheckResult }) {
 
       {showCoverage ? (
         <div className="grid gap-4 sm:grid-cols-3">
-          {COVERAGE.map((c) => {
+          {tiles.map((c) => {
             const link = r.coverage?.[c.key];
             return (
               <KpiCard
@@ -197,12 +200,12 @@ function Result({ r }: { r: SetupCheckResult }) {
       {showGlance ? (
         <section>
           <h3 className="text-card text-ink">IDs at a glance</h3>
-          <p className="mb-3 mt-0.5 text-support text-ink-2">A few real document IDs from each system. Compare them by eye: the same document should have the same ID in all three.</p>
-          <div className="grid gap-5 sm:grid-cols-3">
+          <p className="mb-3 mt-0.5 text-support text-ink-2">A few real document IDs from each system. Compare them by eye: the same document should have the same ID in {withManifest ? "all three" : "both"}.</p>
+          <div className={cn("grid gap-5", withManifest ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
             <IdColumn title="S3" ids={glance.source} />
-            <IdColumn title="Manifest" ids={glance.manifest} />
+            {withManifest ? <IdColumn title="Manifest" ids={glance.manifest} /> : null}
             <IdColumn
-              title="Qdrant"
+              title={indexLabel}
               ids={glance.index}
               note={types.length > 0 ? `Stored as: ${types.map(([k, n]) => `${TYPE_LABEL[k] ?? k} (${formatNumber(n ?? 0)})`).join(", ")}.` : undefined}
             />
@@ -249,7 +252,7 @@ export function SetupCheckCard() {
     <Card id={SETUP_CHECK_ID} className="scroll-mt-6">
       <CardHeader
         title="Setup check"
-        description="Do S3, the manifest and Qdrant call the same documents by the same ID? Run this before you trust an audit. It only reads, and it saves nothing."
+        description="Do S3 and your vector index (and the manifest, if you connected one) call the same documents by the same ID? Run this before you trust an audit. It only reads, and it saves nothing."
         actions={
           <Button variant={check.data ? "secondary" : "primary"} onClick={() => check.mutate()} loading={check.isPending}>
             {check.isPending ? null : <ScanSearch className="h-4 w-4" aria-hidden />}
@@ -260,7 +263,7 @@ export function SetupCheckCard() {
       <CardBody>
         {check.isPending ? (
           <div className="space-y-3" role="status" aria-busy>
-            <p className="text-body text-ink-2">Reading your three systems. This takes seconds on a small system and up to two minutes on a large one. You can stay on this page.</p>
+            <p className="text-body text-ink-2">Reading your systems. This takes seconds on a small system and up to two minutes on a large one. You can stay on this page.</p>
             <Skeleton className="h-12" />
             <Skeleton className="h-24" />
           </div>
@@ -272,7 +275,7 @@ export function SetupCheckCard() {
           <p className="max-w-3xl text-body text-ink-2">
             An audit matches documents by their ID, so it is only as good as the ID. If a file is called <span className="font-mono text-support text-ink">2329961.pdf</span> but the manifest says{" "}
             <span className="font-mono text-support text-ink">bill-2329961</span>, every document looks missing. Press <span className="font-medium text-ink">Check setup</span> to see, in plain words, whether
-            the three systems line up.
+            your systems line up.
           </p>
         )}
       </CardBody>

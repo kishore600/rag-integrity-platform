@@ -81,12 +81,13 @@ export const ConfigBadge = ({ configured }: { configured: boolean }) => (
   <Badge tone={configured ? "success" : "neutral"} dot>{configured ? "Configured" : "Not configured"}</Badge>
 );
 
-export type SystemState = "connected" | "error" | "not_connected" | "checking" | "unknown";
+export type SystemState = "connected" | "error" | "not_connected" | "optional" | "checking" | "unknown";
 
 const STATE_BADGE: Record<SystemState, { tone: "success" | "critical" | "neutral" | "info" | "warning"; label: string }> = {
   connected: { tone: "success", label: "Connected" },
   error: { tone: "critical", label: "Error" },
   not_connected: { tone: "neutral", label: "Not connected" },
+  optional: { tone: "neutral", label: "Optional" },
   checking: { tone: "info", label: "Checking" },
   unknown: { tone: "warning", label: "Status unavailable" },
 };

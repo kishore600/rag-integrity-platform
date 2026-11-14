@@ -1,4 +1,8 @@
+import { CircleAlert, CircleCheck, Mail } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { errorMessage } from "@/lib/api";
+import { useSendTestEmail } from "@/hooks/queries";
 import { Mono, PageHeader } from "@/components/shared/page";
 import { NotAvailable, Skeleton } from "@/components/shared/states";
 import { CodeBlock, ConfigBadge, EnvNote, QueryGate, SettingsForm, useSystems } from "../_settings-form";
@@ -12,6 +16,42 @@ const PAYLOAD_SHAPE = `{
     { "id": "...", "type": "...", "severity": "...", "tenant_id": "...", "document_id": "...", "title": "..." }
   ]
 }`;
+
+/** Sends one real message through the operator's mail account, so setup can be checked without waiting for an audit. */
+function TestEmailCard() {
+  const send = useSendTestEmail();
+  const r = send.data;
+  return (
+    <Card>
+      <CardHeader title="Send a test email" description="Checks that the mail account works, without waiting for an audit." />
+      <CardBody className="space-y-3">
+        <p className="text-body text-ink-2">Sends one short message to the address you sign in with. It changes nothing, and you can send at most five every ten minutes.</p>
+        <Button variant="secondary" loading={send.isPending} onClick={() => send.mutate()}>
+          <Mail className="h-4 w-4" aria-hidden /> Send test email
+        </Button>
+        <div aria-live="polite">
+          {r?.ok ? (
+            <p className="flex items-start gap-2 text-body text-ink" role="status">
+              <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
+              <span className="min-w-0 break-words">Sent to {r.to.join(", ")}. Check your inbox, and the spam folder if it is not there within a minute.</span>
+            </p>
+          ) : r ? (
+            <p className="flex items-start gap-2 text-body text-ink" role="alert">
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-critical" aria-hidden />
+              <span className="min-w-0 break-words">Not sent. {r.reason ?? "The mail server did not accept it."}</span>
+            </p>
+          ) : null}
+          {send.isError ? (
+            <p className="flex items-start gap-2 text-body text-ink" role="alert">
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-critical" aria-hidden />
+              <span className="min-w-0 break-words">Not sent. {errorMessage(send.error)}</span>
+            </p>
+          ) : null}
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
 
 function HowAlertsWork() {
   const items: { title: string; body: React.ReactNode }[] = [
@@ -39,7 +79,7 @@ function HowAlertsWork() {
     { title: "When nothing is sent", body: "If no webhook is saved, or no issue qualifies, nothing is sent to it. An email needs the operator's mail server to be set up; if it is not, or email is off, the reason is recorded on the run. At most 12 emails an hour are sent per workspace." },
   ];
   return (
-    <Card>
+    <Card className="min-w-0">
       <CardHeader title="How alerts work" />
       <CardBody className="space-y-4">
         <ol className="space-y-3">
@@ -68,6 +108,7 @@ export default function AlertsPage() {
       <PageHeader title="Alerts" description="Get told when an audit finds something new." />
       <div className="space-y-6">
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+          <div className="min-w-0 space-y-6">
           {appMode ? (
             <QueryGate query={settings} skeleton={<Skeleton className="h-80" />}>
               {() =>
@@ -99,6 +140,8 @@ export default function AlertsPage() {
               </CardBody>
             </Card>
           )}
+          <TestEmailCard />
+          </div>
           <HowAlertsWork />
         </div>
 

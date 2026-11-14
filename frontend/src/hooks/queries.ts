@@ -32,6 +32,7 @@ import type {
   SettingsKind,
   SettingsView,
   SetupCheckResult,
+  TestEmailResult,
   TestResult,
 } from "@/types/api";
 
@@ -64,6 +65,9 @@ export const useOverview = (enabled = true) =>
     // while an audit is running, follow it; otherwise the numbers only change when the user acts
     refetchInterval: (q) => (q.state.data?.audit_running ? 3000 : false),
   });
+
+/** False when no manifest is connected (it is optional), so a screen can say "not connected" instead of showing a row as missing. */
+export const useManifestConnected = (): boolean => useOverview(true).data?.manifest_connected !== false;
 
 export const useConnections = (enabled = true) =>
   useQuery({ queryKey: qk.connections, queryFn: () => get<ConnectionStatus[]>("/api/connections"), enabled, retry: noRetryOnClientError, staleTime: 30_000 });
@@ -117,6 +121,9 @@ export function useDeletionCheck() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (_: void) => post<DeletionCheckResult>("/api/deletion-check", {}), onSettled: () => invalidateData(qc) });
 }
+
+/** Sends one message to the people an alert goes to. It changes nothing in the ledger, so it invalidates nothing. */
+export const useSendTestEmail = () => useMutation({ mutationFn: (_: void) => post<TestEmailResult>("/api/alerts/test-email") });
 
 // ---- issues ------------------------------------------------------------------------------------------------
 export interface IssueFilters {
