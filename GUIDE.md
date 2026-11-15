@@ -563,13 +563,15 @@ and the next stretch is queued, so the next worker carries on. A stretch that ma
 queued again: the audit stays `partial` and `resumable_audit` shows it, for a person to resume.
 
 **What people see.** `GET /api/overview` has `audit_progress`: `state` is `working` ("Checking 12,400 of 98,000 documents (12.7%)"), `queued` (paused at a checkpoint,
-waiting for the next stretch), `waiting_for_worker` (nobody picked it up for 90 seconds: the message says how to start one) or `silent` (the worker has not
+waiting for the next stretch), `waiting_for_worker` (nobody picked it up for 90 seconds: the dashboard then runs it from the open page, and the message says how to start a real worker) or `silent` (the worker has not
 reported for 90 seconds). The Overview and Reconciliation pages show it, and **Run audit** stays disabled while an audit is queued. `audit_queue` says whether the
 queue is on. A queued audit is not part of the audit history until it has run.
 
 **Limits.** Only whole-corpus audits are queued. Whatever 3.12 says does not resume (the setting off, so the whole index is one pass) does not resume here either:
 a worker runs it in one go with no time limit, and a crash starts it again. Each stretch starts by listing the source and the manifest again. A queued audit
-does nothing until a worker or a step call comes: that is what `waiting_for_worker` is for. See `docs/background-worker.md` for set-up recipes.
+does nothing until a worker or a step call comes, so it never waits for nobody: after 90 seconds (`waiting_for_worker`) the dashboard calls `POST /api/worker/step`
+itself, again and again, for as long as the page is open (a real worker is not in its way: the first to claim the audit gets it). Close the page and it waits
+again until a worker, a step call or a page picks it up. See `docs/background-worker.md` for set-up recipes.
 
 ---
 

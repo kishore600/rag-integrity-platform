@@ -174,6 +174,70 @@ def test_nobody_picking_the_audit_up_is_said_out_loud(tmp_path):
     svc.ledger._edit_stats(run_id, lambda s: s.update(queued_at=iso(utcnow() - timedelta(minutes=12))), statuses=("queued",))
     p = svc.audit_progress()
     assert p["state"] == "waiting_for_worker" and "ragi worker" in p["message"] and "/api/worker/step" in p["message"]
+    assert "dashboard runs it" in p["message"]  # the page is the worker of last resort, and says so
+
+
+def drive_like_the_dashboard(client):
+    """The loop in frontend/src/hooks/use-queue-driver.ts: step again while a stretch stops part-way and queues the next one."""
+    answers = []
+    for _ in range(20):
+        out = client.post("/api/worker/step").json()
+        answers.append(out)
+        if not (out["status"] == "partial" and out.get("next")):
+            break
+    return answers
+
+
+def test_an_audit_nobody_picked_up_is_finished_by_a_page_that_asks_for_steps(tmp_path):
+    expected, _ = clean_ledger(tmp_path)
+    svc = service(tmp_path, PointIndex(world_points(), fail={1: (2, TimeoutError("timed out"))}), audit_queue=True)
+    client = TestClient(create_app(service=svc))
+    run_id = client.post("/api/audits", json={"probe": False}).json()["run_id"]
+    svc.ledger._edit_stats(run_id, lambda s: s.update(queued_at=iso(utcnow() - timedelta(minutes=12))), statuses=("queued",))
+    assert client.get("/api/overview").json()["audit_progress"]["state"] == "waiting_for_worker"  # this is what makes the page start
+    answers = drive_like_the_dashboard(client)
+    assert [a["status"] for a in answers] == ["partial", "completed"] and answers[0]["next"]  # the stop was carried on, not left
+    ov = client.get("/api/overview").json()
+    assert ov["audit_running"] is False and ov["audit_progress"] is None and ledger_state(svc) == expected
+    assert client.post("/api/worker/step").json()["status"] == "idle"  # and the page stops by itself
+
+
+def test_a_page_and_a_worker_never_carry_out_the_same_audit(tmp_path):
+    svc = service(tmp_path, PointIndex(world_points()), audit_queue=True)
+    client = TestClient(create_app(service=svc))
+    svc.enqueue_audit()
+    claimed = svc.ledger.claim_run("real-worker")  # the worker got there first
+    assert claimed is not None
+    assert client.post("/api/worker/step").json()["status"] == "idle"  # the page finds nothing to take
+    assert svc.ledger.get_run(claimed["id"])["status"] == "running" and svc.ledger.claim_run("another-page") is None
+
+
+def test_a_signed_in_page_can_only_carry_out_its_own_workspaces_audit(tmp_path, monkeypatch):
+    from sqlalchemy import select
+
+    from ragintegrity import workspaces
+
+    inner = Settings(_env_file=None, mode="live", source_documents_only=True, audit_slice_documents=4, probe_retrieval=False)
+    monkeypatch.setattr(workspaces.WorkspaceManager, "service", lambda self, ws: IntegrityService(
+        inner, self.ledger.for_workspace(ws),
+        Connectors(FakeSource(source_docs()), FakeManifest(manifest_rows()), PointIndex(world_points())), init_schema=False))
+    settings = Settings(_env_file=None, mode="app", database_url=f"sqlite:///{(tmp_path / 'pages.db').as_posix()}", secret_key="k" * 40)
+    app = create_app(settings=settings)
+    origin = {"Origin": "http://testserver"}  # a cookie-authenticated write must say where it comes from
+    with TestClient(app) as alice:
+        bob = TestClient(app)
+        for client, email in ((alice, "alice@example.com"), (bob, "bob@example.com")):
+            assert client.post("/api/auth/register", json={"email": email, "password": "a-long-unusual-passphrase"}).status_code == 201
+            client.headers.update(origin)
+        led = app.state.app_state.ledger
+        with led.engine.connect() as conn:
+            users = led.t["users"]
+            mine = {e: conn.execute(select(users.c.workspace_id).where(users.c.email == e)).scalar_one() for e in ("alice@example.com", "bob@example.com")}
+        run_id = led.for_workspace(mine["alice@example.com"]).queue_run("full", "api", None, {"probe": False, "auto": True})
+        assert bob.post("/api/worker/step").json()["status"] == "idle"  # not his audit: he cannot carry it out
+        assert led.for_workspace(mine["alice@example.com"]).get_run(run_id)["status"] == "queued"
+        out = alice.post("/api/worker/step").json()
+        assert out["status"] == "completed" and out["run_id"] == run_id
 
 
 def test_a_second_whole_audit_waits_but_a_repair_check_goes_ahead(tmp_path):

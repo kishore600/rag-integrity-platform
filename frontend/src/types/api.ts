@@ -487,6 +487,18 @@ export interface AuditStartResponse {
   stats?: AuditStats;
 }
 
+/** One call of POST /api/worker/step: one stretch of work on a queued audit, or `idle` when nothing was waiting. */
+export interface WorkerStepResult {
+  status: "idle" | "completed" | "partial" | "failed";
+  run_id?: string;
+  documents_done?: number | null;
+  documents_total?: number | null;
+  percent?: number | null;
+  /** The id of the next stretch, queued because this one stopped part-way (absent when the audit is over, or has stalled). */
+  next?: string | null;
+  error?: string | null;
+}
+
 export interface AuditRequest {
   tenant?: string;
   documents?: { tenant_id: string; document_id: string }[];
