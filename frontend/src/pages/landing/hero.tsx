@@ -1,6 +1,7 @@
-import { ArrowRight, Lock } from "lucide-react";
+import { ArrowRight, Lock, Mail } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Container, CtaGhost, CtaPrimary } from "./ui";
+import { AUDIT_MAILTO } from "./contact";
+import { Container, CtaGhost, CtaGhostHref, CtaPrimary } from "./ui";
 
 type NodeKind = "ok" | "missing" | "stale" | "orphan" | "gone";
 const COLS = [104, 280, 456];
@@ -45,7 +46,7 @@ function DocNode({ cx, cy, kind }: { cx: number; cy: number; kind: NodeKind }) {
 /** An illustration (not data): one document traced across the three systems, with the failures RAGGuard reports. */
 function ReconcileIllustration() {
   return (
-    <svg viewBox="0 0 560 456" className="h-auto w-full" role="img" aria-label="Illustration: documents checked across Amazon S3, the PostgreSQL manifest and the Qdrant index. One document has no vectors, one was indexed from an old version, and one deleted document is still searchable.">
+    <svg viewBox="0 0 560 456" className="h-auto w-full" role="img" aria-label="Illustration: documents checked across Amazon S3, an optional PostgreSQL manifest and the vector index (Qdrant or pgvector). One document has no vectors, one was indexed from an old version, and one deleted document is still searchable.">
       <defs>
         <linearGradient id="scanline" x1="0" y1="0" x2="1" y2="0">
           <stop offset="0" stopColor="#818CF8" stopOpacity="0" />
@@ -65,8 +66,8 @@ function ReconcileIllustration() {
       ))}
       {[
         ["SOURCE", "Amazon S3"],
-        ["MANIFEST", "PostgreSQL"],
-        ["INDEX", "Qdrant"],
+        ["MANIFEST", "PostgreSQL (optional)"],
+        ["INDEX", "Qdrant or pgvector"],
       ].map(([t, sub], i) => (
         <g key={t}>
           <text x={COLS[i]} y={46} textAnchor="middle" fontSize={11} fontWeight={700} letterSpacing="1.6" fill="#E2E8F0">
@@ -122,15 +123,21 @@ export function Hero({ canRegister }: { canRegister: boolean }) {
 
       <Container className="relative grid items-center gap-14 py-16 sm:py-20 lg:grid-cols-[1.02fr_0.98fr] lg:gap-10 lg:py-28">
         <div>
-          <p className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-support font-medium text-indigo-200">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden /> Independent verification for RAG
+          <p className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-support font-medium text-indigo-200">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden /> Independent verification for RAG
+            </span>
+            <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-support font-semibold text-emerald-300">
+              Free during beta
+            </span>
           </p>
           <h1 id="hero-title" className="mt-6 text-[40px] font-bold leading-[1.05] tracking-tight text-white sm:text-[52px] lg:text-[60px]">
             Know when your RAG index is wrong,{" "}
             <span className="bg-gradient-to-r from-indigo-300 via-indigo-200 to-violet-300 bg-clip-text text-transparent">before your users do.</span>
           </h1>
           <p className="mt-6 max-w-xl text-[17px] leading-8 text-slate-300">
-            RAGGuard compares your source documents, your processing manifest and your vector index, then shows exactly what drifted, how serious it is and how to fix it safely.
+            RAGGuard compares your source documents with your vector index, in Qdrant or pgvector, then shows exactly what drifted, how serious it is and how to fix it safely. No
+            processing manifest needed; connect one for extra checks.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-3">
             {canRegister ? (
@@ -138,7 +145,10 @@ export function Hero({ canRegister }: { canRegister: boolean }) {
                 Create your workspace <ArrowRight className="h-4 w-4" aria-hidden />
               </CtaPrimary>
             ) : null}
-            <CtaGhost to="/login">Sign in</CtaGhost>
+            <CtaGhostHref href={AUDIT_MAILTO}>
+              <Mail className="h-4 w-4" aria-hidden /> Book a free audit
+            </CtaGhostHref>
+            {canRegister ? null : <CtaGhost to="/login">Sign in</CtaGhost>}
           </div>
           <p className="mt-6 flex items-center gap-2 text-support text-slate-400">
             <Lock className="h-3.5 w-3.5" aria-hidden /> Read-only access to your systems. Credentials are encrypted and never shown again.

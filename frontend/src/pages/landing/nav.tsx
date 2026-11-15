@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { Logo } from "@/components/brand/logo";
+import { AUDIT_MAILTO, CONTACT_MAILTO } from "./contact";
 import { Container } from "./ui";
 
 const LINKS = [
@@ -55,6 +56,8 @@ export function LandingFooter({ canRegister }: { canRegister: boolean }) {
           {canRegister ? <Link to="/signup" className="hover:text-white">Create account</Link> : null}
           <a href="#faq" className="hover:text-white">FAQ</a>
           <Link to="/help" className="hover:text-white">User guide</Link>
+          <a href={AUDIT_MAILTO} className="hover:text-white">Book a free audit</a>
+          <a href={CONTACT_MAILTO} className="hover:text-white">Contact</a>
         </nav>
       </Container>
       <div className="border-t border-white/5">

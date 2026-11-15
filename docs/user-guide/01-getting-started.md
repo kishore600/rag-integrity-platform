@@ -206,13 +206,14 @@ If you open a hosted RAGGuard server without being signed in, the page at the ro
 | Menu link **User guide** | Hidden on narrow screens. | The Help pages (`/help`): the video walkthrough and every chapter of this guide. You can read them without an account. |
 | **Sign in** | | The Sign in screen (`/login`) |
 | **Get started** | | The Create account screen (`/signup`). Shown only when sign-ups are open. |
-| Tag line | "Independent verification for RAG" | |
+| Tag line | "Independent verification for RAG", next to a green **Free during beta** label | |
 | Headline | "Know when your RAG index is wrong, before your users do." | |
-| Sub-heading | RAGGuard compares your source documents, your processing manifest and your vector index, then shows exactly what drifted, how serious it is and how to fix it safely. | |
+| Sub-heading | RAGGuard compares your source documents with your vector index, in Qdrant or pgvector, then shows exactly what drifted, how serious it is and how to fix it safely. No processing manifest needed; connect one for extra checks. | |
 | **Create your workspace** | | The Create account screen. Shown only when sign-ups are open. |
-| **Sign in** (hero) | | The Sign in screen |
+| **Book a free audit** | | Opens your email program with a message to kishore.knaresh07@gmail.com, already titled "Free RAGGuard audit", that asks where your documents and vectors are and roughly how many documents you have |
+| **Sign in** (hero) | Shown only when sign-ups are closed (the top bar always has one). | The Sign in screen |
 | Promise line | "Read-only access to your systems. Credentials are encrypted and never shown again." | |
-| Illustration | Three rails labelled SOURCE (Amazon S3), MANIFEST (PostgreSQL) and INDEX (Qdrant), with documents traced across them. One has "no vectors", one has "old version", one is "still searchable" after being "deleted". It is an illustration, not real data. | |
+| Illustration | Three rails labelled SOURCE (Amazon S3), MANIFEST (PostgreSQL (optional)) and INDEX (Qdrant or pgvector), with documents traced across them. One has "no vectors", one has "old version", one is "still searchable" after being "deleted". It is an illustration, not real data. | |
 | **Example finding** card | A **Critical** badge, "Document has no embeddings in the index", "The pipeline reported success, but nothing about this document is searchable.", **Expected** "All chunks indexed", **Actual** "0 vectors found". An example of what an issue looks like. | |
 
 ### The sections
@@ -224,14 +225,14 @@ If you open a hosted RAGGuard server without being signed in, the page at the ro
 | Section | Heading | What it says |
 |---|---|---|
 | The problem | "Your pipeline says success. Your users get the wrong answer." | The six silent failures in the table earlier in this chapter. |
-| How it works | "Three systems, one version of the truth" | Three numbered steps: **1 Connect, read-only** (point RAGGuard at S3, the manifest table and Qdrant; it only lists, reads and queries), **2 Reconcile** (every document is compared across all three, chunk by chunk, and retrieval probes check whether bad content can really be returned), **3 Repair and verify** (plans go to your own worker as signed requests, then RAGGuard checks the real index again; old vectors are removed only after you approve). |
+| How it works | "Your documents and your index, one version of the truth" | Three numbered steps: **1 Connect, read-only** (point RAGGuard at S3 and your vector index in Qdrant or pgvector, plus the manifest table if you have one; it only lists, reads and queries), **2 Reconcile** (every document is compared across the systems you connected, chunk by chunk, and retrieval probes check whether bad content can really be returned), **3 Repair and verify** (plans go to your own worker as signed requests, then RAGGuard checks the real index again; old vectors are removed only after you approve). Below the steps, **See it working** plays the six-minute walkthrough from the [video chapter](19-video-walkthrough.md); it loads only when you press play. |
 | What it finds | "11 kinds of silent failure, each with evidence" | One card per issue type with a one-line meaning and the systems it involves: Missing embeddings, Partial index, Stale document version, Superseded vectors active, Orphan vectors, Duplicate chunks, Metadata mismatch, Pipeline drift, Empty embeddings, Tenant mismatch, Orphan manifest row. |
 | What you get | "Everything you need to act on it" | Six benefits: a health score, evidence for every finding, cost estimates before you fix, blast radius, safe and verified repairs, and alerts and automation. |
 | Security | "Safe to point at production" | Six promises: read-only by design, credentials stay secret, workspaces are isolated, private networks are blocked, repairs are signed and removals approved, and hardened sessions. |
-| Works with | "The tools you already run" | Amazon S3 (and S3-compatible stores), PostgreSQL (including Supabase) and Qdrant (self-hosted or Qdrant Cloud). |
-| FAQ | "Questions, answered" | Five questions, each of which expands when you click it: does RAGGuard change my data, what do I need to connect, how does it know what my index should contain, can I run audits from CI or on a schedule, and how are my credentials protected. |
-| Closing call to action | "See what your index is really serving." | The two buttons again, and the line "Questions first? Read the FAQ." |
-| Footer | The RAGGuard mark and a one-line description | **Sign in**, **Create account** (only when sign-ups are open), **FAQ** and **User guide**. |
+| Works with | "The tools you already run" | Two connections are enough to start: Amazon S3 (and S3-compatible stores) and the vector index, Qdrant (self-hosted or Cloud) or pgvector (any PostgreSQL, including LangChain and LlamaIndex tables). The PostgreSQL manifest is marked optional. |
+| FAQ | "Questions, answered" | Seven questions, each of which expands when you click it: does RAGGuard change my data, what do I need to connect, how does it know what my index should contain, how much does it cost (nothing during the beta), what is a free audit, can I run audits from CI or on a schedule, and how are my credentials protected. |
+| Closing call to action | "See what your index is really serving." | "Free during beta", the two buttons again, and the line "Questions first? Read the FAQ or email kishore.knaresh07@gmail.com." |
+| Footer | The RAGGuard mark and a one-line description | **Sign in**, **Create account** (only when sign-ups are open), **FAQ**, **User guide**, **Book a free audit** and **Contact**. |
 
 ### Where the buttons and links go
 
@@ -240,9 +241,11 @@ If you open a hosted RAGGuard server without being signed in, the page at the ro
 | Every **Sign in** | The Sign in screen, address `/login` |
 | **Get started**, **Create your workspace**, **Create account** | The Create account screen, address `/signup` |
 | **Read the FAQ**, footer **FAQ**, menu **FAQ** | The FAQ section of the landing page |
-| Menu **User guide**, footer **User guide** | The Help pages, address `/help` |
+| Menu **User guide**, footer **User guide**, **More in the user guide** under the video | The Help pages, address `/help` |
+| Every **Book a free audit** | A pre-filled email to kishore.knaresh07@gmail.com titled "Free RAGGuard audit" |
+| Footer **Contact**, the email address in the closing section | An email to kishore.knaresh07@gmail.com |
 
-If the server has closed sign-ups, the landing page shows only the **Sign in** buttons and the Create account choices disappear everywhere. See [Sign in and find your way around](03-interface-and-sign-in.md#create-account).
+If the server has closed sign-ups, the hero and the closing section show **Sign in** next to **Book a free audit**, and the Create account choices disappear everywhere. See [Sign in and find your way around](03-interface-and-sign-in.md#create-account).
 
 ---
 
