@@ -139,7 +139,7 @@ const FEATURES: { icon: LucideIcon; title: string; text: string }[] = [
   { icon: Eye, title: "Evidence, not guesses", text: "Each finding shows expected versus actual, the values it read, and whether the bad content can really be retrieved." },
   { icon: Coins, title: "Know the cost before you fix", text: "Estimated re-embedding work and cost, compared with rebuilding everything, before you commit to a repair." },
   { icon: Network, title: "Blast radius", text: "Which documents, tenants and queries a pipeline change or an ingestion failure would touch." },
-  { icon: Webhook, title: "Safe, verified repairs", text: "Signed requests to your own worker, independent verification, and your approval before any vector is removed." },
+  { icon: Webhook, title: "Safe, verified repairs, in bulk", text: "One plan can cover every broken document. Send it to your own worker as one signed request, or email it as a readable summary with a spreadsheet. RAGGuard then checks the real index, and nothing is removed without your approval." },
   { icon: BellRing, title: "Alerts and automation", text: "Slack-compatible webhook alerts, and API keys to run audits from CI or a scheduler." },
 ];
 

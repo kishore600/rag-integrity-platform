@@ -40,6 +40,13 @@ services:
     image: motoserver/moto:5.0.28
     ports: ["127.0.0.1:9000:5000"]   # moto listens on 5000 inside; you can reach it from your computer on 9000
 
+  mail:   # the lab's mail catcher: every email the apps send lands on a web page and goes nowhere else
+    <<: *app
+    command: ["python", "scripts/mail_sink.py"]
+    ports: ["127.0.0.1:8025:8025"]   # open http://localhost:8025 to read what was "sent"
+    healthcheck:
+      disable: true   # the app image's health check looks at port 8000
+
   seed:
     <<: *app
     command: ["python", "scripts/seed_lab.py"]
@@ -116,9 +123,14 @@ services:
       RAGI_REPAIR_WEBHOOK_URL: http://worker:9000/ragi-webhook
       RAGI_REPAIR_WEBHOOK_SECRET: local-lab-secret
       RAGI_PUBLIC_BASE_URL: http://app-lab:8000
+      RAGI_SMTP_HOST: mail             # email a plan: it lands in the mail catcher at http://localhost:8025
+      RAGI_SMTP_PORT: "1025"
+      RAGI_SMTP_SECURITY: none
+      RAGI_SMTP_FROM: ragguard@lab.local
     depends_on:
       seed: { condition: service_completed_successfully }
       worker: { condition: service_started }
+      mail: { condition: service_started }
 
   app-bills:   # Lab B: the multi-user app, empty. You create an account and enter the settings.
     <<: *app

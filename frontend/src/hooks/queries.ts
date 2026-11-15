@@ -11,6 +11,9 @@ import type {
   AuditStartResponse,
   BlastRadius,
   BlastScenario,
+  BulkPreview,
+  BulkRepairRequest,
+  BulkRepairResponse,
   ConnectionStatus,
   CreatedApiKey,
   DocumentDetail,
@@ -18,6 +21,7 @@ import type {
   DocumentRow,
   DrillRequest,
   DrillResult,
+  EmailPlanRequest,
   HistoryEvent,
   IsolationView,
   IssueDetail,
@@ -201,8 +205,18 @@ export const useRecommendations = (minSeverity?: string) =>
 
 export const useRepairs = () => useQuery({ queryKey: qk.repairs, queryFn: () => get<RepairPlan[]>("/api/repairs"), retry: noRetryOnClientError });
 
+/** While a repair is out with the worker the plan is re-read every few seconds: the worker's callback verifies it, and the screen follows. */
 export const useRepairPlan = (id: string | undefined) =>
-  useQuery({ queryKey: ["repair", id], queryFn: () => get<RepairPlan>(`/api/repairs/${encodeURIComponent(id ?? "")}`), enabled: !!id, retry: noRetryOnClientError });
+  useQuery({
+    queryKey: ["repair", id],
+    queryFn: () => get<RepairPlan>(`/api/repairs/${encodeURIComponent(id ?? "")}`),
+    enabled: !!id,
+    retry: noRetryOnClientError,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "triggered" || status === "cleanup_triggered" ? 4000 : false;
+    },
+  });
 
 function useRepairMutation<V>(fn: (v: V) => Promise<RepairPlan>) {
   const qc = useQueryClient();
@@ -213,6 +227,24 @@ export const useCreatePlan = () => useRepairMutation((req: PlanRequest) => post<
 export const useTriggerPlan = () => useRepairMutation((id: string) => post<RepairPlan>(`/api/repairs/${encodeURIComponent(id)}/trigger`));
 export const useVerifyPlan = () => useRepairMutation((id: string) => post<RepairPlan>(`/api/repairs/${encodeURIComponent(id)}/verify`));
 export const useApproveCleanup = () => useRepairMutation((id: string) => post<RepairPlan>(`/api/repairs/${encodeURIComponent(id)}/approve-cleanup`));
+export const useEmailPlan = () => useRepairMutation(({ id, ...req }: EmailPlanRequest & { id: string }) => post<RepairPlan>(`/api/repairs/${encodeURIComponent(id)}/email`, req));
+
+/** What "repair everything" would do (nothing is created or sent). A 404 means no open issue matches. */
+export const usePreviewRepair = (filters: { min_severity?: BulkRepairRequest["min_severity"]; tenant?: string }, enabled: boolean) =>
+  useQuery({
+    queryKey: ["repair-preview", filters.min_severity ?? "", filters.tenant ?? ""],
+    queryFn: () => post<BulkPreview>("/api/repairs/preview", filters),
+    enabled,
+    retry: noRetryOnClientError,
+    staleTime: 0,
+    gcTime: 0,
+  });
+
+/** One plan for everything that matches, optionally sent to the worker and emailed in the same step. */
+export function useBulkRepair() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (req: BulkRepairRequest) => post<BulkRepairResponse>("/api/repairs/bulk", req), onSettled: () => invalidateData(qc) });
+}
 
 export const useBlastRadius = () => useMutation({ mutationFn: (scenario: BlastScenario) => post<BlastRadius>("/api/blast-radius", { scenario }) });
 

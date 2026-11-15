@@ -1,11 +1,11 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, Code2, PlayCircle, ShieldCheck, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Code2, Download, Mail, PlayCircle, ShieldCheck, Trash2, XCircle } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { ConfirmDialog, Drawer } from "@/components/ui/overlays";
 import { DataTable } from "@/components/shared/data-table";
 import { CopyButton } from "@/components/shared/copy-button";
@@ -19,6 +19,7 @@ import { documentName, formatDateTime, formatNumber, formatUsd, shortHash, timeA
 import { severityRank } from "@/lib/issue-meta";
 import { links } from "@/lib/links";
 import type { RepairItem, RepairPlan } from "@/types/api";
+import { EmailPlanDialog } from "./email-plan-dialog";
 import { ACTION_LABEL, checkLabel, describeRepairEvent, itemStatus, itemWork } from "./labels";
 import { Callout, Stat } from "./parts";
 
@@ -137,6 +138,7 @@ export function PlanDrawer({ id, onClose }: { id: string; onClose: () => void })
   const [approveOpen, setApproveOpen] = useState(false);
   const [webhookMissing, setWebhookMissing] = useState<string | null>(null);
   const [showPayload, setShowPayload] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
 
   const payload = useQuery({
     queryKey: ["repair-payload", id],
@@ -213,9 +215,17 @@ export function PlanDrawer({ id, onClose }: { id: string; onClose: () => void })
         footer={
           plan ? (
             <>
-              <Button variant="secondary" onClick={() => setShowPayload((v) => !v)} className="mr-auto">
-                <Code2 className="h-4 w-4" aria-hidden /> {showPayload ? "Hide payload" : "View payload"}
-              </Button>
+              <div className="mr-auto flex flex-wrap items-center gap-2">
+                <Button variant="secondary" onClick={() => setShowPayload((v) => !v)}>
+                  <Code2 className="h-4 w-4" aria-hidden /> {showPayload ? "Hide payload" : "View payload"}
+                </Button>
+                <a href={`/api/repairs/${encodeURIComponent(plan.id)}/export`} download className={buttonVariants({ variant: "secondary" })}>
+                  <Download className="h-4 w-4" aria-hidden /> Download CSV
+                </a>
+                <Button variant="secondary" onClick={() => setEmailOpen(true)}>
+                  <Mail className="h-4 w-4" aria-hidden /> Email plan
+                </Button>
+              </div>
               {canRetry ? (
                 <Button variant="secondary" onClick={doTrigger} loading={trigger.isPending}>Send repair again</Button>
               ) : null}
@@ -326,6 +336,7 @@ export function PlanDrawer({ id, onClose }: { id: string; onClose: () => void })
           </div>
         </ConfirmDialog>
       ) : null}
+      {plan ? <EmailPlanDialog planId={plan.id} open={emailOpen} onOpenChange={setEmailOpen} configured={!!overview.data?.email_configured} /> : null}
     </>
   );
 }

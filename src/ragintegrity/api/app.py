@@ -61,6 +61,24 @@ class PlanRequest(BaseModel):
     types: list[str] | None = Field(default=None, max_length=20)
 
 
+class BulkRepairRequest(BaseModel):
+    """One plan for everything that matches, so nobody has to tick each document. ``send`` hands it to the repair worker straight away;
+    ``email_to`` also mails it (needs a mail server; a signed-in person only)."""
+
+    min_severity: Sev | None = None
+    tenant: str | None = Field(default=None, max_length=256)
+    types: list[str] | None = Field(default=None, max_length=20)
+    send: bool = False
+    email_to: str | list[str] | None = None
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class EmailPlanRequest(BaseModel):
+    to: str | list[str]  # up to 10 addresses, separated by commas or spaces; validated and capped by the mailer
+    note: str | None = Field(default=None, max_length=1000)
+    attach_payload: bool = True  # the exact JSON the repair webhook would receive
+
+
 class IgnoreRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
@@ -690,9 +708,42 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
         req = req or PlanRequest()
         return s.repairs.create_plan(issue_ids=req.issue_ids, min_severity=req.min_severity, tenant=req.tenant, types=req.types)
 
+    def email_gate(request: Request) -> None:
+        """Sending mail needs a signed-in person (an API key cannot) and is limited per workspace, so it cannot be used to spam."""
+        if not multi:
+            return
+        assert state is not None and state.accounts is not None
+        p = session_only(request)
+        if not state.accounts.hit(f"email:{p.workspace_id}", 20, 3600):
+            raise HTTPException(429, "Too many emails sent from this workspace. Try again in an hour.")
+
+    @app.post("/api/repairs/preview")
+    def preview_plan(req: PlanRequest | None = None, s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:
+        req = req or PlanRequest()
+        return s.repairs.preview(min_severity=req.min_severity, tenant=req.tenant, types=req.types)
+
+    @app.post("/api/repairs/bulk", status_code=201)
+    def bulk_repair(request: Request, req: BulkRepairRequest, s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:
+        if req.email_to:
+            email_gate(request)
+        return s.repairs.bulk(min_severity=req.min_severity, tenant=req.tenant, types=req.types, send=req.send, email_to=req.email_to,
+                              note=req.note, base_url=str(request.base_url).rstrip("/"))
+
     @app.get("/api/repairs")
     def list_plans(s: IntegrityService = Depends(get_svc)) -> list[dict[str, Any]]:
         return s.ledger.list_plans()
+
+    @app.get("/api/repairs/{plan_id}/export")
+    def export_plan(plan_id: str, s: IntegrityService = Depends(get_svc)) -> Response:
+        """The plan as a spreadsheet (CSV, opens in Excel and Google Sheets)."""
+        return PlainTextResponse("﻿" + s.repairs.csv(plan_id), media_type="text/csv; charset=utf-8",
+                                 headers={"Content-Disposition": f'attachment; filename="repair-plan-{plan_id[:8]}.csv"'})
+
+    @app.post("/api/repairs/{plan_id}/email")
+    def email_plan(plan_id: str, request: Request, req: EmailPlanRequest, s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:
+        email_gate(request)
+        return s.repairs.email_plan(plan_id, to=req.to, note=req.note, attach_payload=req.attach_payload,
+                                    base_url=str(request.base_url).rstrip("/"))
 
     @app.get("/api/repairs/{plan_id}")
     def get_plan(plan_id: str, s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:

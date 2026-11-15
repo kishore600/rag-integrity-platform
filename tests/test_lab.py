@@ -269,7 +269,11 @@ def test_the_compose_file_is_local_only_and_has_both_labs():
     yaml = pytest.importorskip("yaml")
     compose = yaml.safe_load((ROOT / "docker-compose.lab.yml").read_text(encoding="utf-8"))
     services = compose["services"]
-    assert set(services) == {"postgres", "qdrant", "s3", "seed", "worker", "worker-bills", "app-lab", "app-bills"}
+    assert set(services) == {"postgres", "qdrant", "s3", "seed", "worker", "worker-bills", "mail", "app-lab", "app-bills"}
+    env = services["app-lab"]["environment"]  # Lab A can email a plan out of the box, to the catcher and nowhere else
+    assert (env["RAGI_SMTP_HOST"], env["RAGI_SMTP_PORT"], env["RAGI_SMTP_SECURITY"], env["RAGI_SMTP_FROM"]) == ("mail", "1025", "none", "ragguard@lab.local")
+    assert services["mail"]["command"] == ["python", "scripts/mail_sink.py"] and services["mail"]["ports"] == ["127.0.0.1:8025:8025"]
+    assert "http://localhost:8025" in lab.workbook_markdown() and "`mail` / `1025` / `none`" in lab.workbook_markdown()
     assert services["worker-bills"]["environment"]["RAGI_WORKER_KIND"] == "bills" and "RAGI_WORKER_KIND" not in services["worker"]["environment"]
     assert "http://worker-bills:9000/ragi-webhook" in lab.workbook_markdown()  # the address the workbook tells you to type exists
     assert services["s3"]["image"].startswith("motoserver/moto:") and ":latest" not in services["s3"]["image"]  # pinned, official

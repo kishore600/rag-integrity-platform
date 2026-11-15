@@ -7,6 +7,7 @@ import { NotAvailable, Skeleton } from "@/components/shared/states";
 import { useOverview } from "@/hooks/queries";
 import { EnvNote, QueryGate, StateBadge, useSystems } from "../_settings-form";
 import { ApiKeysSection } from "./api-keys";
+import { EmailCard } from "./email-card";
 import { RepairCard } from "./repair-card";
 
 function RestApiCard() {
@@ -85,6 +86,7 @@ export default function IntegrationsPage() {
   const { session, appMode, settings } = useSystems();
   const overview = useOverview(!appMode && !!session);
   const repairGroup = settings.data?.kinds.find((k) => k.kind === "repair");
+  const emailGroup = settings.data?.kinds.find((k) => k.kind === "email");
 
   return (
     <>
@@ -92,11 +94,21 @@ export default function IntegrationsPage() {
       <div className="space-y-6">
         {appMode ? (
           <QueryGate query={settings} skeleton={<Skeleton className="h-96" />}>
-            {() => <RepairCard appMode group={repairGroup} />}
+            {() => (
+              <>
+                <RepairCard appMode group={repairGroup} />
+                <EmailCard appMode group={emailGroup} />
+              </>
+            )}
           </QueryGate>
         ) : (
           <QueryGate query={overview} skeleton={<Skeleton className="h-96" />}>
-            {(o) => <RepairCard appMode={false} singleUser={{ configured: o.repair_webhook_configured, cleanupPolicy: o.cleanup_policy }} />}
+            {(o) => (
+              <>
+                <RepairCard appMode={false} singleUser={{ configured: o.repair_webhook_configured, cleanupPolicy: o.cleanup_policy }} />
+                <EmailCard appMode={false} configured={o.email_configured} />
+              </>
+            )}
           </QueryGate>
         )}
 

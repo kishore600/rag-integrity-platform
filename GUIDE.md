@@ -665,7 +665,11 @@ Three tabs: **Issues**, **Repair plans**, **Impact analysis**.
 
 **Issues.** Severity chips (click to filter), then search, **Status** (Open, Resolved, Ignored, All), **Severity**, **Type** and **Tenant**.
 Columns: *Severity, Issue, Document, Status, First seen, Last seen, Seen*. Tick rows to **Create repair plan** or **Ignore** several at
-once. Click a row for the detail panel:
+once, or press **Repair all open issues** (top right) to make **one plan for everything that is open** without ticking anything: a dialog
+lets you narrow it (*All severities*, *High and critical* or *Critical only*; one tenant) and first shows how many documents, issues,
+chunks, how much estimated cost and how many vectors to remove it would involve. It can **send the plan to your repair worker in the same
+step** (one signed request carries every document) and **email it** (below). Removing old vectors always stays a separate **Approve
+cleanup**. Click a row for the detail panel:
 - **What's wrong** (the plain-language detail) and **Why it matters** (what the finding means for your users);
 - **Expected vs actual** side by side, written from the stored evidence;
 - **Affected systems** (S3, PostgreSQL, Qdrant) and a link to the document;
@@ -684,6 +688,14 @@ once. Click a row for the detail panel:
   whether it was verified, and a **History**. The buttons follow the plan's state: **Trigger repair** (sends the signed webhook),
   **Verify now** (re-checks the real index), **Send repair again** (for a partial or failed plan), **Approve cleanup** (a confirmation
   states exactly how many vectors will be removed, and that it cannot be undone) and **View payload** (the exact signed body).
+  Two more buttons work in every state: **Download CSV** (every document with what to do, opens in Excel and Google Sheets) and **Email
+  plan** (below). While a plan is out with your worker the panel re-reads itself every few seconds, so a worker that calls back and
+  verifies the plan shows the result without a refresh.
+- **Email plan** sends the plan to the people who will fix it, so they do not have to open RAGGuard. You type up to 10 addresses (and an
+  optional note) and press **Send email**. The email has a readable summary and a table of the documents with what to do for each, a
+  link back to the plan, and two attachments: a **CSV** with every document and the **exact JSON payload** your worker would receive (you
+  can leave the JSON out). It needs a mail server (section 5.6.1; without one the dialog says what to add and the CSV download still works),
+  nothing is ever sent automatically, a plan's history records who it was emailed to, and the plan itself does not change.
 
 **Impact analysis** (section 8): choose *Open issues*, *Pipeline change* (the parser, chunking or embedding model you plan to move to) or
 *Ingestion failure* (when it started), then **Analyze impact**. It returns documents and tenants affected, the work and cost to fix, and
@@ -748,6 +760,8 @@ resolved, alert delivery, the error if it failed).
 ### Integrations
 - **Repair webhook** (the *Repair worker* group): where RAGGuard sends signed repair requests, with the flow explained and the exact
   headers your worker receives.
+- **Email** (the *Email* group): your mail server, so a repair plan can be emailed to the people who will fix it (section 5.6.1). It
+  shows the mail server, the From address and whether a password is saved, and what the email contains.
 - **API keys**: create (the token is shown once, with a copy button), see when each was last used, and revoke. Keys work only inside
   their workspace: they can run audits and read results, but cannot read settings, create keys or change passwords.
 - **REST API**: the base address, to use together with an API key.
@@ -790,11 +804,12 @@ A switch only takes effect after **Save**.
 
 ## 5. Settings: every group and every field
 
-Three groups are **required** before the first audit: S3, Manifest and Qdrant. The other four are optional tuning.
-**Where each group lives in the interface:** S3, Manifest and Qdrant are on **Data Sources**; Repair worker is on **Integrations**;
-Alerts is on **Alerts**; Target pipeline and Audit policy are on **Settings** (tabs *Pipeline* and *Policy*); API keys are on
-**Integrations**. Every group is saved separately with **Save**. **Test connection** checks what is typed in the form without storing it
-(for the Repair worker and Alerts groups the button is **Check settings**: it validates the values and sends nothing), and **Test** on a
+Three groups are **required** before the first audit: S3, Manifest and Qdrant. The other five are optional.
+**Where each group lives in the interface:** S3, Manifest and Qdrant are on **Data Sources**; Repair worker and Email are on
+**Integrations**; Alerts is on **Alerts**; Target pipeline and Audit policy are on **Settings** (tabs *Pipeline* and *Policy*); API keys
+are on **Integrations**. Every group is saved separately with **Save**. **Test connection** checks what is typed in the form without
+storing it (for the Repair worker and Alerts groups the button is **Check settings**: it validates the values and sends nothing; for
+Email it is also **Check settings**: it connects to the mail server, encrypts the connection and signs in, but sends no email), and **Test** on a
 Data Sources card re-runs the real connector against what is saved and remembers the result.
 
 How secrets behave: a field marked **secret** is encrypted at rest, is **write-only** (after saving it shows "saved" and the value never
@@ -949,6 +964,32 @@ Your own ingestion worker. The platform never writes to your systems: approved r
 | **Webhook URL** | **yes** | none | A Slack-compatible incoming webhook (JSON with a `text` field). Treated as a secret because Slack webhook URLs are. |
 | **Minimum severity** | no | `high` | `critical`, `high`, `medium` or `low`. Only **new, reopened or escalated** issues at or above it are sent, so a steady state is silent. |
 
+### 5.6.1 Email (optional)
+Your own mail server, or your email provider's SMTP relay (Gmail, Outlook, SendGrid, Amazon SES and others), so a repair plan can be
+emailed (section 4, Integrity Issues). RAGGuard sends a plan email only when a person presses **Email plan** and types the recipients;
+it never sends one by itself. (The audit alerts of section 3.14 are different: they go out through the platform's own mail account,
+only to the workspace's own users.) A plan is never sent through the platform's mail account in the hosted app, because anyone can
+sign up and that address must not send their mail to strangers: each workspace uses its own server, set here.
+
+| Field | Secret | Default | Meaning |
+|---|---|---|---|
+| **SMTP server** | no | none | The mail server's host name, for example `smtp.example.com` (no `http://`, no port). Required. |
+| **Port** | no | `587` | 587 with `starttls`, 465 with `ssl`. On the hosted site only 25, 465, 587 and 2525 are allowed. |
+| **Connection security** | no | `starttls` | `starttls` or `ssl` encrypt the connection. `none` is refused on the hosted site and only accepted on a private network you run yourself. |
+| **Username** | no | none | Usually your full email address. Leave empty for a relay that needs no sign-in. |
+| **Password** | **yes** | none | Stored encrypted and never shown again. For Gmail and similar, use an app password. Sent only together with a username. |
+| **From address** | no | none | The sender shown on the email (one plain address). Your mail server must let you send from it. Required. |
+
+The group counts as set up once **SMTP server** and **From address** are filled in. **Check settings** connects, encrypts and signs in and
+reports each step (*Mail server*, *Encryption*, *Sign in*); it sends nothing. Single-user servers (live and demo) need no setup here:
+they send a plan through the same mail account as the audit alerts (`RAGI_SMTP_HOST` and `RAGI_SMTP_FROM` are the two that matter), or
+through a different server set with the `RAGI_PLAN_MAIL_*` variables listed in the table below.
+
+**Safety.** On the hosted site the mail server must be a public host on a normal mail port with an encrypted connection (checked when saved
+and again before every send), so it cannot be pointed at your internal network. Recipients are validated (no spaces or line breaks,
+at most 10 per email), everything typed is escaped, the password never appears in an error message, only a signed-in person can send
+(an API key cannot), and a workspace can send **20 plan emails per hour**.
+
 ### 5.7 Audit policy (optional)
 | Field | Default | Meaning |
 |---|---|---|
@@ -1012,6 +1053,12 @@ settings, create keys or change passwords. Up to 20 keys per workspace; **Revoke
 | alerts | Email me | `email_when` | `RAGI_ALERT_EMAIL_WHEN` | always / attention / never |
 | alerts | Webhook URL | `webhook_url` | `RAGI_ALERT_WEBHOOK_URL` | URL, secret |
 | alerts | Minimum severity | `min_severity` | `RAGI_ALERT_MIN_SEVERITY` | critical / high / medium / low |
+| email | SMTP server | `host` | `RAGI_PLAN_MAIL_HOST` | host name |
+| email | Port | `port` | `RAGI_PLAN_MAIL_PORT` | integer |
+| email | Connection security | `security` | `RAGI_PLAN_MAIL_SECURITY` | starttls / ssl / none |
+| email | Username | `username` | `RAGI_PLAN_MAIL_USERNAME` | text |
+| email | Password | `password` | `RAGI_PLAN_MAIL_PASSWORD` | secret |
+| email | From address | `from_address` | `RAGI_PLAN_MAIL_FROM` | email address |
 | policy | Grace period (minutes) | `grace_minutes` | `RAGI_GRACE_MINUTES` | integer |
 | policy | Default tenant | `default_tenant` | `RAGI_DEFAULT_TENANT` | text |
 | policy | Required payload fields | `required_payload_fields` | `RAGI_REQUIRED_PAYLOAD_FIELDS` | comma list |
@@ -1116,6 +1163,18 @@ point ids per collection, and a finding's evidence lists at most 50 ids; both ar
 (re-triggering sends only the failed documents). **Item statuses:** `planned`, `reindexed` (new generation verified), `awaiting_cleanup`,
 `completed`, `failed`.
 
+**Plan creation is not sending.** *Create repair plan* only saves a draft; nothing leaves RAGGuard until **Trigger repair** (the signed
+webhook to your worker) and, later, **Approve cleanup** (a second signed webhook with exact point ids). "Accepted" from your worker only
+means it received the request: it works in the background, and only **Verify** tells you whether the index is really fixed.
+
+**Bulk repair and email.** One plan can hold any number of documents, and a single webhook request carries all of them, so there is no
+need to send documents one at a time. `POST /api/repairs/bulk` (the **Repair all open issues** button) creates one plan for everything
+that matches a minimum severity and/or a tenant, and in the same call can send it (`send`) and email it (`email_to`); each step reports
+for itself in `problems`, so a missing mail server never undoes a repair that was sent. `POST /api/repairs/preview` shows what that would
+involve without creating anything. `POST /api/repairs/{plan_id}/email` emails an existing plan (summary and table in the body, a CSV
+and the exact webhook payload attached) and `GET /api/repairs/{plan_id}/export` downloads the CSV. For the people who fix things by hand,
+the email is the hand-off; they or you then press **Verify now**, or run an audit, to see what is fixed.
+
 The webhook contract and a runnable receiver are in [docs/repair-webhook.md](docs/repair-webhook.md) and
 `examples/reference_worker/worker.py`. The platform's repair callback (`POST /api/repairs/{id}/callback`) is authenticated by that same
 HMAC signature, not by a login.
@@ -1182,7 +1241,11 @@ Interactive docs are at `/docs`. Authentication: **public**; **session** (signed
 | POST | `/api/query-log` | session or key | ingest retrieval logs (up to 5,000 rows per call) |
 | GET | `/api/history` | session or key | the merged audit trail |
 | POST | `/api/repairs` | session or key | create a repair plan |
+| POST | `/api/repairs/preview` | session or key | what repairing everything that matches would involve (creates nothing) |
+| POST | `/api/repairs/bulk` | session or key (a session when `email_to` is set) | one plan for everything that matches; optionally send it to the worker and email it |
 | GET | `/api/repairs` | session or key | list plans |
+| GET | `/api/repairs/{plan_id}/export` | session or key | the plan as a CSV spreadsheet |
+| POST | `/api/repairs/{plan_id}/email` | session only | email the plan (summary, CSV, payload) to up to 10 people; 20 emails per workspace per hour |
 | GET | `/api/repairs/{plan_id}` | session or key | one plan with its events |
 | GET | `/api/repairs/{plan_id}/payload` | session or key | preview the reindex webhook body |
 | POST | `/api/repairs/{plan_id}/trigger` | session or key | send the reindex request to your worker |
@@ -1234,6 +1297,7 @@ Install with `pip install -e ".[dev]"`; the command is `ragi`.
 | `RAGI_PROBE_RETRIEVAL`, `RAGI_PROBE_MAX`, `RAGI_PROBE_TOP_K` | `true`, `25`, `10` | retrieval-probe switches and limits. |
 | `RAGI_AUDIT_SLICE_DOCUMENTS` | `5000` | documents per slice of the index when only the source's documents are audited; each finished slice is a checkpoint (3.12). |
 | `RAGI_SMTP_HOST`, `RAGI_SMTP_PORT`, `RAGI_SMTP_USER`, `RAGI_SMTP_PASSWORD`, `RAGI_SMTP_FROM`, `RAGI_SMTP_SECURITY` | none, `587`, none, none, none, `starttls` | the platform's one mail account, which sends every workspace's alert emails (3.14). `RAGI_SMTP_SECURITY` is `starttls`, `ssl` or `none`. No host and sender means no email. |
+| `RAGI_PLAN_MAIL_HOST`, `RAGI_PLAN_MAIL_PORT`, `RAGI_PLAN_MAIL_SECURITY`, `RAGI_PLAN_MAIL_USERNAME`, `RAGI_PLAN_MAIL_PASSWORD`, `RAGI_PLAN_MAIL_FROM` | none, `587`, `starttls`, none, none, none | a mail server used only to email a repair plan (5.6.1). Single-user modes use the `RAGI_SMTP_*` account when these are unset; in app mode each workspace sets its own in the app. |
 | `RAGI_APP_URL` | none | the public address of this deployment; the links in emails point here (on Vercel the production address is used when this is unset). Never taken from a request. |
 | `RAGI_ALERT_EMAIL_TO` | none | single-user modes only: who gets the email, comma-separated. App mode emails each workspace's own users and ignores it. |
 | `RAGI_PGVECTOR_PAGE_SIZE` | `1000` | rows per page when the vector index is a pgvector table (3.16). |
@@ -1282,15 +1346,16 @@ The full threat model, with what is and is not covered, is in [docs/security.md]
 - **Passwords**: scrypt with a per-user salt, constant-time compare; unknown emails burn the same CPU, so timing does not reveal accounts.
 - **Sessions**: a random 256-bit token in an `HttpOnly`, `SameSite=Lax`, `Secure` cookie; only its SHA-256 is stored; 7-day sliding expiry; logout and password change revoke on the server.
 - **CSRF**: `SameSite=Lax` plus an `Origin` check on every cookie-authenticated write.
-- **Rate limits** (database-backed, so they hold across serverless instances): 8 sign-in attempts per account and 30 per network per 15 minutes; 5 sign-ups per network per hour; 10 password changes per account per 15 minutes; 30 connection tests per workspace per 10 minutes; 20 setup checks and 20 deletion checks per workspace per 10 minutes.
+- **Rate limits** (database-backed, so they hold across serverless instances): 8 sign-in attempts per account and 30 per network per 15 minutes; 5 sign-ups per network per hour; 10 password changes per account per 15 minutes; 30 connection tests per workspace per 10 minutes; 20 setup checks and 20 deletion checks per workspace per 10 minutes; 20 plan emails per workspace per hour.
 - **Tenant isolation**: every ledger statement carries the workspace id; the tests attack read, modify, resolve, reset and plan-hijack across workspaces, on SQLite and a real Postgres.
 - **Secrets at rest**: Fernet (AES-128-CBC + HMAC-SHA256) under `RAGI_SECRET_KEY`, which exists only in the server environment. Secrets are write-only in the UI/API. Errors and ledger rows are scrubbed of `scheme://user:password@host` credentials, and the error of a failed alert or repair webhook delivery has every web address removed (a webhook address is itself a secret), in the ledger, the logs and the interface. That includes the target of a redirect (even a relative one) and the host, path, query and user info of the configured address wherever a library echoes them without the scheme; run rows stored before this existed have any web address removed when they are read.
-- **SSRF guard**: every host a user supplies (S3 endpoint, Qdrant URL, manifest database, repair and alert webhooks) must be public. Loopback, private, link-local (including the cloud metadata address), carrier-grade NAT, IPv4-mapped IPv6, multicast and reserved ranges are refused; hostnames are resolved and every address must be public; checked when saved **and again before every connection**. URLs may not contain credentials; databases must be `postgresql://` with only `sslmode`, `connect_timeout`, `application_name` options.
+- **Email**: plan emails go to the mail server the workspace configured, which on the hosted site must be a public host on port 25, 465, 587 or 2525 with an encrypted connection (checked when saved and before every send); recipients are validated and capped at 10, everything typed is escaped, a CSV cell that starts with `=`, `+`, `-` or `@` is written as text so a spreadsheet cannot run it as a formula, the password never appears in an error, only a signed-in person (not an API key) can send, and the history records the recipients.
+- **SSRF guard**: every host a user supplies (S3 endpoint, Qdrant URL, manifest database, mail server, repair and alert webhooks) must be public. Loopback, private, link-local (including the cloud metadata address), carrier-grade NAT, IPv4-mapped IPv6, multicast and reserved ranges are refused; hostnames are resolved and every address must be public; checked when saved **and again before every connection**. URLs may not contain credentials; databases must be `postgresql://` with only `sslmode`, `connect_timeout`, `application_name` options.
 - **Read-only connectors**: S3 list/head (get only in `compute` mode); manifest queries in `READ ONLY` transactions; Qdrant scroll/retrieve/query.
 - **API keys** are hashed, revocable, and cannot read settings or mint keys.
 - **Web hardening**: strict `Content-Security-Policy` (`script-src 'self'`), `X-Frame-Options: DENY`, `nosniff`, no referrer, `no-store` on API responses; the web interface renders every value as text (React escapes it; there is no raw HTML anywhere) (document ids come from S3 keys, so they are untrusted).
 
-**Not covered:** no email verification or password reset (the mail account only sends audit alerts), no two-factor authentication, no teams or roles, and the DNS-rebinding window between validation and connection is narrow but not zero.
+**Not covered:** no email verification or password reset (the platform's mail account only sends audit alerts, and a repair plan only when a person presses **Email plan**), no two-factor authentication, no teams or roles, and the DNS-rebinding window between validation and connection is narrow but not zero.
 
 ---
 

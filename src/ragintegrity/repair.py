@@ -18,8 +18,11 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from . import plan_mail
+from .connectors.base import ConnectorError
 from .engine.planning import estimate_workload, plan_items
 from .models import CLEANUP_TYPES, IssueType, Scope
+from .plan_mail import parse_recipients
 from .security import redact_urls
 
 if TYPE_CHECKING:
@@ -54,8 +57,9 @@ class RepairManager:
         self.svc = service
 
     # ------------------------------------------------------------------ plan
-    def create_plan(self, *, issue_ids: list[str] | None = None, min_severity: str | None = None,
-                    tenant: str | None = None, types: list[str] | None = None) -> dict[str, Any]:
+    def _select(self, *, issue_ids: list[str] | None = None, min_severity: str | None = None,
+                tenant: str | None = None, types: list[str] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+        """The open issues a request selects, grouped into one item per document, with the workload estimate. Saves nothing."""
         svc = self.svc
         issues = svc.ledger.open_issues(ids=issue_ids, min_severity=min_severity)
         if tenant:
@@ -70,9 +74,82 @@ class RepairManager:
         summary = estimate_workload(
             items, docs, list(svc.ledger.all_documents()), chunk_tokens=svc.settings.chunk_size_tokens,
             price_per_mtok=svc.settings.embedding_price_per_mtok)
+        return issues, items, summary
+
+    def create_plan(self, *, issue_ids: list[str] | None = None, min_severity: str | None = None,
+                    tenant: str | None = None, types: list[str] | None = None) -> dict[str, Any]:
+        issues, items, summary = self._select(issue_ids=issue_ids, min_severity=min_severity, tenant=tenant, types=types)
         plan_id = str(uuid.uuid4())
-        svc.ledger.save_plan(plan_id, "draft", items, summary, create=True)
-        svc.ledger.add_repair_event(plan_id, "created", {"documents": len(items), "issues": len(issues)})
+        self.svc.ledger.save_plan(plan_id, "draft", items, summary, create=True)
+        self.svc.ledger.add_repair_event(plan_id, "created", {"documents": len(items), "issues": len(issues)})
+        return self.get(plan_id)
+
+    def _deployment_mail_ok(self) -> bool:
+        """The deployment's own mail account may send a plan only in single-user modes. In app mode (the workspace manager sets
+        ``_guard``) anyone can sign up, so a workspace must use its own mail server."""
+        return getattr(self.svc, "_guard", None) is None
+
+    def preview(self, *, min_severity: str | None = None, tenant: str | None = None, types: list[str] | None = None) -> dict[str, Any]:
+        """What a bulk repair of everything matching would do, before anything is created or sent."""
+        issues, items, summary = self._select(min_severity=min_severity, tenant=tenant, types=types)
+        s = self.svc.settings
+        by_severity: dict[str, int] = {}
+        for it in items:
+            by_severity[it["worst_severity"]] = by_severity.get(it["worst_severity"], 0) + 1
+        return {
+            "documents": len(items), "issues": len(issues), "by_severity": by_severity, "summary": summary,
+            "to_reprocess": sum(1 for it in items if it["actions"]), "cleanup_only": sum(1 for it in items if not it["actions"]),
+            "webhook_configured": bool(s.repair_webhook_url or s.is_demo), "email_configured": plan_mail.is_configured(s, deployment_account=self._deployment_mail_ok()),
+        }
+
+    def bulk(self, *, min_severity: str | None = None, tenant: str | None = None, types: list[str] | None = None, send: bool = False,
+             email_to: str | list[str] | None = None, note: str | None = None, base_url: str | None = None) -> dict[str, Any]:
+        """One plan for everything matching; optionally send it to the worker and email it. Each step reports its own outcome,
+        so a missing mail server never undoes a repair that was sent."""
+        plan = self.create_plan(min_severity=min_severity, tenant=tenant, types=types)
+        out: dict[str, Any] = {"plan": plan, "sent": False, "emailed": None, "problems": []}
+        if send:
+            try:
+                plan = self.trigger(plan["id"])
+                out["sent"] = any(e["event"] == "reindex_triggered" for e in plan["events"])
+            except RepairError as exc:
+                out["problems"].append({"step": "send", "message": str(exc)})
+        if email_to:
+            try:
+                plan = self.email_plan(plan["id"], to=email_to, note=note, base_url=base_url)
+                out["emailed"] = parse_recipients(email_to)
+            except RepairError as exc:
+                out["problems"].append({"step": "email", "message": str(exc)})
+        out["plan"] = self.get(plan["id"])
+        return out
+
+    # ------------------------------------------------------------------ export and email
+    def csv(self, plan_id: str) -> str:
+        return plan_mail.plan_csv(self.get(plan_id))
+
+    def email_plan(self, plan_id: str, *, to: str | list[str], note: str | None = None, attach_payload: bool = True,
+                   base_url: str | None = None) -> dict[str, Any]:
+        """Email the plan (summary, CSV and the exact webhook payload) to the people who will fix it. Nothing about the plan changes."""
+        plan = self.get(plan_id)
+        s = self.svc.settings
+        try:
+            recipients = parse_recipients(to)
+            acct = plan_mail.require_account(s, deployment_account=self._deployment_mail_ok())
+            guard = getattr(self.svc, "_guard", None)
+            if guard is not None:
+                guard(s, "email")  # a hosted deployment refuses private or unencrypted mail servers, even if saved earlier
+            # the configured address wins: a link built from a request's Host header could be made to point anywhere
+            base = (s.link_base or base_url or self.svc.callback_base or s.public_base_url or "").rstrip("/")
+            link = f"{base}/issues?view=plans&plan={plan_id}" if base else None
+            payload = self.payload(plan, "reindex") if attach_payload else None
+            msg = plan_mail.build_plan_message(acct, plan, recipients, note=note, link=link, payload=payload)
+            plan_mail.send(acct, msg)
+        except ConnectorError as exc:  # raised by the hosted guard
+            raise RepairError(str(exc), 422) from exc
+        except plan_mail.MailError as exc:
+            raise RepairError(str(exc), exc.status) from exc
+        self.svc.ledger.add_repair_event(plan_id, "emailed", {"to": recipients, "count": len(recipients),
+                                                              "attachments": ["csv"] + (["payload"] if attach_payload else [])})
         return self.get(plan_id)
 
     def get(self, plan_id: str) -> dict[str, Any]:

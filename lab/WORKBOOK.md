@@ -61,6 +61,7 @@ A miniature of the real setup: files at `bills/<bill>/<document>.pdf` in the buc
 | | Required payload fields | `document_id` |
 | | Only audit documents found in the source (S3) | on |
 | Integrations, Repair webhook | Webhook URL / Signing secret | `http://worker-bills:9000/ragi-webhook` / `local-lab-secret` (only needed for the repair practice at the end) |
+| Integrations, Email | SMTP server / Port / Connection security / From address | `mail` / `1025` / `none` / `ragguard@lab.local` (leave Username and Password empty; only needed for the email practice at the end) |
 
 Save each group, press **Check setup** on Data Sources, then **Run audit**. What each document should give:
 
@@ -98,4 +99,14 @@ Put the settings back as in the first table (and save the repair webhook from it
 4. **Run audit** again: **5 documents compared, 0 findings, health 100%**.
 
 Lab A has its own worker, so a repair there never touches Lab B (and the other way round). A worker is *your* pipeline: it must know where your files live and how your vectors and table are laid out, which is why the two labs need two workers.
+
+### Bulk repair and email practice
+
+Lab A is already set up for email (Lab B needs the **Email** row of the settings table). Every email lands in the lab's mail catcher, **http://localhost:8025**, and goes nowhere else.
+
+1. **Integrity Issues**, then **Repair all open issues**. Choose *All severities*. The box shows the documents, chunks, cost and vectors to remove before anything happens.
+2. Turn on **Also email the plan**, type any address (for example `me@example.com`) and a note, and press **Create and send**. One plan holds every document and one signed request carries them all.
+3. Open http://localhost:8025. The email has a summary and a table, a link back to the plan, a **CSV** with every document and the exact JSON the worker received.
+4. In the plan, **Verify now** (or let the worker's callback do it), then **Approve cleanup** for the leftovers, then **Run audit**: Lab A ends at **28 documents, 0 findings, health 100%**.
+5. Any plan also has **Email plan** and **Download CSV**. Try them on a plan that is still a draft.
 
