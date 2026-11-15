@@ -58,6 +58,8 @@ export function LandingFooter({ canRegister }: { canRegister: boolean }) {
           <Link to="/help" className="hover:text-white">User guide</Link>
           <a href={AUDIT_MAILTO} className="hover:text-white">Book a free audit</a>
           <a href={CONTACT_MAILTO} className="hover:text-white">Contact</a>
+          <Link to="/privacy" className="hover:text-white">Privacy</Link>
+          <Link to="/terms" className="hover:text-white">Terms</Link>
         </nav>
       </Container>
       <div className="border-t border-white/5">

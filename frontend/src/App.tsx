@@ -27,6 +27,7 @@ const Settings = lazy(() => import("@/pages/settings"));
 const HelpHome = lazy(() => import("@/pages/help").then((m) => ({ default: m.HelpHome })));
 const HelpChapter = lazy(() => import("@/pages/help").then((m) => ({ default: m.HelpChapter })));
 const HelpPublicLayout = lazy(() => import("@/pages/help").then((m) => ({ default: m.HelpPublicLayout })));
+const LegalPage = lazy(() => import("@/pages/legal"));
 
 function NotFound() {
   return (
@@ -83,6 +84,11 @@ export default function App() {
             <Route index element={<HelpHome />} />
             <Route path=":chapter" element={<HelpChapter />} />
           </Route>
+          {/* the Privacy Policy and the Terms are public too, in the same frame as the guide */}
+          <Route element={<HelpPublicLayout />}>
+            <Route path="privacy" element={<LegalPage doc="privacy" />} />
+            <Route path="terms" element={<LegalPage doc="terms" />} />
+          </Route>
           <Route path="*" element={<AuthPage key="other" session={s} initialMode="login" />} />
         </Routes>
       </Suspense>
@@ -108,6 +114,8 @@ export default function App() {
         <Route path="settings" element={<Settings />} />
         <Route path="help" element={<HelpHome />} />
         <Route path="help/:chapter" element={<HelpChapter />} />
+        <Route path="privacy" element={<LegalPage doc="privacy" />} />
+        <Route path="terms" element={<LegalPage doc="terms" />} />
         <Route path="index.html" element={<Navigate to="/" replace />} />
         {/* signed in already: the sign-in and sign-up addresses lead back into the app */}
         <Route path="login" element={<Navigate to="/" replace />} />

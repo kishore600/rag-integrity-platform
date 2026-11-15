@@ -102,6 +102,7 @@ Open it from **Create your workspace** or **Get started** on the landing page, f
 | **Email** | Your email address. It is lower-cased and trimmed, so `Alice@Example.com` and `alice@example.com` are the same account. |
 | **Password** | The hint under the box reads "At least 10 characters." |
 | **Create account** button | Creates the account, signs you in and opens the app. |
+| Line under the button | "By creating an account you agree to the Terms of Service and confirm you have read the Privacy Policy." Each name links to its page (`/terms`, `/privacy`), which you can read without an account. |
 
 **To create an account:** type an email and a password, then press **Create account**. You do not need to confirm your email. You are signed in at once and land on the Overview, which asks you to connect your data. Your workspace is named after the first part of your email: for `alice@example.com` it is "alice's workspace".
 

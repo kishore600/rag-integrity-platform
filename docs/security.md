@@ -25,7 +25,7 @@ directly (reading, modifying, ignoring, resolving, resetting and hijacking a pla
 
 ## Customer credentials
 
-* S3 keys, database URLs, Qdrant keys and webhook URLs are encrypted with Fernet (AES-128-CBC + HMAC-SHA256) under
+* S3 keys, database URLs, Qdrant keys, the alert webhook URL, the repair signing secret and the SMTP password are encrypted with Fernet (AES-128-CBC + HMAC-SHA256) under
   `RAGI_SECRET_KEY` before they reach the database. The key exists only in the server environment. Rotate by setting
   `RAGI_SECRET_KEY="<new>,<old>"`: the first encrypts, all decrypt.
 * Secrets are write-only through the API and UI: a saved secret is shown as "saved", never returned.
@@ -63,7 +63,7 @@ responses. The web interface renders every value as text (document ids come from
 
 ## Not covered (be aware)
 
-* **No email verification and no password reset** (there is no mail provider). Treat sign-up as open to anyone who can reach the
+* **No email verification and no password reset** (the optional platform mail account only sends audit alerts and test emails). Treat sign-up as open to anyone who can reach the
   URL; close it with `RAGI_ALLOW_REGISTRATION=false` once your team has accounts.
 * **No two-factor authentication, no teams/roles**: one user owns one workspace.
 * The vault protects secrets at rest against database exposure, not against someone who can read the server environment.

@@ -115,6 +115,19 @@ export function AuthPage({ session, initialMode = "login" }: { session: Session;
         <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
           {mode === "login" ? "Sign in" : "Create account"}
         </Button>
+        {mode === "register" ? (
+          <p className="text-center text-support text-ink-2">
+            By creating an account you agree to the{" "}
+            <Link to="/terms" className="font-medium text-brand underline underline-offset-2 hover:text-brand-hover">
+              Terms of Service
+            </Link>{" "}
+            and confirm you have read the{" "}
+            <Link to="/privacy" className="font-medium text-brand underline underline-offset-2 hover:text-brand-hover">
+              Privacy Policy
+            </Link>
+            .
+          </p>
+        ) : null}
       </form>
       {!canRegister ? <p className="mt-4 text-support text-ink-2">New sign-ups are closed on this server.</p> : null}
     </Frame>

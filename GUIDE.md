@@ -601,8 +601,10 @@ the practice lab plants, and a test keeps the two lists equal), **six moments to
 embedding model, when content is deleted, when you serve several customers, when a user says an answer is wrong, when someone asks for
 proof), what you get, how it is secured, which tools it works with, and a short FAQ (including the price: free during the beta). It states
 nothing that is not true of the product (no customer logos or statistics) and has **Sign in** and **Get started** buttons, a **User guide**
-link, a **Free during beta** label, and **Book a free audit** and **Contact** links that open an email to the address set in
-`frontend/src/pages/landing/contact.ts`. Sign-in
+link, a **Free during beta** label, **Book a free audit** and **Contact** links that open an email to the address set in
+`frontend/src/pages/landing/contact.ts`, and **Privacy** and **Terms** links. The Privacy Policy and the Terms of Service are written in
+`docs/legal/privacy.md` and `docs/legal/terms.md` and shown at `/privacy` and `/terms`, publicly and while signed in; the Create account form
+links to both. Sign-in
 lives at `/login` and sign-up at `/signup`; any other address you open while signed out asks you to sign in and then lands where you were
 going (except `/help`, which is public, see below). Once signed in, those two addresses lead straight to the app. The brand mark is a
 faceted shield holding a check drawn as a three-node path (source, manifest and index agreeing); its source is

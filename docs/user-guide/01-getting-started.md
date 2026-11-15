@@ -232,7 +232,7 @@ If you open a hosted RAGGuard server without being signed in, the page at the ro
 | Works with | "The tools you already run" | Two connections are enough to start: Amazon S3 (and S3-compatible stores) and the vector index, Qdrant (self-hosted or Cloud) or pgvector (any PostgreSQL, including LangChain and LlamaIndex tables). The PostgreSQL manifest is marked optional. |
 | FAQ | "Questions, answered" | Seven questions, each of which expands when you click it: does RAGGuard change my data, what do I need to connect, how does it know what my index should contain, how much does it cost (nothing during the beta), what is a free audit, can I run audits from CI or on a schedule, and how are my credentials protected. |
 | Closing call to action | "See what your index is really serving." | "Free during beta", the two buttons again, and the line "Questions first? Read the FAQ or email kishore.knaresh07@gmail.com." |
-| Footer | The RAGGuard mark and a one-line description | **Sign in**, **Create account** (only when sign-ups are open), **FAQ**, **User guide**, **Book a free audit** and **Contact**. |
+| Footer | The RAGGuard mark and a one-line description | **Sign in**, **Create account** (only when sign-ups are open), **FAQ**, **User guide**, **Book a free audit**, **Contact**, **Privacy** and **Terms**. |
 
 ### Where the buttons and links go
 
@@ -244,6 +244,7 @@ If you open a hosted RAGGuard server without being signed in, the page at the ro
 | Menu **User guide**, footer **User guide**, **More in the user guide** under the video | The Help pages, address `/help` |
 | Every **Book a free audit** | A pre-filled email to kishore.knaresh07@gmail.com titled "Free RAGGuard audit" |
 | Footer **Contact**, the email address in the closing section | An email to kishore.knaresh07@gmail.com |
+| Footer **Privacy**, footer **Terms** | The Privacy Policy (`/privacy`) and the Terms of Service (`/terms`). Both are public and are also reachable while you are signed in. |
 
 If the server has closed sign-ups, the hero and the closing section show **Sign in** next to **Book a free audit**, and the Create account choices disappear everywhere. See [Sign in and find your way around](03-interface-and-sign-in.md#create-account).
 
