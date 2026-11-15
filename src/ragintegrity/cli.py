@@ -199,6 +199,18 @@ def cmd_users(args: argparse.Namespace) -> int:
             print(f"There is no account for {args.email}.", file=sys.stderr)
             return 1
         print(f"Password changed for {args.email}. Every session of this account is signed out; sign in with the new password.")
+    elif args.action == "create":
+        # The operator's way to create an account, for example an admin email (RAGI_ADMIN_EMAILS): the public sign-up form
+        # refuses listed emails, because it does not verify addresses. Same password rules and workspace as a sign-up.
+        new = _read_new_password()
+        if new is None:
+            return 2
+        try:
+            user = accounts.register(args.email, new)
+        except AccountError as exc:
+            print(f"Not created: {exc}", file=sys.stderr)
+            return 2
+        print(f"Account created for {user['email']}, with its own workspace. Sign in on the website with this email and password.")
     else:
         u = ledger.t["users"]
         from sqlalchemy import select
@@ -298,8 +310,8 @@ def build_parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init-db", help="create the ledger tables (idempotent) and check connectivity")
     init.set_defaults(fn=cmd_init_db)
 
-    us = sub.add_parser("users", help="list or delete users of the multi-user app, or set a new password for one")
-    us.add_argument("action", choices=["list", "delete", "set-password"])
+    us = sub.add_parser("users", help="list, create or delete users of the multi-user app, or set a new password for one")
+    us.add_argument("action", choices=["list", "create", "delete", "set-password"])
     us.add_argument("email", nargs="?")
     us.add_argument("--yes", action="store_true", help="confirm a delete")
     us.set_defaults(fn=cmd_users)
@@ -325,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "repair" and args.action != "plan" and not args.plan_id:
         print("plan_id is required", file=sys.stderr)
         return 2
-    if args.cmd == "users" and args.action in ("delete", "set-password") and not args.email:
+    if args.cmd == "users" and args.action in ("create", "delete", "set-password") and not args.email:
         print("an email is required", file=sys.stderr)
         return 2
     try:

@@ -76,6 +76,7 @@ database role is read-only, which Qdrant collections exist and whether their pay
 
 ```bash
 ragi users list                       # who has signed up (needs RAGI_DATABASE_URL and RAGI_SECRET_KEY locally)
+ragi users create someone@example.com          # create an account here (asks for the password twice), e.g. an admin's
 ragi users delete someone@example.com --yes   # removes the user and everything in their workspace
 ragi users set-password someone@example.com   # a forgotten password: type the new one twice; the workspace is kept
 ```
@@ -88,9 +89,10 @@ Roll back a bad deploy with `npx vercel promote <previous-deployment-url>`.
 and the latest 200 audits across all workspaces, plus a sign-up to first-audit funnel. It is read-only and never shows
 passwords, keys, connection details, IP addresses or browser strings.
 
-1. Sign up on the live site with the email you want to use as the admin.
+1. Sign up on the live site with the email you want to use as the admin, or create it from your computer with
+   `ragi users create you@example.com` (it asks for the password twice).
 2. In Vercel, set `RAGI_ADMIN_EMAILS` to that email (several are comma-separated) and redeploy.
 3. Sign in again. **Admin** appears at the bottom of the left menu.
 
 Order matters: sign-up does not verify email addresses, so a listed email can no longer be registered through the sign-up
-form (it answers as if the address were taken). Anyone not listed, and every API key, gets a 404 from `/api/admin/*`.
+form (it answers as if the address were taken). If you listed it first, create the account with `ragi users create`. Anyone not listed, and every API key, gets a 404 from `/api/admin/*`.

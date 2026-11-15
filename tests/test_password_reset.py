@@ -1,4 +1,4 @@
-"""The operator's password reset: `ragi users set-password EMAIL`, and Accounts.set_password under it."""
+"""The operator's account tools: `ragi users set-password EMAIL` (with Accounts.set_password under it) and `ragi users create EMAIL`."""
 
 from __future__ import annotations
 
@@ -60,6 +60,21 @@ def run_cli(monkeypatch, tmp_path, argv, stdin=""):
         return cli.main(argv)
     finally:
         get_settings.cache_clear()
+
+
+def test_the_command_creates_an_account_even_for_an_admin_email(monkeypatch, tmp_path, accounts, capsys):
+    """The sign-up form refuses an email listed in RAGI_ADMIN_EMAILS; the operator creates that account here instead."""
+    monkeypatch.setenv("RAGI_ADMIN_EMAILS", "boss@example.com")
+    assert run_cli(monkeypatch, tmp_path, ["users", "create", "Boss@Example.com"], NEW + "\n") == 0
+    assert "Account created for boss@example.com" in capsys.readouterr().out
+    user = accounts.authenticate("boss@example.com", NEW)
+    assert user is not None and accounts.workspace_name(user["workspace_id"]) == "boss's workspace"
+
+    assert run_cli(monkeypatch, tmp_path, ["users", "create", "boss@example.com"], NEW + "\n") == 2  # already exists
+    assert "already exists" in capsys.readouterr().err
+    assert run_cli(monkeypatch, tmp_path, ["users", "create", "new@example.com"], "short\n") == 2  # password rules apply
+    assert "Not created" in capsys.readouterr().err and accounts.authenticate("new@example.com", "short") is None
+    assert run_cli(monkeypatch, tmp_path, ["users", "create"]) == 2  # the email is required
 
 
 def test_the_command_resets_a_password_from_a_pipe(monkeypatch, tmp_path, accounts, capsys):

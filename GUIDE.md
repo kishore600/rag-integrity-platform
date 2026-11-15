@@ -1323,7 +1323,7 @@ Install with `pip install -e ".[dev]"`; the command is `ragi`.
 | `ragi connections` | test the ledger, S3, the manifest database and Qdrant, naming whichever is misconfigured |
 | `ragi setup-check [--json]` | the setup and coverage check (3.10): do S3, the manifest and Qdrant use the same document IDs; exits **1** when the result is `not_ready` |
 | `ragi init-db` | create the ledger tables (idempotent) and check connectivity |
-| `ragi users list` / `ragi users delete EMAIL --yes` / `ragi users set-password EMAIL` | list users; delete a user and everything in their workspace; or set a new password for a user who forgot theirs (asked twice without echo, or one line from a pipe; the same password rules as sign-up; signs the user out everywhere and clears their sign-in lockout; the workspace is untouched). App mode; needs `RAGI_DATABASE_URL` and `RAGI_SECRET_KEY` |
+| `ragi users list` / `ragi users create EMAIL` / `ragi users delete EMAIL --yes` / `ragi users set-password EMAIL` | list users; create an account from the command line (the way to create an admin email's account, since the sign-up form refuses listed emails; same password rules and workspace as a sign-up); delete a user and everything in their workspace; or set a new password for a user who forgot theirs (asked twice without echo, or one line from a pipe; the same password rules as sign-up; signs the user out everywhere and clears their sign-in lockout; the workspace is untouched). App mode; needs `RAGI_DATABASE_URL` and `RAGI_SECRET_KEY` |
 | `ragi worker [--once] [--poll S] [--budget S] [--id NAME]` | run queued audits in the background, for as long as they take, carrying on after every pause (3.17); `--once` does one stretch and exits |
 | `ragi repair plan\|trigger\|verify\|approve-cleanup [PLAN_ID] [--min-severity S] [--tenant T]` | drive the repair workflow |
 
@@ -1341,7 +1341,7 @@ Install with `pip install -e ".[dev]"`; the command is `ragi`.
 | `RAGI_ALLOW_REGISTRATION` | `true` | `false` closes sign-up. |
 | `RAGI_ALLOW_PRIVATE_HOSTS` | `false` | `true` lets users point connectors at private addresses (self-hosting only). It is the SSRF guard. |
 | `RAGI_SESSION_DAYS` | `7` | session lifetime (sliding). |
-| `RAGI_ADMIN_EMAILS` | empty | comma-separated sign-in emails that may open the admin dashboard `/admin` (every account and audit, read-only). Sign up first, then list the email: a listed email cannot be registered through the sign-up form. |
+| `RAGI_ADMIN_EMAILS` | empty | comma-separated sign-in emails that may open the admin dashboard `/admin` (every account and audit, read-only). Sign up first, then list the email, or list it and create the account with `ragi users create EMAIL`: a listed email cannot be registered through the sign-up form. |
 | `RAGI_MAX_AUDIT_SECONDS` | `0` | audit time budget; `0` is unlimited, and 270 is implied on serverless. |
 | `RAGI_SYNC_AUDITS` | `false` | run audits inside the request (implied on Vercel). |
 | `RAGI_AUDIT_QUEUE` | `false` | `true`: `POST /api/audits` only queues a whole-corpus audit; `ragi worker` or `POST /api/worker/step` runs it and carries it on after every pause (3.17). |
@@ -1445,7 +1445,8 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 
 ### 14.4 Day-to-day
 - **Roll back**: `npx vercel promote <previous-deployment-url>`.
-- **Users**: `ragi users list`, `ragi users delete someone@example.com --yes`, `ragi users set-password someone@example.com` (a forgotten
+- **Users**: `ragi users list`, `ragi users create someone@example.com` (asks for the password; the way to create an admin's account),
+  `ragi users delete someone@example.com --yes`, `ragi users set-password someone@example.com` (a forgotten
   password: you type the new one, the account keeps its workspace and every session is signed out), or the **Admin** page (`/admin`) for emails listed in
   `RAGI_ADMIN_EMAILS`: every account with its sign-up and last-active times, saved systems and audits, the latest 200 audits across all
   workspaces, and a sign-up to first-audit funnel. API keys never open it, and it shows no secrets, IP addresses or settings values.

@@ -51,7 +51,8 @@ class Settings(BaseSettings):
     allow_private_hosts: bool = False  # True lets users point connectors at private/loopback hosts (self-hosting only)
     session_days: int = 7
     # comma-separated sign-in emails that may open the admin dashboard (/admin): every account and every audit, read-only.
-    # Sign up first, then add the address: a listed email can no longer be registered through the public sign-up form.
+    # Sign up first, then add the address (or add it and run `ragi users create EMAIL`): a listed email can no longer be registered
+    # through the public sign-up form.
     admin_emails: str = ""
     max_audit_seconds: int = 0  # abort an audit that runs longer (0 = no limit; 50 s is implied on serverless)
     database_url: str = "sqlite:///./data/ragi.db"  # control plane / issue ledger (Supabase Postgres in prod)
