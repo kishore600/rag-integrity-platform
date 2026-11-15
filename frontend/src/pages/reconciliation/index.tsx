@@ -93,7 +93,7 @@ export default function ReconciliationPage() {
     <>
       {header}
       <div className="space-y-6">
-        {o?.audit_running ? <AuditProgressCard run={o.latest_run} /> : null}
+        {o?.audit_running ? <AuditProgressCard run={o.latest_run} progress={o.audit_progress} /> : null}
 
         {overview.isPending ? (
           <ComparisonSkeleton />

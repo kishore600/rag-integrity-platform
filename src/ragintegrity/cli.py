@@ -183,6 +183,22 @@ def cmd_users(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_worker(args: argparse.Namespace) -> int:
+    from .config import get_settings
+    from .worker import Worker, _describe
+
+    worker = Worker(get_settings(), worker_id=args.id, budget=args.budget)
+    if args.once:  # one stretch of work (a cron job, a test); exit code 0 even when there was nothing to do
+        out = worker.run_once()
+        print(_describe(out) if out else "nothing is waiting in the queue")
+        return 1 if out and out["status"] == "failed" else 0
+    try:
+        worker.run_forever(poll_seconds=args.poll)
+    except KeyboardInterrupt:
+        print("worker stopped")
+    return 0
+
+
 def cmd_repair(args: argparse.Namespace) -> int:
     svc = _service()
     if args.action == "plan":
@@ -261,6 +277,13 @@ def build_parser() -> argparse.ArgumentParser:
     us.add_argument("email", nargs="?")
     us.add_argument("--yes", action="store_true", help="confirm a delete")
     us.set_defaults(fn=cmd_users)
+
+    w = sub.add_parser("worker", help="run queued audits in the background, for as long as they take, carrying on after every pause")
+    w.add_argument("--once", action="store_true", help="do one stretch of work on the oldest queued audit, then exit")
+    w.add_argument("--poll", type=float, default=10.0, help="seconds to wait between looks at an empty queue")
+    w.add_argument("--budget", type=float, default=None, help="seconds of work per stretch (default: until the audit is done)")
+    w.add_argument("--id", default=None, help="a name for this worker, shown on the audit it is working on")
+    w.set_defaults(fn=cmd_worker)
 
     rp = sub.add_parser("repair", help="plan / trigger / verify / approve-cleanup")
     rp.add_argument("action", choices=["plan", "trigger", "verify", "approve-cleanup"])

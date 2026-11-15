@@ -11,6 +11,7 @@ workspace condition, so one workspace can never read or modify another's issues,
 
 from __future__ import annotations
 
+import threading
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -51,6 +52,9 @@ PG_SCHEMA = "ragi"
 CHUNK = 400
 DEFAULT_WORKSPACE = "default"  # the single implicit workspace of the non-app modes
 STALE_RUN_SECONDS = 15 * 60  # a run "running" longer than this was abandoned (e.g. a killed serverless function)
+WORKER_STALE_SECONDS = 180  # a worker that has not reported in for this long is presumed dead
+MAX_STALLS = 3  # stretches of a worker's audit in a row that make no progress before it is left (partial) for a person
+_STATS_LOCK = threading.RLock()  # one read-modify-write of a run's stats at a time within a process
 
 
 class RunInProgress(RuntimeError):
@@ -59,6 +63,15 @@ class RunInProgress(RuntimeError):
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return aware(datetime.fromisoformat(value.replace("Z", "+00:00")))
+    except ValueError:
+        return None
 
 
 def aware(dt: datetime | None) -> datetime | None:
@@ -323,6 +336,8 @@ def _public_run(row: Any) -> dict[str, Any]:
     address (a secret) in ``stats.alerts.error``; it is removed on the way out so old rows stop leaking too."""
     out = _public(row)
     stats = out.get("stats")
+    if isinstance(stats, dict) and "options" in stats:  # what a queued audit was asked to do: internal to the worker
+        stats = out["stats"] = {k: v for k, v in stats.items() if k != "options"}
     alert = stats.get("alerts") if isinstance(stats, dict) else None
     if isinstance(alert, dict) and isinstance(alert.get("error"), str):
         out["stats"] = {**stats, "alerts": {**alert, "error": redact_urls(alert["error"])}}
@@ -384,17 +399,28 @@ class Ledger:
                 c.execute(delete(self.t[name]).where(self._w(name)))
 
     # ------------------------------------------------------------------ runs
-    def retire_stale_runs(self, max_age: int = STALE_RUN_SECONDS) -> int:
+    def retire_stale_runs(self, max_age: int = STALE_RUN_SECONDS, *, any_workspace: bool = False) -> int:
         """Mark runs whose process died (a killed serverless function never records a result) as failed, so they cannot
-        block the workspace forever. The message says where the run had got to. Returns how many were retired."""
+        block the workspace forever. The message says where the run had got to. Returns how many were retired.
+
+        A run a worker is on reports in every few seconds, so a worker that has been silent for ``WORKER_STALE_SECONDS`` is dead.
+        If that run was queued for a worker and had finished slices, it is partial (as above) and the next stretch is queued,
+        so the audit carries on by itself."""
         runs = self.t["audit_runs"]
         now = utcnow()
         retired = 0
-        with self.engine.begin() as c:
-            stale = c.execute(select(runs.c.id, runs.c.stats).where(
-                self._w("audit_runs"), runs.c.status == "running", runs.c.started_at < now - timedelta(seconds=max_age))).all()
-            for run_id, stats in stale:
-                progress = stats.get("progress") if isinstance(stats, dict) else None
+        conds = [runs.c.status == "running"] + ([] if any_workspace else [self._w("audit_runs")])
+        with _STATS_LOCK, self.engine.begin() as c:
+            for run_id, workspace_id, kind, trigger, stats, started in c.execute(select(
+                    runs.c.id, runs.c.workspace_id, runs.c.kind, runs.c.trigger, runs.c.stats, runs.c.started_at).where(*conds)).all():
+                stats = stats if isinstance(stats, dict) else {}
+                worker = stats.get("worker") if isinstance(stats.get("worker"), dict) else None
+                if worker:
+                    if now - (_parse_iso(worker.get("heartbeat_at")) or aware(started)) <= timedelta(seconds=WORKER_STALE_SECONDS):
+                        continue
+                elif aware(started) >= now - timedelta(seconds=max_age):
+                    continue
+                progress = stats.get("progress")
                 msg = "abandoned: the process running it stopped"
                 if isinstance(progress, dict) and progress.get("phase"):
                     msg += f" (last step: {progress['phase']}, {progress.get('elapsed_seconds', '?')} s in)"
@@ -406,13 +432,115 @@ class Ledger:
                                   "documents were checked and reported before it stopped. Resume the audit to continue.")
                 c.execute(update(runs).where(runs.c.id == run_id, runs.c.status == "running").values(**values))
                 retired += 1
+                options = stats.get("options") if isinstance(stats.get("options"), dict) else {}
+                if worker and options.get("auto"):
+                    self._queue_next(c, workspace_id, kind, trigger, options, run_id, progressed=bool(checkpoint), now=now)
         return retired
 
-    def latest_resumable_run(self) -> dict[str, Any] | None:
+    def _queue_next(self, c: Connection, workspace_id: str, kind: str, trigger: str, options: dict[str, Any], after: str, *,
+                    progressed: bool, now: datetime) -> str | None:
+        """Queue the next stretch of an audit that a worker is carrying on (it resumes from the last checkpoint). An audit that
+        made no progress ``MAX_STALLS`` times in a row is left partial for a person to look at, not retried for ever."""
+        stalls = 0 if progressed else int(options.get("stalls") or 0) + 1
+        if stalls >= MAX_STALLS:
+            return None
+        run_id = str(uuid.uuid4())
+        c.execute(insert(self.t["audit_runs"]).values(
+            id=run_id, workspace_id=workspace_id, kind=kind, trigger=trigger, scope={}, status="queued", started_at=now,
+            stats={"queued_at": iso(now), "options": {**options, "resume": True, "continues": after, "stalls": stalls}}))
+        return run_id
+
+    def _edit_stats(self, run_id: str, edit: Any, statuses: tuple[str, ...] = ("running",)) -> bool:
+        """Change one run's stats in a single read-modify-write, so a heartbeat and a progress note never overwrite each other."""
+        runs = self.t["audit_runs"]
+        with _STATS_LOCK, self.engine.begin() as c:
+            q = select(runs.c.stats).where(self._w("audit_runs"), runs.c.id == run_id, runs.c.status.in_(statuses))
+            if self.is_pg:
+                q = q.with_for_update()
+            row = c.execute(q).first()
+            if row is None:
+                return False
+            stats = dict(row[0] or {})
+            edit(stats)
+            c.execute(update(runs).where(self._w("audit_runs"), runs.c.id == run_id).values(stats=stats))
+        return True
+
+    # ------------------------------------------------------------------ the queue (audits a worker carries out)
+    def queue_run(self, kind: str, trigger: str, scope: Scope | None, options: dict[str, Any] | None = None) -> str:
+        """Put an audit in the queue. A worker (``claim_run``) picks it up; nothing runs until one does."""
+        run_id = str(uuid.uuid4())
+        now = utcnow()
+        with self.engine.begin() as c:
+            c.execute(insert(self.t["audit_runs"]).values(
+                id=run_id, workspace_id=self.ws, kind=kind, trigger=trigger, scope=(scope.to_json() if scope else {}),
+                status="queued", started_at=now, stats={"queued_at": iso(now), "options": options or {}}))
+        return run_id
+
+    def claim_run(self, worker_id: str, *, any_workspace: bool = False) -> dict[str, Any] | None:
+        """Take the oldest queued audit (of this workspace, or of any when ``any_workspace``) and mark it running.
+        Returns ``{"id", "workspace_id"}``, or None when there is nothing to do. Only one run per workspace may be running,
+        so a workspace that already has one is skipped."""
+        runs = self.t["audit_runs"]
+        conds = [runs.c.status == "queued"] + ([] if any_workspace else [self._w("audit_runs")])
+        with self.engine.connect() as c:
+            candidates = c.execute(select(runs.c.id, runs.c.workspace_id).where(*conds).order_by(runs.c.started_at).limit(25)).all()
+        now = utcnow()
+        for run_id, workspace_id in candidates:
+            try:
+                with _STATS_LOCK, self.engine.begin() as c:
+                    row = c.execute(select(runs.c.stats).where(runs.c.id == run_id, runs.c.status == "queued")).first()
+                    if row is None:
+                        continue  # somebody else took it
+                    stats = dict(row[0] or {})
+                    stats["worker"] = {"id": worker_id, "claimed_at": iso(now), "heartbeat_at": iso(now)}
+                    taken = c.execute(update(runs).where(runs.c.id == run_id, runs.c.status == "queued")
+                                      .values(status="running", stats=stats)).rowcount
+                if taken == 1:
+                    return {"id": run_id, "workspace_id": workspace_id}
+            except IntegrityError:
+                continue  # that workspace already has a running audit
+        return None
+
+    def touch_run(self, run_id: str, worker_id: str) -> bool:
+        """The worker's heartbeat. A run whose worker goes quiet is taken back (``retire_stale_runs``)."""
+        def beat(s: dict[str, Any]) -> None:
+            w = dict(s.get("worker") or {})
+            w.update(id=worker_id, heartbeat_at=iso(utcnow()))
+            w.setdefault("claimed_at", w["heartbeat_at"])
+            s["worker"] = w
+        return self._edit_stats(run_id, beat)
+
+    def get_run_options(self, run_id: str) -> dict[str, Any]:
+        """What a queued audit was asked to do (for instance whether to probe, and whether it resumes an earlier one)."""
+        t = self.t["audit_runs"]
+        with self.engine.connect() as c:
+            row = c.execute(select(t.c.stats).where(self._w("audit_runs"), t.c.id == run_id)).first()
+        opts = (row[0] or {}).get("options") if row else None
+        return opts if isinstance(opts, dict) else {}
+
+    def queue_continuation(self, run_id: str, options: dict[str, Any], *, progressed: bool) -> str | None:
+        """An audit a worker carries out stopped part-way (partial): queue its next stretch, with the ``options`` it was asked
+        with (a finished run no longer holds them). Returns the new run id, or None when it stalled ``MAX_STALLS`` times in
+        a row and was left for a person."""
+        meta = self.get_run(run_id) or {}
+        with self.engine.begin() as c:
+            return self._queue_next(c, self.ws, meta.get("kind", "full"), meta.get("trigger", "worker"), options, run_id,
+                                    progressed=progressed, now=utcnow())
+
+    def active_runs(self) -> list[dict[str, Any]]:
+        """Audits of this workspace that are queued or running (newest first)."""
+        t = self.t["audit_runs"]
+        with self.engine.connect() as c:
+            rows = c.execute(select(t.c.id, t.c.kind, t.c.status).where(self._w("audit_runs"), t.c.status.in_(("queued", "running")))
+                             .order_by(t.c.started_at.desc())).mappings().all()
+        return [dict(r) for r in rows]
+
+    def latest_resumable_run(self, exclude: str | None = None) -> dict[str, Any] | None:
         """The partial full audit that a resumed audit would continue: the newest full run that is not a failure, if it is partial.
-        (A completed full audit after it makes it history: the ledger has moved on.)"""
+        (A completed full audit after it makes it history: the ledger has moved on.)  ``exclude`` is the run that is asking:
+        it, and audits still waiting in the queue, do not hide the checkpoint."""
         for run in self.list_runs(limit=20, kind="full"):
-            if run["status"] == "failed":
+            if run["id"] == exclude or run["status"] in ("failed", "queued"):
                 continue  # a failed attempt (for example a resume that could not reach the index) does not hide the checkpoint
             if run["status"] == "partial" and ((run.get("stats") or {}).get("scan") or {}).get("checkpoint"):
                 return run
@@ -445,10 +573,7 @@ class Ledger:
 
     def set_progress(self, run_id: str, phase: str, **info: Any) -> None:
         """Record where a running audit is, so a run that is killed still shows how far it got."""
-        runs = self.t["audit_runs"]
-        with self.engine.begin() as c:
-            c.execute(update(runs).where(self._w("audit_runs"), runs.c.id == run_id, runs.c.status == "running")
-                      .values(stats={"progress": {"phase": phase, **info}}))
+        self._edit_stats(run_id, lambda s: s.__setitem__("progress", {"phase": phase, **info}))
 
     def start_run(self, kind: str, trigger: str, scope: Scope | None, stale_after: int = STALE_RUN_SECONDS) -> str:
         run_id = str(uuid.uuid4())
@@ -893,7 +1018,7 @@ class Ledger:
                             "document_id": r["document_id"], "type": r["type"], "details": r["details"]})
             for r in c.execute(select(re_).where(self._w("repair_events")).order_by(re_.c.ts.desc()).limit(limit)).mappings():
                 out.append({"kind": "repair", "ts": iso(r["ts"]), "event": r["event"], "plan_id": r["plan_id"], "details": r["details"]})
-            for r in c.execute(select(ar).where(self._w("audit_runs"), ar.c.status != "running")
+            for r in c.execute(select(ar).where(self._w("audit_runs"), ar.c.status.not_in(("running", "queued")))  # finished runs only
                                .order_by(ar.c.started_at.desc()).limit(limit)).mappings():
                 out.append({"kind": "audit", "ts": iso(r["finished_at"] or r["started_at"]), "event": f"audit_{r['status']}",
                             "run_id": r["id"], "details": {"kind": r["kind"], "trigger": r["trigger"], "scope": r["scope"],

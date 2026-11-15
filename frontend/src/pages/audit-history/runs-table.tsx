@@ -20,6 +20,7 @@ import { useClearParams, useUrlParam, useUrlSearch } from "./use-url-state";
 const STATUS_OPTIONS = [
   { value: "", label: "All statuses" },
   { value: "running", label: "Running" },
+  { value: "queued", label: "Waiting for a worker" },
   { value: "completed", label: "Completed" },
   { value: "partial", label: "Partial" },
   { value: "failed", label: "Failed" },
