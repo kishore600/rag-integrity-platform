@@ -817,6 +817,18 @@ the demo server a **Reset demo data** button), **Pipeline** (the *Target pipelin
 *Single-user modes (demo / live) need no sign-in; their Data Sources, Integrations, Alerts and Settings pages are read-only because
 the configuration comes from the server's environment.*
 
+### Admin
+Only for the operator: the menu item appears below **Help and user guide** when your sign-in email is listed in `RAGI_ADMIN_EMAILS`
+(section 11), and `/admin` shows "This page isn't available" to everyone else. Read-only, across every workspace on the server:
+four totals (**Accounts** with new ones in 7 and 30 days, **Active in the last 7 days**, **Audits in the last 7 days** with how many
+failed, **Audits, all time** with how many are running or waiting), the funnel **From sign-up to first audit** (*Signed up*,
+*Connected*: a source and an index saved, *Ran an audit*), and two tabs with a filter by email or workspace. **Accounts**: email
+and workspace, signed up, last active (sign-in or use of the app, recorded at most hourly), connections (*Ready to audit* or *Not
+connected*, and which systems are saved), audits with failures, and the last audit's status, health and size. **Audits**: the latest
+200 across all workspaces with who ran them, status (a failed run shows its error, scrubbed of passwords and web addresses), type
+and trigger, documents, findings, health and duration. It never shows passwords, API keys, connection details, IP addresses or
+browser strings. **Refresh** reloads all of it.
+
 ### Every checkbox, switch and radio button
 Only a handful of controls are tick-boxes; everything else is a drop-down, a clickable severity chip, a tab, a text box or a button.
 
@@ -1244,6 +1256,9 @@ Interactive docs are at `/docs`. Authentication: **public**; **session** (signed
 | GET | `/api/keys` | session only | list API keys |
 | POST | `/api/keys` | session only | create a key (token shown once) |
 | DELETE | `/api/keys/{key_id}` | session only | revoke a key |
+| GET | `/api/admin/overview` | admin session only | totals, the sign-up funnel and a 30-day daily series of sign-ups and audits (404 for everyone else) |
+| GET | `/api/admin/users` | admin session only | every account: sign-up and last-active times, saved systems (kinds only), audit counts and last audit |
+| GET | `/api/admin/audits` | admin session only | the latest audits across all workspaces (`limit`, default 100, at most 500), errors scrubbed |
 | GET | `/api/overview` | session or key | health, counts, trend, latest runs |
 | GET | `/api/connections` | session or key | connector status |
 | POST | `/api/deletion-check` | session or key (20 per 10 min per workspace in the hosted app) | verify deleted documents: remaining vectors, a search test, the verdict and the advice; body `documents` (optional) and `record` (default true) (3.13) |
