@@ -419,7 +419,8 @@ class IntegrityService:
             waited = ago(stats.get("queued_at")) or 0
             if waited > WORKER_QUIET_SECONDS:
                 state = "waiting_for_worker"
-                msg = (f"Waiting for a worker for {waited // 60} min. Nothing is running this audit: start one with `ragi worker`, or "
+                msg = (f"Waiting for a worker for {waited // 60} min. No worker has picked this audit up, so the dashboard runs it "
+                       "for you while this page stays open. To run it without a page open, start a worker with `ragi worker`, or "
                        "call POST /api/worker/step (for example from a scheduled job). "
                        + (f"{counts} are already checked and it carries on from there." if counts else ""))
             else:
