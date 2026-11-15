@@ -1,5 +1,5 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { PlayCircle, ShieldCheck, SearchX } from "lucide-react";
+import { PlayCircle, SearchX, ShieldCheck, Wrench } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -18,6 +18,7 @@ import { documentName, formatNumber, timeAgo, formatDateTime } from "@/lib/forma
 import { ISSUE_TYPES, SEVERITIES, issueLabel, severityRank } from "@/lib/issue-meta";
 import { links } from "@/lib/links";
 import type { Issue, Severity } from "@/types/api";
+import { BulkRepairDialog } from "./bulk-repair-dialog";
 import { IgnoreDialog } from "./parts";
 import { oneOf, useDebouncedParam, useParamState } from "./url-state";
 
@@ -94,6 +95,7 @@ export function IssuesTab({ activeIssueId }: { activeIssueId?: string }) {
   const ignore = useIgnoreIssue();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [ignoreOpen, setIgnoreOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   // The issues the dialog was opened for. Fixed at that moment so the count does not shrink while they are being ignored.
   const [ignoreTargets, setIgnoreTargets] = useState<Issue[]>([]);
 
@@ -259,7 +261,14 @@ export function IssuesTab({ activeIssueId }: { activeIssueId?: string }) {
 
   return (
     <div className="space-y-4">
-      <SeverityChips active={severity} onPick={(s) => set({ severity: s || null })} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <SeverityChips active={severity} onPick={(s) => set({ severity: s || null })} />
+        {(overview.data?.issues.open ?? 0) > 0 ? (
+          <Button variant="secondary" onClick={() => setBulkOpen(true)} title="One plan for every open issue, instead of ticking them one by one">
+            <Wrench className="h-4 w-4" aria-hidden /> Repair all open issues
+          </Button>
+        ) : null}
+      </div>
 
       <Card>
         <FilterBar onClear={clearFilters} active={hasFilters}>
@@ -323,6 +332,7 @@ export function IssuesTab({ activeIssueId }: { activeIssueId?: string }) {
       </Card>
 
       <IgnoreDialog open={ignoreOpen} onOpenChange={setIgnoreOpen} count={ignoreTargets.length} onConfirm={ignoreSelection} />
+      <BulkRepairDialog open={bulkOpen} onOpenChange={setBulkOpen} onCreated={(id) => set({ view: "plans", plan: id }, { replace: false })} />
     </div>
   );
 }

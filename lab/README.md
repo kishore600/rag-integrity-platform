@@ -8,7 +8,8 @@ two copies of RAGGuard to explore them:
 | | Address | What it is | You do |
 |---|---|---|---|
 | **Lab A** | http://localhost:8000 | 30 documents, already connected | Press **Run audit** and compare with the answer sheet. Then fix problems with a repair plan. |
-| **Lab B** | http://localhost:8001 | A miniature of the real "bills" setup, **empty** | Create an account and type the settings in, exactly as a real customer would. |
+| **Lab B** | http://localhost:8001 | A miniature of the real "bills" setup, **empty** | Create an account and type the settings in, exactly as a real customer would. Then repair its two broken bills. |
+| **Mail catcher** | http://localhost:8025 | A fake mailbox: every email the labs send lands here and goes nowhere else | Open it after you press **Email plan**. |
 | Answer sheet | [`WORKBOOK.md`](WORKBOOK.md) | Every planted fault, what RAGGuard should show, the fix | Keep it open next to the app. |
 
 Nothing here touches your real systems: it reads no `.env` file, every port is bound to your own computer, and the lab's seeding script
@@ -23,7 +24,7 @@ docker info
 ```
 
   If that prints a long report, you are ready. If it says it cannot connect to the Docker API, open Docker Desktop and wait.
-- Free these ports: `6333`, `8000`, `8001`, `9000`, `55432` (the lab uses 55432 for PostgreSQL on purpose, so it does not clash
+- Free these ports: `6333`, `8000`, `8001`, `8025`, `9000`, `55432` (the lab uses 55432 for PostgreSQL on purpose, so it does not clash
   with a Postgres you may already run on 5432).
 - About 3 GB of disk space, and 3 to 6 minutes the first time (it downloads images and builds one).
 
@@ -75,6 +76,19 @@ Lab A has a stand-in for your ingestion pipeline (the *reference worker*), so yo
 4. For leftovers (orphans, duplicates, old versions) press **Approve cleanup**. It tells you exactly how many vectors will be removed.
 5. **Run audit** again. The issues you fixed turn *resolved*; the health score goes up.
 
+**Fix everything in one go, and email it.** You do not have to tick documents one by one:
+
+1. **Integrity Issues** → **Repair all open issues** (top right). The box first shows how many documents, chunks, how much cost and how many
+   vectors to remove it involves.
+2. Leave **Send it to my repair worker now** on. Turn on **Also email the plan**, type any address (for example `me@example.com`) and press
+   **Create and send**. One plan holds every document and one signed request carries them all.
+3. Open http://localhost:8025: the email is there, with a summary and table, a link back to the plan, a **CSV** with every document (it opens in
+   Excel) and the exact JSON the worker received.
+4. In the plan, **Verify now** (or wait a few seconds: the worker calls back and the plan updates itself), **Approve cleanup**, then
+   **Run audit**: **28 documents, 0 findings, health 100%**.
+
+Any plan also has **Email plan** and **Download CSV** in its footer, so you can try them on a plan that is still a draft.
+
 Re-seeding puts everything back as it was:
 
 ```bash
@@ -87,7 +101,7 @@ This is the part that matches what a customer does, and what you did with your o
 
 1. Open http://localhost:8001 and **create an account** (any email and password; they stay on your computer).
 2. It shows *Connect your data*. On **Data Sources** open each card and type the values from the **Lab B table in
-   [`WORKBOOK.md`](WORKBOOK.md#lab-b-mini-bills-practise-the-real-sign-up-and-settings-flow)** (bucket `bills-lab`, endpoint `http://s3:5000`,
+   [`WORKBOOK.md`](WORKBOOK.md#lab-b-mini-bills-practise-the-real-sign-up-and-settings-flow)** (bucket `bills-lab`, key prefix `bills/` **with the slash**, endpoint `http://s3:5000`,
    the key pattern, the column map, the payload field map). Press **Save**, then **Test connection**.
 3. Under **Settings → Policy** set **Grace period** to `0`, **Required payload fields** to `document_id`, and switch on
    **Only audit documents found in the source (S3)**.
@@ -95,6 +109,18 @@ This is the part that matches what a customer does, and what you did with your o
 5. **Run audit**. Expected: **5 documents, 2 findings** (one critical, one high), health 60%.
 6. Do the four **exercises** at the end of the workbook: change one setting at a time and see how the answer changes. They teach what each
    switch is for, and where the blind spots are.
+7. **Repair the two broken bills.** Lab B has its own worker (`worker-bills`), because a worker is *your* pipeline and Lab B's files, vectors and
+   table are laid out differently from Lab A's. Open **Integrations → Repair webhook → Configure**, type the address
+   `http://worker-bills:9000/ragi-webhook` and the signing secret `local-lab-secret`, press **Check settings** and **Save**. Then follow
+   **Repair practice** at the end of the workbook: create a plan for both open issues, **Trigger repair**, **Verify now**, **Run audit**.
+   Expected: **5 documents, 0 findings, health 100%**.
+8. **Email a plan from Lab B.** Under **Integrations → Email → Configure** type `mail` as the **SMTP server**, `1025` as the **Port**, `none` as
+   the **Connection security** and `ragguard@lab.local` as the **From address** (leave Username and Password empty), press **Check settings** and
+   **Save**. Then press **Email plan** on a plan and read the result at http://localhost:8025. (`none` is only accepted because this lab is on your
+   own computer; on the hosted site an unencrypted connection is refused.)
+
+   (Do not use `http://worker:9000/...` here: that worker belongs to Lab A. It accepts the request and then cannot find Lab B's files, so
+   **Verify now** reports the bills as not fixed.)
 
 ## 5. Which gap shows up where
 
@@ -139,6 +165,11 @@ http://localhost:6333/dashboard.
 | "port is already allocated" | Something else uses that port. Close it, or change the left-hand number in `docker-compose.lab.yml`. |
 | The seed step fails | Run it again: `docker compose -f docker-compose.lab.yml run --rm seed`. It is safe to repeat. |
 | A page is empty or an audit says "setup required" | Lab A: reload and press **Run audit**. Lab B: finish the four steps in section 4. |
+| Lab B says **0 documents, 0 issues** | Almost always the **Key prefix**: it must be `bills/` **with the slash at the end**. Without it the key pattern cannot match, RAGGuard finds no source documents, and "only audit documents found in the source" then leaves nothing to compare. Fix the prefix, press **Test connection** (the *Key pattern* line must turn green), then **Run audit**. |
+| In Lab A, **Trigger repair** was accepted but **Verify now** says the documents are not fixed | Check the worker: `docker compose -f docker-compose.lab.yml logs worker`. (An old version of the worker failed on the lab's keyless manifest table. Update it with `docker compose -f docker-compose.lab.yml up -d --build --no-deps worker`, then press **Verify now** and **Send repair again**.) |
+| In Lab B, **Trigger repair** was accepted but **Verify now** says the bills are not fixed | The repair webhook points at the wrong worker, or the Lab B worker is not running. The address must be `http://worker-bills:9000/ragi-webhook` (not `http://worker:9000/...`, which is Lab A's). Check it is up with `docker compose -f docker-compose.lab.yml logs worker-bills`. If you updated the project, start it with `docker compose -f docker-compose.lab.yml up -d --build` so the new worker exists. |
+| **Email plan** says "Email is not set up" | Lab A is set up already (restart with `up -d --build` if you updated the project). In Lab B, fill in **Integrations → Email** as in section 4, step 8. |
+| The mail catcher at http://localhost:8025 is empty | Press **Refresh** on that page. It keeps mail in memory only, so restarting the lab empties it. |
 | Everything is a mess | `docker compose -f docker-compose.lab.yml down -v`, then start again. |
 | Docker will not start at all | You can still explore with the built-in demo: `ragi serve --demo` (fake data with faults planted, no Docker needed). |
 

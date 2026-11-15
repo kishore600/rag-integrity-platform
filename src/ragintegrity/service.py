@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from . import alerts, notifications, report
+from . import alerts, notifications, plan_mail, report
 from .config import Settings, get_settings
 from .connectors.base import ConnectorError, UpstreamError
 from .connectors.factory import Connectors, build_connectors
@@ -484,6 +484,7 @@ class IntegrityService:
             # the manifest is optional: the screens say "not connected" instead of calling its absence a fault
             "manifest_connected": bool(self.settings.manifest_database_url) or self.settings.is_demo,
             "index_type": "pgvector" if self.settings.uses_pgvector else "qdrant",
+            "email_configured": plan_mail.is_configured(self.settings, deployment_account=self._guard is None),
         }
 
     def _resumable_summary(self) -> dict[str, Any] | None:

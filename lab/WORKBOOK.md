@@ -46,7 +46,7 @@ A miniature of the real setup: files at `bills/<bill>/<document>.pdf` in the buc
 
 | Page | Field | Value |
 |---|---|---|
-| Data Sources, Amazon S3 | Bucket / Key prefix / Region | `bills-lab` / `bills/` / `us-east-1` |
+| Data Sources, Amazon S3 | Bucket / Key prefix / Region | `bills-lab` / `bills/` / `us-east-1` (**keep the slash at the end of the prefix**: without it the key pattern matches nothing, the audit sees 0 documents and shows "0 issues") |
 | | Custom endpoint | `http://s3:5000` |
 | | Access key ID / Secret access key | `test` / `test` (the lab's fake S3 accepts any keys) |
 | | Content hash | `etag` |
@@ -60,6 +60,8 @@ A miniature of the real setup: files at `bills/<bill>/<document>.pdf` in the buc
 | Settings, Policy | Grace period (minutes) | `0` (the files were created seconds ago; with the default 10 two documents show as *pending*) |
 | | Required payload fields | `document_id` |
 | | Only audit documents found in the source (S3) | on |
+| Integrations, Repair webhook | Webhook URL / Signing secret | `http://worker-bills:9000/ragi-webhook` / `local-lab-secret` (only needed for the repair practice at the end) |
+| Integrations, Email | SMTP server / Port / Connection security / From address | `mail` / `1025` / `none` / `ragguard@lab.local` (leave Username and Password empty; only needed for the email practice at the end) |
 
 Save each group, press **Check setup** on Data Sources, then **Run audit**. What each document should give:
 
@@ -86,4 +88,25 @@ Expected audit with these settings: **5 documents compared, 2 findings** (one cr
 | 2 | Turn **off** *Only audit documents found in the source* | 11 documents, 8 findings, health 27%: orphan vectors for bill `2200001`, orphan-row warnings for `3300001` to `3300003`, orphan vectors for `8000001` and `9000001` (all the orphan vectors are **critical**: the search test finds their pieces at rank 1), plus the two real ones. | Why the switch exists: the key pattern skips most documents, so everything the pattern skips looks like a leftover. On a big shared index the audit would also read every piece and run out of time. |
 | 3 | Turn **off both** switches | 11 documents, 8 findings. Same as above, except `9000001` is now a **Metadata mismatch (medium)**. | The two switches decide which of the two directions (file to shelf, shelf to file) the audit checks. |
 | 4 | Per bill: Key pattern `^(?P<document_id>[^/]+)/[^/]+\.pdf$` and Column map `document_id` set to `external_bill_id` | 7 documents, 3 findings (bill `2200002` **critical**, `2300004` critical, `2300005` high), a **duplicate manifest ID** warning, health 57%. | Bill-level checking works, but bill `2200001` (two documents) would stay healthy even if only one of them were indexed, because Qdrant only knows the bill. |
+
+### Repair practice: fix the two broken bills
+
+Put the settings back as in the first table (and save the repair webhook from its last row), run the audit, then:
+
+1. **Integrity Issues**: tick both open issues (`2300004`, `2300005`) and press **Create repair plan**.
+2. Open the plan and press **Trigger repair**. RAGGuard sends a signed request to the Lab B worker (`worker-bills`).
+3. Press **Verify now**. The worker found each file from its address in the plan, wrote its pieces into `bill_chunks` and marked the row `is_indexed` in `bill_documents`, so both bills show **Completed**.
+4. **Run audit** again: **5 documents compared, 0 findings, health 100%**.
+
+Lab A has its own worker, so a repair there never touches Lab B (and the other way round). A worker is *your* pipeline: it must know where your files live and how your vectors and table are laid out, which is why the two labs need two workers.
+
+### Bulk repair and email practice
+
+Lab A is already set up for email (Lab B needs the **Email** row of the settings table). Every email lands in the lab's mail catcher, **http://localhost:8025**, and goes nowhere else.
+
+1. **Integrity Issues**, then **Repair all open issues**. Choose *All severities*. The box shows the documents, chunks, cost and vectors to remove before anything happens.
+2. Turn on **Also email the plan**, type any address (for example `me@example.com`) and a note, and press **Create and send**. One plan holds every document and one signed request carries them all.
+3. Open http://localhost:8025. The email has a summary and a table, a link back to the plan, a **CSV** with every document and the exact JSON the worker received.
+4. In the plan, **Verify now** (or let the worker's callback do it), then **Approve cleanup** for the leftovers, then **Run audit**: Lab A ends at **28 documents, 0 findings, health 100%**.
+5. Any plan also has **Email plan** and **Download CSV**. Try them on a plan that is still a draft.
 

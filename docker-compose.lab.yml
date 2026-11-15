@@ -40,6 +40,13 @@ services:
     image: motoserver/moto:5.0.28
     ports: ["127.0.0.1:9000:5000"]   # moto listens on 5000 inside; you can reach it from your computer on 9000
 
+  mail:   # the lab's mail catcher: every email the apps send lands on a web page and goes nowhere else
+    <<: *app
+    command: ["python", "scripts/mail_sink.py"]
+    ports: ["127.0.0.1:8025:8025"]   # open http://localhost:8025 to read what was "sent"
+    healthcheck:
+      disable: true   # the app image's health check looks at port 8000
+
   seed:
     <<: *app
     command: ["python", "scripts/seed_lab.py"]
@@ -57,6 +64,8 @@ services:
   worker:   # the reference repair worker: stands in for YOUR ingestion pipeline when RAGGuard asks it to re-index
     <<: *app
     command: ["uvicorn", "examples.reference_worker.worker:app", "--host", "0.0.0.0", "--port", "9000"]
+    healthcheck:
+      disable: true   # the app image's health check looks at port 8000 and would wrongly mark this worker (port 9000) "unhealthy"
     environment:
       RAGI_WORKER_AUTOSTART: "1"
       S3_BUCKET: docs
@@ -65,6 +74,25 @@ services:
       <<: *s3-keys
       QDRANT_URL: http://qdrant:6333
       MANIFEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      RAGI_REPAIR_WEBHOOK_SECRET: local-lab-secret
+    depends_on:
+      seed: { condition: service_completed_successfully }
+
+  worker-bills:   # the repair worker for Lab B: the same webhook, but it knows the bills layout (bucket bills-lab, bill_chunks, bill_documents)
+    <<: *app
+    command: ["uvicorn", "examples.reference_worker.worker:app", "--host", "0.0.0.0", "--port", "9000"]
+    healthcheck:
+      disable: true   # the app image's health check looks at port 8000 and would wrongly mark this worker (port 9000) "unhealthy"
+    environment:
+      RAGI_WORKER_AUTOSTART: "1"
+      RAGI_WORKER_KIND: bills
+      S3_ENDPOINT_URL: http://s3:5000
+      AWS_REGION: us-east-1
+      <<: *s3-keys
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: bill_chunks
+      MANIFEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      MANIFEST_TABLE: bill_documents
       RAGI_REPAIR_WEBHOOK_SECRET: local-lab-secret
     depends_on:
       seed: { condition: service_completed_successfully }
@@ -95,9 +123,14 @@ services:
       RAGI_REPAIR_WEBHOOK_URL: http://worker:9000/ragi-webhook
       RAGI_REPAIR_WEBHOOK_SECRET: local-lab-secret
       RAGI_PUBLIC_BASE_URL: http://app-lab:8000
+      RAGI_SMTP_HOST: mail             # email a plan: it lands in the mail catcher at http://localhost:8025
+      RAGI_SMTP_PORT: "1025"
+      RAGI_SMTP_SECURITY: none
+      RAGI_SMTP_FROM: ragguard@lab.local
     depends_on:
       seed: { condition: service_completed_successfully }
       worker: { condition: service_started }
+      mail: { condition: service_started }
 
   app-bills:   # Lab B: the multi-user app, empty. You create an account and enter the settings.
     <<: *app

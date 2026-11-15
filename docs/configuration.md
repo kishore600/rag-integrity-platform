@@ -96,3 +96,8 @@ drift. `medium`: duplicates, superseded vectors, chunking drift, count mismatche
 * **Cost estimates**: `RAGI_EMBEDDING_PRICE_PER_MTOK` and `RAGI_CHUNK_SIZE_TOKENS` feed the reindex recommendations.
 
 * **Notifications and email**: after every audit that finishes, a notification is added under the bell, each with its next-step buttons (Resume audit, Run it again, Review the issues, Verify deletions), and an email with the same content is sent when `RAGI_ALERT_EMAIL_WHEN` allows it (`always`, `attention` or `never`). Email needs the mail account: `RAGI_SMTP_HOST` and `RAGI_SMTP_FROM` (plus `RAGI_SMTP_PORT`, `RAGI_SMTP_USER`, `RAGI_SMTP_PASSWORD`, `RAGI_SMTP_SECURITY`), `RAGI_ALERT_EMAIL_TO` in single-user modes (app mode emails each workspace's own users), and `RAGI_APP_URL` for the links. See GUIDE.md 3.14.
+* **Email a repair plan**: a person can email a plan (summary, CSV and the exact worker payload) from the plan panel. It is sent only
+  when someone presses **Email plan**; there is no scheduled or automatic mail. In single-user modes it goes out through the same mail
+  account as the audit alerts (`RAGI_SMTP_*`); to use another server set `RAGI_PLAN_MAIL_HOST` and `RAGI_PLAN_MAIL_FROM` (plus
+  `RAGI_PLAN_MAIL_PORT`, `RAGI_PLAN_MAIL_SECURITY`, `RAGI_PLAN_MAIL_USERNAME`, `RAGI_PLAN_MAIL_PASSWORD`). In app mode the platform's
+  account is never used: each workspace fills in its own **Email** settings, a public mail server on port 25, 465, 587 or 2525, always encrypted.

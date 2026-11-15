@@ -125,6 +125,16 @@ class Settings(BaseSettings):
     cleanup_policy: str = "manual"  # manual = an operator must approve vector removal
     alert_webhook_url: str | None = None  # Slack-compatible incoming webhook
     alert_min_severity: str = "high"
+
+    # --- email a repair plan, through the user's OWN mail server (a workspace's Email settings in app mode). When these are empty,
+    # single-user modes fall back to the deployment's mail account (smtp_* below); app mode never does. ----------------------------
+    plan_mail_host: str | None = None  # your mail server (or a provider's SMTP relay)
+    plan_mail_port: int = 587
+    plan_mail_security: str = "starttls"  # starttls | ssl | none ("none" only on a private network)
+    plan_mail_username: str | None = None
+    plan_mail_password: str | None = None
+    plan_mail_from: str | None = None  # the From address; your mail server must allow it
+
     embedding_price_per_mtok: float = 0.13  # USD per 1M tokens, for workload estimates
 
     # --- audit notifications: an in-app notification after every audit, and an email -----------------

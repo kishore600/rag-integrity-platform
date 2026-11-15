@@ -22,14 +22,17 @@ import hmac
 import json
 import os
 import time
+import uuid
+from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from ragintegrity.demo.pipeline import build_points
+from ragintegrity.demo.pipeline import build_points, embed
 from ragintegrity.models import Fingerprint, sha256_hex
 
 TOLERANCE_S = 300
@@ -92,14 +95,18 @@ class Worker:
         }
         cols = ", ".join(MANIFEST_COLS)
         vals = ", ".join(f":{c}" for c in MANIFEST_COLS)
-        upd = ", ".join(f"{c} = excluded.{c}" for c in MANIFEST_COLS if c not in ("tenant_id", "document_id"))
+        sets = ", ".join(f"{c} = :{c}" for c in MANIFEST_COLS if c not in ("tenant_id", "document_id"))
         with self.engine.begin() as c:
             # keep the previously recorded ACL hash: this toy pipeline does not compute ACLs
             existing = c.execute(text(f"SELECT acl_hash FROM {self.q}rag_document_manifest WHERE tenant_id=:t AND document_id=:d"),
                                  {"t": tenant, "d": doc}).first()
             row["acl_hash"] = existing[0] if existing else None
-            c.execute(text(f"INSERT INTO {self.q}rag_document_manifest ({cols}) VALUES ({vals}) "
-                           f"ON CONFLICT (tenant_id, document_id) DO UPDATE SET {upd}"), row)
+            # UPDATE, then INSERT when nothing was there. Not "INSERT ... ON CONFLICT": that needs a unique key on
+            # (tenant_id, document_id), and many real manifest tables have none (the practice lab's duplicate-row exercise removes it).
+            updated = c.execute(text(f"UPDATE {self.q}rag_document_manifest SET {sets} WHERE tenant_id = :tenant_id AND document_id = :document_id"),
+                                row).rowcount
+            if not updated:
+                c.execute(text(f"INSERT INTO {self.q}rag_document_manifest ({cols}) VALUES ({vals})"), row)
             c.execute(text(f"DELETE FROM {self.q}rag_chunk_manifest WHERE tenant_id=:t AND document_id=:d"), {"t": tenant, "d": doc})
             if chunk_rows:
                 c.execute(text(f"INSERT INTO {self.q}rag_chunk_manifest (tenant_id, document_id, chunk_id, chunk_index, chunk_hash) "
@@ -135,7 +142,70 @@ class Worker:
         return self.reindex(payload) if payload["phase"] == "reindex" else self.cleanup(payload)
 
 
-def create_app(worker: Worker, secret: str, background: bool = True) -> FastAPI:
+class BillsWorker:
+    """The same webhook contract for a different pipeline: the practice lab's "mini bills" (Lab B).
+
+    Your pipeline will not look like the first worker above, and this one shows what changes: the file is found from the plan's
+    ``source_uri`` (not rebuilt from tenant and document), the vectors only carry the bill as ``source_id`` and go into their own
+    collection, and "indexed" is a true/false column in the pipeline's own table. The rules do not change: add or replace with
+    deterministic point ids in the reindex phase, delete only the exact ids you are given in the cleanup phase.
+    """
+
+    MODEL, DIM, PIECE = "demo-embed-v2", 16, 40
+
+    def __init__(self, s3: Any, qdrant: Any, manifest_engine: Engine, collection: str = "bill_chunks",
+                 table: str = "bill_documents", schema: str | None = None) -> None:
+        self.s3, self.qdrant, self.engine, self.collection = s3, qdrant, manifest_engine, collection
+        self.table = f"{schema}.{table}" if schema else table
+
+    def reindex(self, payload: dict[str, Any]) -> int:
+        from qdrant_client import models as qm
+
+        pg = self.engine.dialect.name == "postgresql"
+        done = 0
+        for item in payload["items"]:
+            doc, uri = item["document_id"], item.get("source_uri") or ""
+            where = urlparse(uri)
+            if where.scheme != "s3" or not where.netloc:
+                raise ValueError(f"document {doc}: the plan has no s3:// source_uri to read the file from (got {uri!r})")
+            body = self.s3.get_object(Bucket=where.netloc, Key=where.path.lstrip("/"))["Body"].read()
+            content = body.decode("utf-8", errors="replace")  # <- your parser goes here
+            pieces = [content[i : i + self.PIECE] for i in range(0, len(content), self.PIECE)] or [""]
+            base = int(doc) if doc.isdigit() else int(sha256_hex(doc)[:8], 16)
+            points = []
+            for i, piece in enumerate(pieces):
+                snippet = f"Section {i + 1} of bill {doc}. {piece}"
+                points.append(qm.PointStruct(
+                    id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"bills/{doc}/{i}")),  # deterministic: a retry replaces, never duplicates
+                    vector=embed(snippet, self.DIM, self.MODEL),
+                    payload={"source_db": "lab", "source_table": "bills", "source_id": doc, "chunk_id": base * 100 + i, "jurisdiction": "NM",
+                             "text": snippet, "span": f"{i}:{i}", "modality": "text", "year": 2026, "bill_number": f"B{doc[-4:]}",
+                             "chamber": "S", "session_id": 2251}))
+            self.qdrant.upsert(self.collection, points)
+            now = datetime.now(timezone.utc)
+            with self.engine.begin() as c:  # the pipeline's own bookkeeping: mark it indexed and clear the old error
+                c.execute(text(f"UPDATE {self.table} SET is_indexed = :idx, indexed_at = :now, last_error = NULL, updated_at = :now "
+                               "WHERE external_doc_id = :d"),
+                          {"idx": True if pg else "True", "now": now if pg else now.isoformat(), "d": doc})
+            done += 1
+        return done
+
+    def cleanup(self, payload: dict[str, Any]) -> int:
+        from qdrant_client import models as qm
+
+        removed = 0
+        for group in payload["cleanup"]:
+            ids = list(group["point_ids"])
+            for i in range(0, len(ids), 500):
+                self.qdrant.delete(group.get("collection") or self.collection, points_selector=qm.PointIdsList(points=ids[i : i + 500]))
+            removed += len(ids)
+        return removed
+
+    def handle(self, payload: dict[str, Any]) -> int:
+        return self.reindex(payload) if payload["phase"] == "reindex" else self.cleanup(payload)
+
+
+def create_app(worker: Worker | BillsWorker, secret: str, background: bool = True) -> FastAPI:
     app = FastAPI(title="RAG Integrity reference worker")
 
     def run(payload: dict[str, Any]) -> None:
@@ -177,5 +247,22 @@ def app_from_env() -> FastAPI:  # pragma: no cover - wiring for docker-compose
     return create_app(worker, os.environ["RAGI_REPAIR_WEBHOOK_SECRET"])
 
 
+def app_bills_from_env() -> FastAPI:  # pragma: no cover - wiring for docker-compose.lab.yml (Lab B)
+    import boto3
+    from qdrant_client import QdrantClient
+    from sqlalchemy import create_engine
+
+    from ragintegrity.config import normalize_db_url
+
+    worker = BillsWorker(
+        s3=boto3.client("s3", endpoint_url=os.environ.get("S3_ENDPOINT_URL"), region_name=os.environ.get("AWS_REGION", "us-east-1")),
+        qdrant=QdrantClient(url=os.environ["QDRANT_URL"], check_compatibility=False),
+        manifest_engine=create_engine(normalize_db_url(os.environ["MANIFEST_DATABASE_URL"])),
+        collection=os.environ.get("QDRANT_COLLECTION", "bill_chunks"), table=os.environ.get("MANIFEST_TABLE", "bill_documents"),
+        schema=os.environ.get("MANIFEST_SCHEMA", "public"),
+    )
+    return create_app(worker, os.environ["RAGI_REPAIR_WEBHOOK_SECRET"])
+
+
 if os.environ.get("RAGI_WORKER_AUTOSTART"):  # pragma: no cover
-    app = app_from_env()
+    app = app_bills_from_env() if os.environ.get("RAGI_WORKER_KIND") == "bills" else app_from_env()

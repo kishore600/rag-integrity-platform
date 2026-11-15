@@ -465,6 +465,19 @@ Where: **Alerts**, Alert webhook card. Detail: [Alerts](13-alerts.md).
 | Webhook URL | `webhook_url` | address (a Slack-compatible incoming webhook) | Yes | none |
 | Minimum severity | `min_severity` | `critical`, `high`, `medium`, `low` | No | `high` |
 
+### Email
+
+Where: **Integrations**, Email card. Detail: [Integrations](12-integrations.md#email).
+
+| Label | Internal key | Type | Required | Secret | Default |
+|---|---|---|---|---|---|
+| SMTP server | `host` | host name | Yes | No | none |
+| Port | `port` | whole number, 1 to 65,535 | No | No | `587` |
+| Connection security | `security` | `starttls`, `ssl`, `none` | No | No | `starttls` |
+| Username | `username` | text | No | No | none |
+| Password | `password` | text | No | Yes | none |
+| From address | `from_address` | email address | Yes | No | none |
+
 ### Audit policy
 
 Where: **Settings**, **Policy** tab, card "Audit policy". Detail: [Settings](14-settings.md).

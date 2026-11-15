@@ -67,6 +67,10 @@ export function describeRepairEvent(e: RepairEvent): { title: string; tone: Tone
       };
     case "worker_callback":
       return { title: "Your worker reported back", tone: "neutral" };
+    case "emailed": {
+      const to = Array.isArray(d.to) ? d.to.filter((x): x is string => typeof x === "string") : [];
+      return { title: "Plan emailed", tone: "info", body: to.length ? `To ${to.slice(0, 3).join(", ")}${to.length > 3 ? ` and ${to.length - 3} more` : ""}` : undefined };
+    }
     default:
       return { title: cap(e.event), tone: "neutral" };
   }

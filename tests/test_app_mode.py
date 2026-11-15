@@ -162,7 +162,7 @@ def test_settings_view_hides_secrets_and_tracks_readiness(client):
     assert not any(k["configured"] for k in v["kinds"])  # a brand-new workspace has nothing configured, optional groups included
     client.put("/api/settings/policy", json={"values": {"grace_minutes": 3}})
     assert next(k for k in client.get("/api/settings").json()["kinds"] if k["kind"] == "policy")["configured"] is True
-    assert {k["kind"] for k in v["kinds"]} == {"s3", "manifest", "qdrant", "index", "pgvector", "pipeline", "repair", "alerts", "policy"}
+    assert {k["kind"] for k in v["kinds"]} == {"s3", "manifest", "qdrant", "index", "pgvector", "pipeline", "repair", "alerts", "email", "policy"}
     assert {k["kind"] for k in v["kinds"] if k["required_for_audit"]} == {"s3", "qdrant"}
     r = client.put("/api/settings/s3", json={"values": {"bucket": "my-docs", "access_key_id": "AKIAEXAMPLE", "secret_access_key": "TOPSECRET-123",
                                                           "region": "us-east-1", "hash_mode": "compute"}})

@@ -95,6 +95,31 @@ The tab has two cards:
 4. Wait until your worker has finished.
 5. Click **Verify now**. A notice tells you the result.
 
+### Repair everything at once
+
+You do not have to send documents one at a time. One plan can hold any number of documents, and one signed request carries all of them.
+
+1. On the Issues tab, click **Repair all open issues** (top right, next to the severity chips).
+2. Choose **Which issues** (*All severities*, *High and critical* or *Critical only*) and, if you like, one tenant. The box underneath updates to show how many documents and issues, how many chunks to re-process, the estimated cost and how many vectors would need removing later.
+3. Leave **Send it to my repair worker now** on to create the plan and send it in one step, or turn it off to only create the plan. It is off and explained when no repair worker is set up.
+4. Optionally turn on **Also email the plan**, type the addresses and a note (see the next task).
+5. Click **Create and send** (or **Create plan**). The plan opens. Removing old vectors still waits for **Approve cleanup**.
+
+If the plan was created but sending or emailing did not work, you get a warning with the reason, and the plan is there to try again.
+
+### Email a plan to the people who will fix it
+
+Use this when a person, not a program, will do the work, or to tell the team what is coming.
+
+1. Open the plan and click **Email plan**.
+2. Under **Send to**, type up to 10 email addresses separated by commas or spaces. Add a **Note** if you like.
+3. Leave **Attach the exact payload (JSON)** on if a developer will build or run a worker; turn it off for a plain to-do list.
+4. Click **Send email**. The plan's History gets a line "Plan emailed" with who it went to.
+
+The email has a readable summary and a table of the documents with what to do for each, a link back to the plan, a **CSV** with every document (it opens in Excel and Google Sheets) and, unless you turned it off, the JSON your worker would receive. Nothing changes in the plan.
+
+If email is not set up, the dialog says so and links to [Integrations](12-integrations.md#email). You can always click **Download CSV** instead. After the fix is done, open the link in the email and click **Verify now**, or run an audit.
+
 ### Remove old vectors
 
 1. When the status is **Cleanup pending**, click **Approve cleanup**.
@@ -241,6 +266,8 @@ The buttons are in the footer of the panel.
 | Button | Shown when the status is | What it does |
 |---|---|---|
 | **View payload** / **Hide payload** | Always | Shows or hides the payload section. |
+| **Download CSV** | Always | Downloads every document of the plan, with what to do for each, as a spreadsheet file. |
+| **Email plan** | Always | Opens the dialog to email the plan to up to 10 people. See [Email a plan to the people who will fix it](#email-a-plan-to-the-people-who-will-fix-it). |
 | **Trigger repair** | Draft | Sends the signed reindex request to your worker. The plan becomes Triggered. A notice says "Repair sent to your worker" with the number of documents to reprocess. |
 | **Send repair again** | Partial, Failed | Sends the request again for the documents that are still planned or failed. The plan becomes Triggered. |
 | **Verify now** | Triggered, Partial, Failed, Cleanup triggered | Runs the verification audit and updates every document and the plan. A notice says "Verified" ("Every repair is in place."), "Replacements verified" ("The old vectors are waiting for your approval.") or "Verified: not everything is fixed yet" ("Some documents still have issues. See the results in the plan."). |
@@ -248,7 +275,7 @@ The buttons are in the footer of the panel.
 
 A button shows a spinner while it works. If something fails you get a notice such as "Couldn't send the repair", "Couldn't verify the plan" or "Couldn't create the repair plan" with the reason. See [Messages you may see](#messages-you-may-see).
 
-The panel does not refresh by itself while you wait for your worker. If your worker calls back, close and reopen the plan (or reload the page) to see the new state.
+While a plan is **Triggered** or **Cleanup triggered**, the panel re-reads itself every few seconds. When your worker calls back, RAGGuard verifies the plan on its own and the panel shows the new state without a reload. A worker that does not call back never moves the plan, so click **Verify now** when it has finished.
 
 Panel states: while it loads you see grey blocks. If the plan cannot be found you see "Repair plan not found": "It may belong to another workspace. Go back to the list to pick another." with **Back to plans**. If it fails to load you see "Couldn't load this plan" with the reason and **Try again**.
 

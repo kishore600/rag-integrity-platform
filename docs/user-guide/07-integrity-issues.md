@@ -122,6 +122,10 @@ All filters are combined (an issue must match all of them). **Clear filters** ap
 
 ### Sorting, paging and the 500-row note
 
+### Repair everything that is open, in one step
+
+To repair every open issue (or every high and critical one, or every issue of one tenant) without ticking rows, click **Repair all open issues** at the top right. A box shows what it would involve first, can send the plan to your repair worker in the same step and can email it. See [Repair plans](08-repair-plans.md#repair-everything-at-once).
+
 - Click a column title to sort by it; click again to reverse. The first sort is **Severity**, worst first. Sorting happens in your browser over the rows that were loaded.
 - The table shows 25 rows per page. The **Rows** drop-down offers 10, 25, 50 and 100. Use the arrows to move between pages ("Page 1 of 3"). The line under the table reads "Showing 1-25 of 60".
 - The page loads at most 500 issues. When there are more matches you see "Showing the first 500 of N. Narrow the filters." Use the filters to reach the rest. Sorting and "select all" only work on the loaded rows.

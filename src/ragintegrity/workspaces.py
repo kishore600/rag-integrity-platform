@@ -13,12 +13,14 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+from . import plan_mail
 from .accounts import AccountError, Accounts
 from .config import Settings, check_identifier
 from .connectors.base import ConnectorError, SetupIncomplete
 from .connectors.factory import Connectors, build_connectors
 from .ledger import Ledger, iso, utcnow
-from .security import UnsafeTarget, assert_public_url, validate_postgres_url
+from .plan_mail import MailError, check_address
+from .security import UnsafeTarget, assert_public_host, assert_public_url, validate_postgres_url
 from .service import IntegrityService
 
 
@@ -170,6 +172,24 @@ SPECS: dict[str, Spec] = {
             Field("min_severity", "alert_min_severity", "Minimum severity", type="enum", choices=("critical", "high", "medium", "low")),
         ),
     ),
+    "email": Spec(
+        "Email",
+        "Your mail server, so a repair plan can be emailed to the people who will fix it. Nothing is ever sent unless a person "
+        "presses Email plan and types the recipients.",
+        (
+            Field("host", "plan_mail_host", "SMTP server", type="host", required=True, placeholder="smtp.example.com", max_len=253,
+                  help="Your mail server or your email provider's SMTP relay (Gmail, Outlook, SendGrid, Amazon SES, ...)."),
+            Field("port", "plan_mail_port", "Port", type="int", min=1, max=65535,
+                  help="587 with starttls, 465 with ssl. A hosted deployment only allows 25, 465, 587 and 2525."),
+            Field("security", "plan_mail_security", "Connection security", type="enum", choices=("starttls", "ssl", "none"),
+                  help="starttls (port 587) or ssl (port 465). none is only accepted on a private network you run yourself."),
+            Field("username", "plan_mail_username", "Username", max_len=256, help="Usually your full email address. Leave empty for a relay that needs no sign-in."),
+            Field("password", "plan_mail_password", "Password", secret=True, max_len=256,
+                  help="Stored encrypted and never shown again. For Gmail and similar, use an app password, not your normal one."),
+            Field("from_address", "plan_mail_from", "From address", type="email", required=True, placeholder="ragguard@your-company.com",
+                  max_len=254, help="The sender shown on the email. Your mail server must let you send from it."),
+        ),
+    ),
     "policy": Spec(
         "Audit policy",
         "Tuning knobs for audits and estimates.",
@@ -238,6 +258,15 @@ def _clean(f: Field, raw: Any, allow_private: bool) -> Any:
                 raise bad(f"must be one of {', '.join(f.choices)}")
         elif f.type == "url":
             assert_public_url(s, allow_private)
+        elif f.type == "host":
+            if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.\-]{0,251}[A-Za-z0-9])?", s):
+                raise bad("must be a host name such as smtp.example.com (no http://, no port)")
+            assert_public_host(s, None, allow_private)
+        elif f.type == "email":
+            try:
+                s = check_address(s)
+            except MailError as exc:
+                raise bad("is not a valid email address") from exc
         elif f.type == "pgurl":
             validate_postgres_url(s, allow_private)
         elif f.type == "json":
@@ -335,6 +364,8 @@ def guard_settings(settings: Settings, kind: str | None = None) -> None:
             assert_public_url(settings.repair_webhook_url, ap)
         if kind in (None, "alerts") and settings.alert_webhook_url:
             assert_public_url(settings.alert_webhook_url, ap)
+        if kind in (None, "email") and settings.plan_mail_host:
+            plan_mail.guard(settings)
     except UnsafeTarget as exc:
         raise ConnectorError(str(exc)) from exc
 
@@ -397,6 +428,11 @@ class WorkspaceManager:
             raise AccountError("Unknown settings group.", 404)
         rows = self.accounts.load_settings(ws).get(kind, {"config": {}, "secrets": {}})
         cfg, sec = apply_values(kind, rows["config"], rows["secrets"], values, self.base.allow_private_hosts)
+        if kind == "email" and cfg.get("host"):  # fields that only make sense together: refuse an unsafe pair now, not at send time
+            try:
+                plan_mail.guard(overlay(self.base, {"email": {"config": cfg, "secrets": sec}}))
+            except UnsafeTarget as exc:
+                raise AccountError(f"Email: {exc}", 422) from exc
         self.accounts.save_settings(ws, kind, cfg, sec)
         self.invalidate(ws)
         return self.view(ws)
@@ -473,4 +509,6 @@ class WorkspaceManager:
                 return idx.diagnose()
             finally:
                 idx.engine.dispose()
+        if kind == "email":
+            return plan_mail.diagnose(settings)  # connects, encrypts and signs in; sends nothing
         return [{"name": "Settings", "status": "ok", "detail": "valid"}]

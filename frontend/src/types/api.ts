@@ -154,6 +154,7 @@ export interface Overview {
   scheduler_interval_minutes: number;
   cleanup_policy: string;
   repair_webhook_configured: boolean;
+  email_configured: boolean;
 }
 
 /** Evidence differs per issue type; see lib/issue-meta.ts for how it is read. */
@@ -364,7 +365,7 @@ export interface BlastRadius {
 }
 
 // ---- settings (connections) --------------------------------------------------------------------------
-export type SettingsKind = "s3" | "manifest" | "qdrant" | "index" | "pgvector" | "pipeline" | "repair" | "alerts" | "policy";
+export type SettingsKind = "s3" | "manifest" | "qdrant" | "index" | "pgvector" | "pipeline" | "repair" | "alerts" | "email" | "policy";
 export type FieldType = "str" | "int" | "float" | "bool" | "enum" | "url" | "pgurl" | "json" | "ident" | "regex" | "csv";
 
 export interface SettingsField {
@@ -514,6 +515,41 @@ export interface PlanRequest {
   min_severity?: Severity;
   tenant?: string;
   types?: string[];
+}
+
+/** What repairing everything that matches would do, before anything is created or sent. */
+export interface BulkPreview {
+  documents: number;
+  issues: number;
+  by_severity: Record<string, number>;
+  summary: WorkloadSummary;
+  to_reprocess: number;
+  cleanup_only: number;
+  webhook_configured: boolean;
+  email_configured: boolean;
+}
+
+export interface BulkRepairRequest {
+  min_severity?: Severity;
+  tenant?: string;
+  types?: string[];
+  send?: boolean;
+  email_to?: string;
+  note?: string;
+}
+
+/** Each step reports for itself: the plan can exist and be sent while the email could not be. */
+export interface BulkRepairResponse {
+  plan: RepairPlan;
+  sent: boolean;
+  emailed: string[] | null;
+  problems: { step: "send" | "email"; message: string }[];
+}
+
+export interface EmailPlanRequest {
+  to: string;
+  note?: string;
+  attach_payload?: boolean;
 }
 
 // ---- tenant isolation ---------------------------------------------------------------------------------------

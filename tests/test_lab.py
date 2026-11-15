@@ -108,7 +108,106 @@ def test_the_duplicated_manifest_row_is_a_warning_not_a_finding(seeded):
     assert warning["code"] == "duplicate_manifest_ids" and warning["count"] == 1
 
 
+def test_the_repair_loop_works_on_lab_a(seeded, monkeypatch):
+    """plan -> trigger -> the reference worker re-indexes -> verify -> approve cleanup -> verify -> audit, on the lab's own data.
+
+    The lab's manifest has NO unique key (the duplicated row exercise removed it), which once made the worker fail silently.
+    """
+    import importlib.util
+    import sys
+
+    from fastapi.testclient import TestClient
+
+    from ragintegrity import repair as repair_module
+
+    world, s3, qd, eng, tmp = seeded
+    spec = importlib.util.spec_from_file_location("reference_worker_lab", ROOT / "examples" / "reference_worker" / "worker.py")
+    rw = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = rw
+    spec.loader.exec_module(rw)
+    secret = "local-lab-secret"
+    settings = Settings(_env_file=None, mode="live", database_url=f"sqlite:///{tmp / 'ledger-repair.db'}", s3_region="us-east-1", grace_minutes=0,
+                        manifest_database_url=f"sqlite:///{tmp / 'manifest.db'}", s3_bucket="docs", manifest_chunk_table="rag_chunk_manifest",
+                        qdrant_collections="kb_main", qdrant_check_vectors=True, repair_webhook_url="http://worker:9000/ragi-webhook",
+                        repair_webhook_secret=secret, **{f"target_{k}": v for k, v in TARGET_FP.to_dict().items()})
+    svc = IntegrityService(settings, Ledger(settings.database_url),
+                           Connectors(S3Source(settings, client=s3), PostgresManifest(settings, engine=eng), QdrantIndex(settings, client=qd)))
+    svc.ledger.init()
+    worker = TestClient(rw.create_app(rw.Worker(s3, "docs", qd, eng), secret, background=False))
+    monkeypatch.setattr(repair_module.httpx, "post",
+                        lambda url, content=None, headers=None, timeout=None: worker.post("/ragi-webhook", content=content, headers=headers))
+
+    svc.run_audit(probe=True)
+    assert svc.ledger.issue_counts()["open"] == 14
+    plan = svc.repairs.trigger(svc.repairs.create_plan()["id"])
+    assert plan["status"] == "triggered"
+    plan = svc.repairs.verify(plan["id"])
+    assert plan["status"] == "cleanup_pending"
+    plan = svc.repairs.verify(svc.repairs.approve_cleanup(plan["id"])["id"])
+    assert plan["status"] == "completed"
+    svc.run_audit(probe=True)
+    left = svc.ledger.issue_counts()["open"]
+    assert left < 14, "the repair loop fixed nothing"
+    assert not any(i["type"] in ("missing_embedding", "false_success", "stale_embedding") for i in svc.ledger.list_issues(status="open", limit=500)[0])
+
+
+def reference_worker_module():
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("reference_worker_lab", ROOT / "examples" / "reference_worker" / "worker.py")
+    rw = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = rw
+    spec.loader.exec_module(rw)
+    return rw
+
+
 # ------------------------------------------------------------------------------------- Lab B
+def test_the_repair_loop_works_on_lab_b(seeded, monkeypatch):
+    """Lab B's two broken bills are repaired by the bills worker: plan -> trigger -> worker -> verify -> audit is clean.
+
+    The first reference worker only knows Lab A's layout; asked to repair a bill it failed in the background with NoSuchKey
+    and "Verify now" then said the documents were not fixed. Lab B has its own worker, started with RAGI_WORKER_KIND=bills.
+    """
+    from fastapi.testclient import TestClient
+
+    from ragintegrity import repair as repair_module
+
+    _world, s3, qd, eng, tmp = seeded
+    rw = reference_worker_module()
+    secret = "local-lab-secret"
+    settings = Settings(_env_file=None, mode="live", database_url=f"sqlite:///{tmp / 'ledger-repair-b.db'}", s3_region="us-east-1", grace_minutes=0,
+                        manifest_database_url=f"sqlite:///{tmp / 'manifest.db'}", s3_bucket="bills-lab", s3_prefix="bills/", s3_key_pattern=SAME_NUMBER,
+                        s3_lookup_from_manifest=True, s3_hash_mode="etag", manifest_table="bill_documents", manifest_column_map=COLUMN_MAP,
+                        qdrant_collections="bill_chunks", qdrant_payload_map='{"document_id":"source_id"}', source_documents_only=True,
+                        required_payload_fields="document_id", repair_webhook_url="http://worker-bills:9000/ragi-webhook", repair_webhook_secret=secret)
+    svc = IntegrityService(settings, Ledger(settings.database_url),
+                           Connectors(S3Source(settings, client=s3), PostgresManifest(settings, engine=eng), QdrantIndex(settings, client=qd)))
+    svc.ledger.init()
+    worker = TestClient(rw.create_app(rw.BillsWorker(s3, qd, eng), secret, background=False))
+    sent = []
+
+    def deliver(url, content=None, headers=None, timeout=None):
+        sent.append(url)
+        return worker.post("/ragi-webhook", content=content, headers=headers)
+
+    monkeypatch.setattr(repair_module.httpx, "post", deliver)
+
+    assert svc.run_audit(probe=True).stats["findings_total"] == 2
+    plan = svc.repairs.create_plan()
+    assert sorted(i["document_id"] for i in plan["items"]) == ["2300004", "2300005"]
+    assert all(i["source_uri"].startswith("s3://bills-lab/bills/") for i in plan["items"])  # what the worker reads the file from
+    plan = svc.repairs.verify(svc.repairs.trigger(plan["id"])["id"])
+    assert sent and plan["status"] == "completed", [i for i in plan["items"] if i["status"] != "completed"]
+    run = svc.run_audit(probe=True)
+    assert (run.stats["documents_total"], run.stats["findings_total"], run.stats["health_score"]) == (5, 0, 100.0)
+    # the worker is idempotent: sending the same repair again must not duplicate pieces
+    again = {"phase": "reindex", "items": [{"document_id": "2300004", "source_uri": "s3://bills-lab/bills/2300004/2300004.pdf"}]}
+    before = qd.count("bill_chunks").count
+    assert rw.BillsWorker(s3, qd, eng).handle(again) == 1
+    assert qd.count("bill_chunks").count == before
+
+
 def test_lab_b_with_the_settings_the_workbook_tells_you_to_type(seeded):
     svc, run, by = audit(seeded, "B")
     assert run.stats["documents_total"] == 5 and run.stats["findings_total"] == 2 and run.stats["health_score"] == 60.0
@@ -170,7 +269,13 @@ def test_the_compose_file_is_local_only_and_has_both_labs():
     yaml = pytest.importorskip("yaml")
     compose = yaml.safe_load((ROOT / "docker-compose.lab.yml").read_text(encoding="utf-8"))
     services = compose["services"]
-    assert set(services) == {"postgres", "qdrant", "s3", "seed", "worker", "app-lab", "app-bills"}
+    assert set(services) == {"postgres", "qdrant", "s3", "seed", "worker", "worker-bills", "mail", "app-lab", "app-bills"}
+    env = services["app-lab"]["environment"]  # Lab A can email a plan out of the box, to the catcher and nowhere else
+    assert (env["RAGI_SMTP_HOST"], env["RAGI_SMTP_PORT"], env["RAGI_SMTP_SECURITY"], env["RAGI_SMTP_FROM"]) == ("mail", "1025", "none", "ragguard@lab.local")
+    assert services["mail"]["command"] == ["python", "scripts/mail_sink.py"] and services["mail"]["ports"] == ["127.0.0.1:8025:8025"]
+    assert "http://localhost:8025" in lab.workbook_markdown() and "`mail` / `1025` / `none`" in lab.workbook_markdown()
+    assert services["worker-bills"]["environment"]["RAGI_WORKER_KIND"] == "bills" and "RAGI_WORKER_KIND" not in services["worker"]["environment"]
+    assert "http://worker-bills:9000/ragi-webhook" in lab.workbook_markdown()  # the address the workbook tells you to type exists
     assert services["s3"]["image"].startswith("motoserver/moto:") and ":latest" not in services["s3"]["image"]  # pinned, official
     for name, svc in services.items():
         for port in svc.get("ports", []):

@@ -7,6 +7,7 @@ The Integrations page connects RAGGuard to the rest of your stack. It holds the 
 - [Purpose, who needs it, how to open it](#purpose-who-needs-it-how-to-open-it)
 - [The page at a glance](#the-page-at-a-glance)
 - [Repair webhook](#repair-webhook)
+- [Email](#email)
 - [API keys](#api-keys)
 - [REST API card](#rest-api-card)
 - [Connected systems card](#connected-systems-card)
@@ -33,9 +34,10 @@ The Integrations page connects RAGGuard to the rest of your stack. It holds the 
 From top to bottom:
 
 1. **Repair webhook** card.
-2. **API keys** card.
-3. Two cards side by side on a wide screen: **REST API** and **Connected systems**.
-4. **Other integrations**: three dashed cards (Slack, Jira, PagerDuty), each marked **Not available yet**.
+2. **Email** card.
+3. **API keys** card.
+4. Two cards side by side on a wide screen: **REST API** and **Connected systems**.
+5. **Other integrations**: three dashed cards (Slack, Jira, PagerDuty), each marked **Not available yet**.
 
 ![The Integrations page: the Repair webhook card with its summary, the five-step explanation and the details panel](images/integrations-repair.png)
 
@@ -267,6 +269,56 @@ Whatever you choose: deletion is always carried out by **your** worker, never by
 
 ---
 
+## Email
+
+### What it is for
+
+A repair plan is a work order for your own pipeline. When a person (not a program) will do the work, you can email the plan to them from the plan panel (**Email plan**, see [Repair plans](08-repair-plans.md#email-a-plan-to-the-people-who-will-fix-it)). The **Email** card is where you tell RAGGuard which mail server to use. RAGGuard sends a plan email **only** when someone presses **Email plan** and types the recipients; it never sends one by itself. (The audit alerts under [Alerts](13-alerts.md) are separate: they go out through the platform's own mail account, only to the people in your workspace.) In the hosted app a plan is never sent through the platform's account, because anyone can sign up and that address must not send their mail to strangers: use your own server here.
+
+### Set it up
+
+1. Click **Configure** on the **Email** card.
+2. Type your mail server's name under **SMTP server** (for example `smtp.your-provider.com`) and choose the **Port** and **Connection security**: port 587 with `starttls`, or 465 with `ssl`.
+3. Type your **Username** (usually your full email address) and **Password**. For Gmail and similar, create an app password in your account instead of using your normal one. The password is stored encrypted and never shown again.
+4. Type the **From address**: the sender people will see. Your mail server must let you send from it.
+5. Click **Check settings**. It connects to the mail server, encrypts the connection and signs in, and shows each step. It sends no email.
+6. Click **Save**. The card shows **Configured**.
+
+### The fields
+
+| Field | What to type |
+|---|---|
+| **SMTP server** | The mail server's host name. Required. No `http://` and no port. |
+| **Port** | `587` (default). The hosted site allows only 25, 465, 587 and 2525. |
+| **Connection security** | `starttls` (default) or `ssl`. `none` is refused on the hosted site. |
+| **Username** | Usually your email address. Leave empty for a relay that needs no sign-in. |
+| **Password** | Stored encrypted, shown as **Saved**, never shown again. |
+| **From address** | One plain address. Required. |
+
+### What the email contains
+
+- A readable summary and a table of the documents, with what to do for each.
+- A **CSV** with every document, which opens in Excel and Google Sheets.
+- The exact **JSON** your repair worker would receive (you can leave it out when you send).
+- A link back to the plan, so the person fixing it can click **Verify now** afterwards.
+
+### Limits and safety
+
+On the hosted site the mail server must be a public host on a normal mail port with an encrypted connection. You can send 20 emails per hour per workspace, to at most 10 people each, and only a signed-in person can send (an API key cannot). Everything typed is escaped.
+
+### What can go wrong
+
+| Message | Meaning and what to do |
+|---|---|
+| "Email is not set up. ..." | No **SMTP server** or **From address** is saved. Click **Configure** here |
+| "The mail server refused the username or password." | Wrong password, or your provider needs an app password |
+| "The mail server refused the From address." | Use an address your mail server lets you send from |
+| "Could not send the email: ..." | The mail server did not answer. Check the name and port, then **Check settings** |
+| "... is not a valid email address." | A recipient has a typo |
+| "Too many emails sent from this workspace." | The limit of 20 per hour was reached. Try again later |
+
+---
+
 ## API keys
 
 ![The API keys card: a table of keys and the how to use a key example](images/integrations-apikeys.png)
@@ -425,6 +477,7 @@ On a server that runs for one team without accounts (live or demo mode), this pa
 
 - The repair card shows "Configured by the server's environment variables (RAGI_*)" and says to set `RAGI_REPAIR_WEBHOOK_URL` and `RAGI_REPAIR_WEBHOOK_SECRET` (and `RAGI_CLEANUP_POLICY` for removal) on the server. Only the **Vector removal** row is shown, and there is no **Configure** button. (In demo mode a built-in demo worker stands in for a real one.)
 - The **API keys** card is replaced by an **API access** card, "Single-user mode has no per-person API keys." It says either "This server requires its shared key (RAGI_API_KEY). Send it in the X-API-Key header or as a Bearer token." or "No API key is required on this server. Set RAGI_API_KEY to protect it."
+- The **Email** card shows whether email is set up. A plan is sent through the same mail account as the audit alerts, so it says to set `RAGI_SMTP_HOST` and `RAGI_SMTP_FROM` (and `RAGI_SMTP_PORT`, `RAGI_SMTP_SECURITY`, `RAGI_SMTP_USER`, `RAGI_SMTP_PASSWORD` as your mail server needs) on the server. There is no **Configure** button.
 - **REST API**, **Connected systems** and the three **Not available yet** cards work as described above.
 
 ---
