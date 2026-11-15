@@ -5,6 +5,9 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { ApiError, del, get, post, put, qs } from "@/lib/api";
 import type {
+  AdminAudit,
+  AdminOverview,
+  AdminUser,
   ApiKey,
   AuditRequest,
   AuditRun,
@@ -58,6 +61,14 @@ const noRetryOnClientError = (count: number, err: unknown): boolean => !(err ins
 
 // ---- session -------------------------------------------------------------------------------------------
 export const useSession = () => useQuery({ queryKey: qk.session, queryFn: () => get<Session>("/api/session"), staleTime: 60_000, retry: 1 });
+
+// ---- admin dashboard (only for emails in RAGI_ADMIN_EMAILS; everyone else gets a 404) -----------------------------
+export const useAdminOverview = (enabled: boolean) =>
+  useQuery({ queryKey: ["admin", "overview"], queryFn: () => get<AdminOverview>("/api/admin/overview"), enabled, retry: noRetryOnClientError });
+export const useAdminUsers = (enabled: boolean) =>
+  useQuery({ queryKey: ["admin", "users"], queryFn: () => get<AdminUser[]>("/api/admin/users"), enabled, retry: noRetryOnClientError });
+export const useAdminAudits = (enabled: boolean, limit = 200) =>
+  useQuery({ queryKey: ["admin", "audits", limit], queryFn: () => get<AdminAudit[]>(`/api/admin/audits${qs({ limit })}`), enabled, retry: noRetryOnClientError });
 
 // ---- overview & connections ------------------------------------------------------------------------------
 export const useOverview = (enabled = true) =>

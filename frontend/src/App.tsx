@@ -28,6 +28,7 @@ const HelpHome = lazy(() => import("@/pages/help").then((m) => ({ default: m.Hel
 const HelpChapter = lazy(() => import("@/pages/help").then((m) => ({ default: m.HelpChapter })));
 const HelpPublicLayout = lazy(() => import("@/pages/help").then((m) => ({ default: m.HelpPublicLayout })));
 const LegalPage = lazy(() => import("@/pages/legal"));
+const Admin = lazy(() => import("@/pages/admin"));
 
 function NotFound() {
   return (
@@ -112,6 +113,7 @@ export default function App() {
         <Route path="alerts" element={<Alerts />} />
         <Route path="notifications" element={<Notifications />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="admin" element={<Admin />} />
         <Route path="help" element={<HelpHome />} />
         <Route path="help/:chapter" element={<HelpChapter />} />
         <Route path="privacy" element={<LegalPage doc="privacy" />} />
