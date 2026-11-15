@@ -26,8 +26,17 @@ export const CtaPrimary = ({ to, children }: { to: string; children: ReactNode }
   </Link>
 );
 
+const ghost = "border border-white/15 bg-white/5 text-white hover:bg-white/10";
+
 export const CtaGhost = ({ to, children }: { to: string; children: ReactNode }) => (
-  <Link to={to} className={cn(cta, "border border-white/15 bg-white/5 text-white hover:bg-white/10")}>
+  <Link to={to} className={cn(cta, ghost)}>
     {children}
   </Link>
+);
+
+/** The same look as CtaGhost, for an address outside the app (a mailto: link). */
+export const CtaGhostHref = ({ href, children }: { href: string; children: ReactNode }) => (
+  <a href={href} className={cn(cta, ghost)}>
+    {children}
+  </a>
 );

@@ -1,0 +1,1 @@
+const t={mp4Cdn:"/help-media/RAGGuard-walkthrough.mp4",mp4Static:"/static/help-media/RAGGuard-walkthrough.mp4",captions:"/static/help-media/RAGGuard-walkthrough.vtt",poster:"/static/help-media/RAGGuard-walkthrough-poster.jpg"};export{t as M};

@@ -13,6 +13,7 @@ import {
   KeyRound,
   Layers,
   Lock,
+  Mail,
   Network,
   ScanSearch,
   ShieldCheck,
@@ -21,9 +22,12 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { MEDIA } from "@/lib/help-media";
 import { ISSUE_TYPES, issueLabel, issueSources } from "@/lib/issue-meta";
 import type { IssueType } from "@/types/api";
-import { Container, CtaGhost, CtaPrimary, SectionHeading } from "./ui";
+import { AUDIT_MAILTO, CONTACT_EMAIL, CONTACT_MAILTO } from "./contact";
+import { Container, CtaGhost, CtaGhostHref, CtaPrimary, SectionHeading } from "./ui";
 
 // ---- the problem ---------------------------------------------------------------------------------------
 const PROBLEMS: { icon: LucideIcon; title: string; text: string }[] = [
@@ -60,8 +64,8 @@ export function Problem() {
 
 // ---- how it works --------------------------------------------------------------------------------------
 const STEPS: { icon: LucideIcon; title: string; text: string }[] = [
-  { icon: Database, title: "Connect, read-only", text: "Point RAGGuard at your S3 bucket, your manifest table in PostgreSQL and your Qdrant collection. It only ever lists, reads and queries." },
-  { icon: ScanSearch, title: "Reconcile", text: "Every document is compared across all three, chunk by chunk. Retrieval probes check whether bad content can actually be returned to a user." },
+  { icon: Database, title: "Connect, read-only", text: "Point RAGGuard at your S3 bucket and your vector index, in Qdrant or pgvector. Add the manifest table your pipeline writes to, if you have one, for extra checks. It only ever lists, reads and queries." },
+  { icon: ScanSearch, title: "Reconcile", text: "Every document is compared across the systems you connected, chunk by chunk. Retrieval probes check whether bad content can actually be returned to a user." },
   { icon: Wrench, title: "Repair and verify", text: "Plans go to your own worker as signed requests. RAGGuard then checks the real index again. Old vectors are removed only after you approve." },
 ];
 
@@ -69,8 +73,8 @@ export function HowItWorks() {
   return (
     <section id="how" aria-labelledby="how-title" className="scroll-mt-16 border-y border-line bg-app py-20 sm:py-24">
       <Container>
-        <SectionHeading id="how-title" eyebrow="How it works" title="Three systems, one version of the truth" align="center">
-          Your documents, your manifest and your index should agree. RAGGuard checks that they do, continuously.
+        <SectionHeading id="how-title" eyebrow="How it works" title="Your documents and your index, one version of the truth" align="center">
+          Your documents and your index should agree, and so should your manifest if you keep one. RAGGuard checks that they do, continuously.
         </SectionHeading>
         <ol className="relative mt-14 grid gap-6 md:grid-cols-3">
           <div className="pointer-events-none absolute left-[16%] right-[16%] top-7 hidden border-t border-dashed border-line-strong md:block" aria-hidden />
@@ -87,8 +91,37 @@ export function HowItWorks() {
             </li>
           ))}
         </ol>
+        <Walkthrough />
       </Container>
     </section>
+  );
+}
+
+/** The narrated walkthrough from the user guide. preload="none": the home page only fetches the video when someone presses play. */
+function Walkthrough() {
+  return (
+    <figure className="mx-auto mt-16 max-w-3xl">
+      <h3 className="text-center text-section text-ink">See it working</h3>
+      <video
+        controls
+        preload="none"
+        poster={MEDIA.poster}
+        className="mt-5 aspect-video w-full rounded-card border border-line bg-night shadow-card"
+        aria-label="RAGGuard walkthrough: the Documents page and the Isolation page"
+      >
+        <source src={MEDIA.mp4Cdn} type="video/mp4" />
+        <source src={MEDIA.mp4Static} type="video/mp4" />
+        <track kind="captions" src={MEDIA.captions} srcLang="en" label="English" />
+        Your browser cannot play this video. <a href={MEDIA.mp4Cdn}>Download it</a>.
+      </video>
+      <figcaption className="mt-3 text-center text-support text-ink-2">
+        A six-minute walkthrough with narration and captions: the Documents page and the Isolation page, on demo data.{" "}
+        <Link to="/help" className="font-medium text-brand underline underline-offset-4 hover:text-brand-hover">
+          More in the user guide
+        </Link>
+        .
+      </figcaption>
+    </figure>
   );
 }
 
@@ -205,8 +238,8 @@ export function Security() {
 // ---- works with ---------------------------------------------------------------------------------------
 const STACK: { icon: LucideIcon; role: string; name: string; text: string }[] = [
   { icon: Cloud, role: "Source documents", name: "Amazon S3", text: "And S3-compatible stores such as MinIO, Cloudflare R2 and Supabase Storage." },
-  { icon: Database, role: "Processing manifest", name: "PostgreSQL", text: "Including Supabase. Your own table, with your own column names." },
-  { icon: Layers, role: "Vector index", name: "Qdrant", text: "Self-hosted or Qdrant Cloud, with your own payload field names." },
+  { icon: Layers, role: "Vector index", name: "Qdrant or pgvector", text: "Qdrant, self-hosted or Cloud. Or a pgvector table in any PostgreSQL: Supabase, Neon or AWS RDS, including LangChain and LlamaIndex tables. Your own field and column names." },
+  { icon: Database, role: "Processing manifest (optional)", name: "PostgreSQL", text: "Not needed to start. If your pipeline records what it indexed, connect that table, with your own column names, for extra checks." },
 ];
 
 export function Stack() {
@@ -214,7 +247,7 @@ export function Stack() {
     <section aria-labelledby="stack-title" className="bg-white py-20 sm:py-24">
       <Container>
         <SectionHeading id="stack-title" eyebrow="Works with" title="The tools you already run" align="center">
-          No agents to install and no pipeline to change. Connect what you have.
+          No agents to install and no pipeline to change. Two connections are enough to start: your documents and your index.
         </SectionHeading>
         <ul className="mt-12 grid gap-4 md:grid-cols-3">
           {STACK.map((s) => (
@@ -235,9 +268,11 @@ export function Stack() {
 
 // ---- FAQ ----------------------------------------------------------------------------------------------
 const FAQS: { q: string; a: string }[] = [
-  { q: "Does RAGGuard change my data?", a: "No. It only lists, reads and queries your S3 bucket, your manifest table and your Qdrant collection. Fixes are carried out by your own worker, which RAGGuard asks with a signed request. RAGGuard then checks the real index again." },
-  { q: "What do I need to connect?", a: "An S3 bucket with your source documents, a PostgreSQL table where your ingestion pipeline records what it indexed, and a Qdrant collection with your vectors. The Data Sources page tests each connection and tells you exactly what to change." },
-  { q: "How does it know what my index should contain?", a: "It compares content hashes and versions from your source with the ones stored on your vectors, and the chunk counts in your manifest with what is actually indexed. It can also run a search to check whether bad content can really be returned." },
+  { q: "Does RAGGuard change my data?", a: "No. It only lists, reads and queries your S3 bucket, your vector index and, if you connect one, your manifest table. Fixes are carried out by your own worker, which RAGGuard asks with a signed request. RAGGuard then checks the real index again." },
+  { q: "What do I need to connect?", a: "Two things: an S3 bucket with your source documents, and your vector index, either a Qdrant collection or a pgvector table in PostgreSQL. A manifest table, where your ingestion pipeline records what it indexed, is optional and adds extra checks. The Data Sources page tests each connection and tells you exactly what to change." },
+  { q: "How does it know what my index should contain?", a: "It compares the content hash of each file in your source with the hash stored on its vectors. If you connect a manifest, it also compares the chunk counts your pipeline recorded with what is actually indexed. It can also run a search to check whether bad content can really be returned." },
+  { q: "How much does it cost?", a: "Nothing while RAGGuard is in beta. Paid plans will come later." },
+  { q: "What is a free audit?", a: `Email us at ${CONTACT_EMAIL} and we will set a time. Together we connect RAGGuard to your systems, read-only, run your first audit and go through what it found. You keep the results.` },
   { q: "Can I run audits from CI or on a schedule?", a: "Yes. Create an API key and call the audit endpoint from GitHub Actions, cron or any scheduler. A key can run audits and read results, but it cannot read your settings or create other keys." },
   { q: "How are my credentials protected?", a: "They are encrypted before they are stored, used only from the server to read your systems, and never shown again once saved. The hosted service refuses private and localhost addresses." },
 ];
@@ -276,17 +311,23 @@ export function FinalCta({ canRegister }: { canRegister: boolean }) {
         <h2 id="cta-title" className="mx-auto max-w-2xl text-[30px] font-bold leading-tight tracking-tight text-white sm:text-[38px]">
           See what your index is really serving.
         </h2>
-        <p className="mx-auto mt-4 max-w-xl text-[16px] leading-7 text-slate-300">Connect your three systems and run your first audit in minutes.</p>
+        <p className="mx-auto mt-4 max-w-xl text-[16px] leading-7 text-slate-300">
+          Connect your documents and your index, and run your first audit in minutes. Free during beta.
+        </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           {canRegister ? (
             <CtaPrimary to="/signup">
               Create your workspace <ArrowRight className="h-4 w-4" aria-hidden />
             </CtaPrimary>
           ) : null}
-          <CtaGhost to="/login">Sign in</CtaGhost>
+          <CtaGhostHref href={AUDIT_MAILTO}>
+            <Mail className="h-4 w-4" aria-hidden /> Book a free audit
+          </CtaGhostHref>
+          {canRegister ? null : <CtaGhost to="/login">Sign in</CtaGhost>}
         </div>
         <p className="mt-6 text-support text-slate-400">
-          Questions first? <a href="#faq" className="underline underline-offset-4 hover:text-white">Read the FAQ</a>.
+          Questions first? <a href="#faq" className="underline underline-offset-4 hover:text-white">Read the FAQ</a> or email{" "}
+          <a href={CONTACT_MAILTO} className="underline underline-offset-4 hover:text-white">{CONTACT_EMAIL}</a>.
         </p>
       </Container>
     </section>
