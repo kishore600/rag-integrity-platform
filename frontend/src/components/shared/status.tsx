@@ -21,7 +21,7 @@ export const DocStateBadge = ({ doc }: { doc: Pick<DocumentRow, "status" | "issu
   return <Badge tone={DOC_TONE[s]} dot>{DOC_STATE_LABEL[s]}</Badge>;
 };
 
-const RUN_TONE: Record<AuditRun["status"], Tone> = { running: "info", completed: "success", partial: "warning", failed: "critical" };
+const RUN_TONE: Record<AuditRun["status"], Tone> = { queued: "warning", running: "info", completed: "success", partial: "warning", failed: "critical" };
 export const RunStatusBadge = ({ status }: { status: AuditRun["status"] }) => <Badge tone={RUN_TONE[status]} dot>{cap(status)}</Badge>;
 
 const PLAN_TONE: Record<RepairPlan["status"], Tone> = {

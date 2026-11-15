@@ -60,6 +60,7 @@ columns are mapped and the database role is read-only, which Qdrant collections 
 
 * Accounts, sessions, rate limits, CSRF protection, per-user workspaces and encrypted connection secrets: [docs/security.md](docs/security.md)
 * Deployment on Vercel + Supabase, and what serverless changes: [docs/deploy-vercel.md](docs/deploy-vercel.md)
+* Big indexes (millions of vectors): `ragi worker` and `POST /api/worker/step` carry a resumable audit through to the end by themselves: [docs/background-worker.md](docs/background-worker.md)
 * Run the same multi-user app yourself: `RAGI_MODE=app RAGI_DATABASE_URL=... RAGI_SECRET_KEY=... ragi serve` (or `ragi serve --app`)
 
 Other ways to run it:
@@ -225,8 +226,10 @@ lock-step with the models; the full repair loop - including a worker that lies -
 * The retrieval probe replays an affected chunk's own vector, not real user traffic; it proves searchability and rank, not user impact.
 * **Accounts are deliberately minimal**: one user owns one workspace; no email verification or password reset (there is no mail
   provider), no two-factor authentication, no teams or roles. Close sign-up with `RAGI_ALLOW_REGISTRATION=false` once your team has accounts.
-* **Serverless audit time limit**: audits on Vercel must finish within ~270 s and say so clearly (which step, how far) when they do not
-  (look files up from the manifest instead of listing a huge bucket, audit one tenant at a time, or run `ragi audit`). Only the S3, Postgres and Qdrant integrations exist.
+* **Serverless audit time limit**: one request on Vercel gets ~270 s. With "Only audit documents found in the source" on, an audit that runs out of time
+  ends `partial` and can be resumed (GUIDE 3.12); a worker (`ragi worker`, or repeated `POST /api/worker/step` calls) resumes it by itself
+  ([docs/background-worker.md](docs/background-worker.md)). An audit that must read the whole index still stops at the limit with a clear message (audit one
+  tenant at a time, or run `ragi audit` or a worker on a server). Only the S3, Postgres and Qdrant integrations exist.
 * The "no competitor does this exactly" claim in the product brief is a hypothesis to validate with customer interviews, not something this repo proves.
 
 ## License

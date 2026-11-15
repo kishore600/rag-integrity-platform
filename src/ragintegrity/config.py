@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     api_key: str | None = None  # if set, /api/* requires it (X-API-Key or Bearer)
     audit_interval_minutes: int = 0  # 0 disables the built-in scheduler
     sync_audits: bool = False  # run API-started audits inside the request (automatic on Vercel/serverless)
+    audit_queue: bool = False  # POST /api/audits only queues the audit; a worker (ragi worker, or /api/worker/step calls) runs it
     grace_minutes: int = 10  # don't flag documents that are probably still being ingested
     required_payload_fields: str = ""  # comma separated; default document_id,source_hash(+tenant_id if multi-tenant)
     source_documents_only: bool = False  # audit only documents found in S3; ignore other manifest rows / vectors (and read only theirs)
