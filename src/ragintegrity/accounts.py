@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -23,6 +24,11 @@ from .security import (
 
 SESSION_REFRESH = timedelta(hours=1)
 API_KEY_PREFIX = "ragi_"
+
+
+def login_email_key(email: str) -> str:
+    """The rate-limit key for sign-in attempts on one email. The email is hashed, so the counter does not store it."""
+    return "login:email:" + hashlib.sha256(email.strip().lower().encode()).hexdigest()[:32]
 
 
 class AccountError(Exception):
@@ -250,6 +256,27 @@ class Accounts:
         return "|".join(f"{k}:{iso(u)}" for k, u in sorted(rows))
 
     # ------------------------------------------------------------------ admin helpers
+    def set_password(self, email: str, new: str) -> bool:
+        """The operator's password reset (``ragi users set-password``): replace the password, sign the user out everywhere and
+        clear the sign-in attempt counter for that email, so the new password works at once. False when there is no such user."""
+        try:
+            email = normalize_email(email)
+        except ValueError as exc:
+            raise AccountError(str(exc), 422) from exc
+        u = self.t["users"]
+        with self.engine.connect() as c:
+            row = c.execute(select(u.c.id).where(u.c.email == email)).first()
+        if row is None:
+            return False
+        problem = password_problem(new, email)
+        if problem:
+            raise AccountError(problem, 422)
+        with self.engine.begin() as c:
+            c.execute(update(u).where(u.c.id == row[0]).values(password_hash=hash_password(new)))
+        self.delete_user_sessions(row[0])
+        self.clear_hits(login_email_key(email))
+        return True
+
     def delete_user(self, email: str) -> bool:
         """Remove a user and everything their workspace owns (used by the CLI and by tests)."""
         u, w = self.t["users"], self.t["workspaces"]

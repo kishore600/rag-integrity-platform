@@ -1321,7 +1321,7 @@ Install with `pip install -e ".[dev]"`; the command is `ragi`.
 | `ragi connections` | test the ledger, S3, the manifest database and Qdrant, naming whichever is misconfigured |
 | `ragi setup-check [--json]` | the setup and coverage check (3.10): do S3, the manifest and Qdrant use the same document IDs; exits **1** when the result is `not_ready` |
 | `ragi init-db` | create the ledger tables (idempotent) and check connectivity |
-| `ragi users list` / `ragi users delete EMAIL --yes` | list users, or delete a user and everything in their workspace (app mode; needs `RAGI_DATABASE_URL` and `RAGI_SECRET_KEY`) |
+| `ragi users list` / `ragi users delete EMAIL --yes` / `ragi users set-password EMAIL` | list users; delete a user and everything in their workspace; or set a new password for a user who forgot theirs (asked twice without echo, or one line from a pipe; the same password rules as sign-up; signs the user out everywhere and clears their sign-in lockout; the workspace is untouched). App mode; needs `RAGI_DATABASE_URL` and `RAGI_SECRET_KEY` |
 | `ragi worker [--once] [--poll S] [--budget S] [--id NAME]` | run queued audits in the background, for as long as they take, carrying on after every pause (3.17); `--once` does one stretch and exits |
 | `ragi repair plan\|trigger\|verify\|approve-cleanup [PLAN_ID] [--min-severity S] [--tenant T]` | drive the repair workflow |
 
@@ -1404,7 +1404,8 @@ The full threat model, with what is and is not covered, is in [docs/security.md]
 - **API keys** are hashed, revocable, and cannot read settings or mint keys.
 - **Web hardening**: strict `Content-Security-Policy` (`script-src 'self'`), `X-Frame-Options: DENY`, `nosniff`, no referrer, `no-store` on API responses; the web interface renders every value as text (React escapes it; there is no raw HTML anywhere) (document ids come from S3 keys, so they are untrusted).
 
-**Not covered:** no email verification or password reset (the platform's mail account only sends audit alerts, and a repair plan only when a person presses **Email plan**), no two-factor authentication, no teams or roles, and the DNS-rebinding window between validation and connection is narrow but not zero.
+**Not covered:** no email verification and no self-service password reset (the operator can set a new password with
+`ragi users set-password`; the platform's mail account only sends audit alerts, and a repair plan only when a person presses **Email plan**), no two-factor authentication, no teams or roles, and the DNS-rebinding window between validation and connection is narrow but not zero.
 
 ---
 
@@ -1442,7 +1443,8 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 
 ### 14.4 Day-to-day
 - **Roll back**: `npx vercel promote <previous-deployment-url>`.
-- **Users**: `ragi users list`, `ragi users delete someone@example.com --yes`, or the **Admin** page (`/admin`) for emails listed in
+- **Users**: `ragi users list`, `ragi users delete someone@example.com --yes`, `ragi users set-password someone@example.com` (a forgotten
+  password: you type the new one, the account keeps its workspace and every session is signed out), or the **Admin** page (`/admin`) for emails listed in
   `RAGI_ADMIN_EMAILS`: every account with its sign-up and last-active times, saved systems and audits, the latest 200 audits across all
   workspaces, and a sign-up to first-audit funnel. API keys never open it, and it shows no secrets, IP addresses or settings values.
 - **Close sign-up**: set `RAGI_ALLOW_REGISTRATION=false`.
@@ -1490,7 +1492,7 @@ port to 127.0.0.1, keeps a throwaway ledger inside each container, and its seedi
 
 - **Scale**: aggregation is in memory, measured at about 19,000 vectors per second and about 600 bytes per vector on a laptop (about 1M vectors is roughly a minute and 600 MB). On Vercel an audit must finish in 270 seconds.
 - **S3 hashing**: `metadata` mode costs one HEAD per object. For very large buckets store a SHA-256 in object metadata at upload time.
-- **One workspace per user**; no teams, roles, email verification, password reset or two-factor authentication.
+- **One workspace per user**; no teams, roles, email verification, self-service password reset or two-factor authentication.
 - **Collections**: a document is expected in at least one configured collection; per-collection expectations are not modelled.
 - **IDs are matched exactly** (apart from number versus text, see 3.1): letter case, spaces, leading zeros, prefixes and extensions all make IDs
   different. One S3 file or manifest row per ID is followed; duplicates are warned about, not merged. The setup check looks at a bounded sample

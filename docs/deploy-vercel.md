@@ -77,6 +77,7 @@ database role is read-only, which Qdrant collections exist and whether their pay
 ```bash
 ragi users list                       # who has signed up (needs RAGI_DATABASE_URL and RAGI_SECRET_KEY locally)
 ragi users delete someone@example.com --yes   # removes the user and everything in their workspace
+ragi users set-password someone@example.com   # a forgotten password: type the new one twice; the workspace is kept
 ```
 
 Roll back a bad deploy with `npx vercel promote <previous-deployment-url>`.

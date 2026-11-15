@@ -156,9 +156,22 @@ def cmd_init_db(_: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def _read_new_password() -> str | None:
+    """Ask for the new password twice without echoing it. From a pipe (a script, a test) one line is read instead."""
+    if not sys.stdin.isatty():
+        return sys.stdin.readline().rstrip("\r\n")
+    import getpass
+
+    first = getpass.getpass("New password: ")
+    if first != getpass.getpass("Type it again: "):
+        print("The two passwords are different. Nothing was changed.", file=sys.stderr)
+        return None
+    return first
+
+
 def cmd_users(args: argparse.Namespace) -> int:
     """Operator tools for the multi-user app (RAGI_DATABASE_URL and RAGI_SECRET_KEY must be set)."""
-    from .accounts import Accounts
+    from .accounts import AccountError, Accounts
     from .config import get_settings
     from .ledger import Ledger
     from .security import Vault
@@ -173,6 +186,19 @@ def cmd_users(args: argparse.Namespace) -> int:
             print("Re-run with --yes to confirm.")
             return 2
         print("deleted" if accounts.delete_user(args.email) else "no such user")
+    elif args.action == "set-password":
+        new = _read_new_password()
+        if new is None:
+            return 2
+        try:
+            changed = accounts.set_password(args.email, new)
+        except AccountError as exc:
+            print(f"Not changed: {exc}", file=sys.stderr)
+            return 2
+        if not changed:
+            print(f"There is no account for {args.email}.", file=sys.stderr)
+            return 1
+        print(f"Password changed for {args.email}. Every session of this account is signed out; sign in with the new password.")
     else:
         u = ledger.t["users"]
         from sqlalchemy import select
@@ -272,8 +298,8 @@ def build_parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init-db", help="create the ledger tables (idempotent) and check connectivity")
     init.set_defaults(fn=cmd_init_db)
 
-    us = sub.add_parser("users", help="list or delete users of the multi-user app")
-    us.add_argument("action", choices=["list", "delete"])
+    us = sub.add_parser("users", help="list or delete users of the multi-user app, or set a new password for one")
+    us.add_argument("action", choices=["list", "delete", "set-password"])
     us.add_argument("email", nargs="?")
     us.add_argument("--yes", action="store_true", help="confirm a delete")
     us.set_defaults(fn=cmd_users)
@@ -299,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "repair" and args.action != "plan" and not args.plan_id:
         print("plan_id is required", file=sys.stderr)
         return 2
-    if args.cmd == "users" and args.action == "delete" and not args.email:
+    if args.cmd == "users" and args.action in ("delete", "set-password") and not args.email:
         print("an email is required", file=sys.stderr)
         return 2
     try:

@@ -149,7 +149,7 @@ On wide screens (1024 pixels and up) both forms sit beside a dark panel that rep
 - If your session ends, any action takes you back to the sign-in screen.
 - To sign out, open the [account menu](#the-account-menu) and choose **Sign out**. You go back to the landing page.
 - Changing your password signs out your other devices ([Settings](14-settings.md)).
-- RAGGuard has no email verification and no password reset today, so keep your password safe.
+- RAGGuard has no email verification and no "Forgot password" button today, so keep your password safe. If you do forget it, the operator of the server can set a new one for you.
 
 ### This server isn't fully set up yet
 
@@ -450,7 +450,7 @@ When you first open RAGGuard, before it knows who you are, you see only a small 
 - **My search found nothing.** The top bar searches **Open** issues only, and searches document ids on the **Documents** page, not tenants or file contents. Use the **Status** filter on the Issues page to include resolved or ignored issues.
 - **The page keeps its filters when I come back.** That is deliberate: filters live in the address. Press **Clear filters** to start again.
 - **The numbers look out of date.** The Overview, the bell and the sidebar badge are not live. They refresh when you open a page, after you act, and every few seconds while an audit runs. Reload the page to be sure.
-- **I forgot my password.** RAGGuard has no password reset today. Ask the operator of the server what they can do.
+- **I forgot my password.** There is no "Forgot password" button yet. Ask the operator of the server: they can set a new password for your account, and your workspace stays as it is.
 
 ---
 

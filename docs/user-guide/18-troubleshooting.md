@@ -36,7 +36,7 @@ Most problems fall into three groups: a connection does not work (sections on co
 | "That password is too easy to guess." | It is on a short list of very common passwords, or it uses fewer than 4 different characters | Choose a less guessable one |
 | "Password must not contain your email name." | The part of your email before the `@` (when it is 4 or more characters) appears in the password | Remove it from the password |
 | "An account with that email already exists." | You (or someone) signed up with this email before | Use the **Sign in** tab instead |
-| "Invalid email or password." | Wrong email or password. The message is the same whether or not the email exists. | Retype carefully. There is no password reset in this version (see below). |
+| "Invalid email or password." | Wrong email or password. The message is the same whether or not the email exists. | Retype carefully. If you forgot your password, see below. |
 | "Too many sign-in attempts. Wait a few minutes and try again." | More than 8 attempts for one account, or 30 from one network, in 15 minutes | Stop trying and wait. Repeated attempts only extend the wait. |
 | "Too many sign-ups from your network. Try again later." | More than 5 sign-ups from one network in an hour | Wait, or ask someone on a different network |
 | "New sign-ups are closed on this server." (or "Registration is closed on this server.") | The operator closed sign-up | Ask the operator for an account. Existing users can still sign in, and only the **Sign in** tab is shown. |
@@ -44,7 +44,7 @@ Most problems fall into three groups: a connection does not work (sections on co
 | The screen "This server isn't fully set up yet" with a list | The operator has not finished the server set-up. The list says what is missing, for example that the secret key or the database is not configured, or that the database schema is out of date. | Tell the operator. Click **Check again** after they fix it. |
 | You were signed out | Your session ended (it lasts 7 days and is renewed as you use the app), you signed out, or you changed your password on another device, which ends the other sessions | Sign in again. You land on the page you were trying to open. |
 
-**I forgot my password.** There is no password reset and no email verification in this version. Your operator can remove your account so you can sign up again, but removing an account deletes everything in its workspace (connections, issues, history and plans).
+**I forgot my password.** There is no "Forgot password" button and no email verification in this version. Ask your operator: they can set a new password for your account with `ragi users set-password your@email`. Your connections, issues, history and plans stay as they are, and you are signed out on every device, so sign in again with the new password.
 
 **Changing your password.** **Settings**, **General**, **Change password**. You need your current password, the new one (10 to 128 characters) and a confirmation. Other signed-in sessions are signed out. The messages are "Enter your current password.", "Use at least 10 characters.", "Choose a password that is different from the current one.", "The two passwords do not match." and "Your current password is incorrect."
 

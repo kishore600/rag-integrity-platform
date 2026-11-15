@@ -66,7 +66,9 @@ responses. The web interface renders every value as text (document ids come from
 
 ## Not covered (be aware)
 
-* **No email verification and no password reset** (the optional platform mail account only sends audit alerts and test emails). Treat sign-up as open to anyone who can reach the
+* **No email verification and no self-service password reset** (the optional platform mail account only sends audit alerts and
+  test emails). The operator resets a forgotten password with `ragi users set-password EMAIL`: same rules as sign-up, every session
+  of that user is signed out, and the sign-in lockout for that email is cleared. Treat sign-up as open to anyone who can reach the
   URL; close it with `RAGI_ALLOW_REGISTRATION=false` once your team has accounts.
 * **No two-factor authentication, no teams/roles**: one user owns one workspace.
 * The vault protects secrets at rest against database exposure, not against someone who can read the server environment.

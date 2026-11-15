@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import os
 import secrets
@@ -22,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .. import __version__
-from ..accounts import AccountError, Accounts
+from ..accounts import AccountError, Accounts, login_email_key
 from ..admin import AdminView
 from ..config import Settings, get_settings
 from ..connectors.base import ConnectorError, SetupIncomplete, UpstreamError
@@ -453,7 +452,7 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
         st = need_multi()
         assert st.accounts is not None
         ip = client_ip(request)
-        email_key = "login:email:" + hashlib.sha256(body.email.strip().lower().encode()).hexdigest()[:32]
+        email_key = login_email_key(body.email)
         if not st.accounts.hit(f"login:ip:{ip}", 30, 900) or not st.accounts.hit(email_key, 8, 900):
             raise HTTPException(429, "Too many sign-in attempts. Wait a few minutes and try again.")
         user = st.accounts.authenticate(body.email, body.password)
