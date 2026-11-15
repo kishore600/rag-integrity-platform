@@ -52,6 +52,7 @@ class AuditRequest(BaseModel):
     probe: bool | None = None
     wait: bool = False  # run synchronously and return the result (handy for CI)
     resume: bool = False  # continue the last interrupted (partial) full audit instead of starting over
+    force: bool = False  # run a whole audit although it is paused (the last one was too big for this host): for a worker with no time limit
 
 
 class PlanRequest(BaseModel):
@@ -552,12 +553,12 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
         if req.resume and scope is not None:
             raise HTTPException(422, "Only a full audit can be resumed: leave out tenant and documents.")
         if s.settings.audit_queue and scope is None:  # a worker does the work: this only puts the audit in the queue
-            run_id = s.enqueue_audit(trigger="api", probe=req.probe, resume=req.resume)  # (a tenant or a few documents is small: it runs here)
+            run_id = s.enqueue_audit(trigger="api", probe=req.probe, resume=req.resume, force=req.force)  # (a tenant or a few documents is small: it runs here)
             return {"run_id": run_id, "status": "queued", "progress": s.audit_progress()}
         if req.wait:
-            r = s.run_audit(scope=scope, trigger="api", probe=req.probe, resume=req.resume)
+            r = s.run_audit(scope=scope, trigger="api", probe=req.probe, resume=req.resume, force=req.force)
             return {"run_id": r.run_id, "status": r.status, "stats": r.stats}
-        run_id = s.start_audit_async(scope=scope, trigger="api", probe=req.probe, resume=req.resume)
+        run_id = s.start_audit_async(scope=scope, trigger="api", probe=req.probe, resume=req.resume, force=req.force)
         run = s.ledger.get_run(run_id)  # already "completed" on serverless hosts, where audits run inline
         return {"run_id": run_id, "status": run["status"] if run else "running"}
 

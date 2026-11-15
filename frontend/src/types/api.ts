@@ -142,6 +142,15 @@ export interface AuditProgress {
   last_worker: string | null;
 }
 
+/** Set while the last whole audit ran out of time reading an index too big for this host, and nothing has changed: a new one is refused. */
+export interface AuditPause {
+  run_id: string;
+  since: string | null;
+  /** What to do, in order, in plain words. */
+  steps: string[];
+  message: string;
+}
+
 export interface AuditRun {
   id: string;
   workspace_id: string;
@@ -187,6 +196,7 @@ export interface Overview {
   audit_running: boolean;
   audit_progress: AuditProgress | null;
   audit_queue: boolean;
+  audit_pause: AuditPause | null;
   query_log_size: number;
   target_fingerprint: Record<string, string | number> | null;
   scheduler_interval_minutes: number;
@@ -543,6 +553,8 @@ export interface AuditRequest {
   probe?: boolean;
   /** Continue the last audit that stopped part-way, from its checkpoint (a full audit only: leave out tenant and documents). */
   resume?: boolean;
+  /** Run a whole audit although it is paused (only for a worker on a server, which has no time limit). */
+  force?: boolean;
 }
 
 /** One line of GET /api/connections: the live health of a connected system, as measured by the server. */

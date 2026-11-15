@@ -385,6 +385,15 @@ or the index) are closed and removed, as a full audit always did; when it resume
 picture is built from a complete audit and is left to the next full audit after a resumed one. Documents added to the source before the checkpoint are picked
 up by the next full audit.
 
+**An index too big for the host (paused).** On a host with a time limit (the hosted site: 270 seconds) a whole-index read that runs out of time ends `failed`
+with `AuditTimeout`, and running it again fails the same way after reading the customer's whole index for minutes. So that run records `stats.failure`
+(`kind: too_large_for_one_go`), the notification and the email say what to change in plain words (ask whoever runs Qdrant for a keyword index on the document-ID
+field; turn on **Only audit documents found in the source (S3)** under Settings, Policy; run again and keep the page open; or run `ragi worker` on a server), and
+the audit is **paused**: `GET /api/overview` has `audit_pause` (`steps`, `message`), **Run audit** is switched off with the reason, and `POST /api/audits` for a whole
+audit answers `409` with the same steps. The pause lifts by itself when the switch is turned on (the audit then runs in pieces) or when a whole audit completes.
+`{"force": true}` (the **Run it anyway** button) runs it regardless, for a worker on a server, which has no time limit. A tenant or a few documents is small and is
+never paused, and neither is `ragi audit` on a machine without a time limit.
+
 **Measured** on a local Qdrant (150,000 points, no network; `python scripts/benchmark_scan.py --synthetic 150000` repeats it, and `--collection NAME` measures a
 real cluster read-only): a plain scroll reads about 9,600 points/s at page size 100, 16,700 at 256 and 45,000 at 1,000 (the default); a scroll filtered by
 document id on a field without a payload index costs about one pass over the collection (0.2 s for 10 ids, 1.0 s for 5,000 points), whatever the number of ids.
@@ -1265,7 +1274,7 @@ Interactive docs are at `/docs`. Authentication: **public**; **session** (signed
 | GET | `/api/connections` | session or key | connector status |
 | POST | `/api/deletion-check` | session or key (20 per 10 min per workspace in the hosted app) | verify deleted documents: remaining vectors, a search test, the verdict and the advice; body `documents` (optional) and `record` (default true) (3.13) |
 | POST | `/api/setup-check` | session or key (20 per 10 min per workspace in the hosted app) | the read-only setup and coverage check: do S3, the manifest and Qdrant use the same document IDs (3.10) |
-| POST | `/api/audits` | session or key | run an audit (`tenant`, `documents`, `probe`, `wait` options; `resume: true` continues the last partial audit; the status can be `partial`, see 3.12; `queued` when `RAGI_AUDIT_QUEUE` leaves it to a worker, see 3.17) |
+| POST | `/api/audits` | session or key | run an audit (`tenant`, `documents`, `probe`, `wait` options; `resume: true` continues the last partial audit; the status can be `partial`, see 3.12; `queued` when `RAGI_AUDIT_QUEUE` leaves it to a worker, see 3.17; `409` while a whole audit is paused for an index too big for the host, see 3.12, unless `force: true`) |
 | POST | `/api/worker/step` | session or key | one stretch of work on the oldest queued audit (`budget` seconds, default the host's limit): `completed`, `partial` or `idle` (3.17) |
 | GET | `/api/audits` | session or key | recent runs |
 | GET | `/api/audits/{run_id}` | session or key | one run |
