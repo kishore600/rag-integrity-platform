@@ -522,12 +522,24 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
             scope = Scope(tenant=req.tenant, keys=keys)
         if req.resume and scope is not None:
             raise HTTPException(422, "Only a full audit can be resumed: leave out tenant and documents.")
+        if s.settings.audit_queue and scope is None:  # a worker does the work: this only puts the audit in the queue
+            run_id = s.enqueue_audit(trigger="api", probe=req.probe, resume=req.resume)  # (a tenant or a few documents is small: it runs here)
+            return {"run_id": run_id, "status": "queued", "progress": s.audit_progress()}
         if req.wait:
             r = s.run_audit(scope=scope, trigger="api", probe=req.probe, resume=req.resume)
             return {"run_id": r.run_id, "status": r.status, "stats": r.stats}
         run_id = s.start_audit_async(scope=scope, trigger="api", probe=req.probe, resume=req.resume)
         run = s.ledger.get_run(run_id)  # already "completed" on serverless hosts, where audits run inline
         return {"run_id": run_id, "status": run["status"] if run else "running"}
+
+    @app.post("/api/worker/step")
+    def worker_step(budget: int | None = Query(None, ge=10, le=900), s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:
+        """Do one stretch of work on the oldest queued audit: for serverless hosts, where no process can stay up. Call it
+        again and again (a scheduled job, a loop) until it answers ``idle``. It works for ``budget`` seconds at most (default:
+        the host's audit time limit, else 240); an audit that is not finished is checkpointed, and its next stretch queued."""
+        limit = s.settings.audit_seconds_limit or 240
+        out = s.work("step", budget=min(budget, limit) if budget else limit)
+        return out or {"status": "idle", "progress": s.audit_progress()}
 
     @app.get("/api/audits")
     def list_audits(limit: int = Query(30, ge=1, le=200), s: IntegrityService = Depends(get_svc)) -> list[dict[str, Any]]:

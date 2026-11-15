@@ -546,6 +546,31 @@ write; a `SELECT`-only role is safer).
 **Limits.** One table per workspace. A table whose primary key is not called `id` needs `id` in the column map. Row counts for the progress
 bar come from the table statistics (run `ANALYZE` after a big load). The Setup check samples with `TABLESAMPLE` on a big table.
 
+### 3.17 The background worker: an audit that finishes by itself
+Section 3.12 makes a big audit resumable, but a person has to press **Resume** after every stop. On a host with a request time limit (the hosted
+service: 270 seconds) an index of millions of vectors stops many times. A **worker** is whatever comes back to it: it takes a queued audit, works on it,
+and when the audit stops part-way (`partial`) it queues the next stretch, which resumes from the last checkpoint, until the audit is `completed`.
+It adds no second way of auditing: every stretch is the ordinary sliced audit of 3.12, so the result is the same as an uninterrupted audit.
+
+| Piece | What it is |
+|---|---|
+| `RAGI_AUDIT_QUEUE=true` | `POST /api/audits` (for a whole corpus) only puts the audit in the queue (`status: queued`). A tenant or a few documents is small and still runs in the request. |
+| `ragi worker` | A loop for a server that stays up (Docker, a VM). It waits for queued audits, works on one for as long as it takes, and goes back to waiting. In `app` mode one worker serves every workspace and needs the same `RAGI_DATABASE_URL` and `RAGI_SECRET_KEY` as the web app (it decrypts each workspace's connection secrets). `--once` does one stretch and exits. |
+| `POST /api/worker/step` | One stretch of work (at most `budget` seconds, default the host's time limit) for a host that cannot keep a process up. Answers `completed`, `partial` (the next stretch is queued) or `idle`. Call it from a scheduled job until it answers `idle`. It takes a session or an API key. |
+
+**If a worker dies.** It reports in every 20 seconds. After 180 seconds of silence its audit is taken back: it becomes `partial` from its last checkpoint (as in 3.12)
+and the next stretch is queued, so the next worker carries on. A stretch that made no progress three times in a row (the index stays unreachable) is not
+queued again: the audit stays `partial` and `resumable_audit` shows it, for a person to resume.
+
+**What people see.** `GET /api/overview` has `audit_progress`: `state` is `working` ("Checking 12,400 of 98,000 documents (12.7%)"), `queued` (paused at a checkpoint,
+waiting for the next stretch), `waiting_for_worker` (nobody picked it up for 90 seconds: the message says how to start one) or `silent` (the worker has not
+reported for 90 seconds). The Overview and Reconciliation pages show it, and **Run audit** stays disabled while an audit is queued. `audit_queue` says whether the
+queue is on. A queued audit is not part of the audit history until it has run.
+
+**Limits.** Only whole-corpus audits are queued. Whatever 3.12 says does not resume (the setting off, so the whole index is one pass) does not resume here either:
+a worker runs it in one go with no time limit, and a crash starts it again. Each stretch starts by listing the source and the manifest again. A queued audit
+does nothing until a worker or a step call comes: that is what `waiting_for_worker` is for. See `docs/background-worker.md` for set-up recipes.
+
 ---
 
 ## 4. The interface, page by page
@@ -1218,7 +1243,8 @@ Interactive docs are at `/docs`. Authentication: **public**; **session** (signed
 | GET | `/api/connections` | session or key | connector status |
 | POST | `/api/deletion-check` | session or key (20 per 10 min per workspace in the hosted app) | verify deleted documents: remaining vectors, a search test, the verdict and the advice; body `documents` (optional) and `record` (default true) (3.13) |
 | POST | `/api/setup-check` | session or key (20 per 10 min per workspace in the hosted app) | the read-only setup and coverage check: do S3, the manifest and Qdrant use the same document IDs (3.10) |
-| POST | `/api/audits` | session or key | run an audit (`tenant`, `documents`, `probe`, `wait` options; `resume: true` continues the last partial audit; the status can be `partial`, see 3.12) |
+| POST | `/api/audits` | session or key | run an audit (`tenant`, `documents`, `probe`, `wait` options; `resume: true` continues the last partial audit; the status can be `partial`, see 3.12; `queued` when `RAGI_AUDIT_QUEUE` leaves it to a worker, see 3.17) |
+| POST | `/api/worker/step` | session or key | one stretch of work on the oldest queued audit (`budget` seconds, default the host's limit): `completed`, `partial` or `idle` (3.17) |
 | GET | `/api/audits` | session or key | recent runs |
 | GET | `/api/audits/{run_id}` | session or key | one run |
 | GET | `/api/notifications` | session or key | the workspace's notifications, newest first, and how many are unread; `limit`, `unread` (3.14) |
@@ -1276,6 +1302,7 @@ Install with `pip install -e ".[dev]"`; the command is `ragi`.
 | `ragi setup-check [--json]` | the setup and coverage check (3.10): do S3, the manifest and Qdrant use the same document IDs; exits **1** when the result is `not_ready` |
 | `ragi init-db` | create the ledger tables (idempotent) and check connectivity |
 | `ragi users list` / `ragi users delete EMAIL --yes` | list users, or delete a user and everything in their workspace (app mode; needs `RAGI_DATABASE_URL` and `RAGI_SECRET_KEY`) |
+| `ragi worker [--once] [--poll S] [--budget S] [--id NAME]` | run queued audits in the background, for as long as they take, carrying on after every pause (3.17); `--once` does one stretch and exits |
 | `ragi repair plan\|trigger\|verify\|approve-cleanup [PLAN_ID] [--min-severity S] [--tenant T]` | drive the repair workflow |
 
 ---
@@ -1294,6 +1321,7 @@ Install with `pip install -e ".[dev]"`; the command is `ragi`.
 | `RAGI_SESSION_DAYS` | `7` | session lifetime (sliding). |
 | `RAGI_MAX_AUDIT_SECONDS` | `0` | audit time budget; `0` is unlimited, and 270 is implied on serverless. |
 | `RAGI_SYNC_AUDITS` | `false` | run audits inside the request (implied on Vercel). |
+| `RAGI_AUDIT_QUEUE` | `false` | `true`: `POST /api/audits` only queues a whole-corpus audit; `ragi worker` or `POST /api/worker/step` runs it and carries it on after every pause (3.17). |
 | `RAGI_PROBE_RETRIEVAL`, `RAGI_PROBE_MAX`, `RAGI_PROBE_TOP_K` | `true`, `25`, `10` | retrieval-probe switches and limits. |
 | `RAGI_AUDIT_SLICE_DOCUMENTS` | `5000` | documents per slice of the index when only the source's documents are audited; each finished slice is a checkpoint (3.12). |
 | `RAGI_SMTP_HOST`, `RAGI_SMTP_PORT`, `RAGI_SMTP_USER`, `RAGI_SMTP_PASSWORD`, `RAGI_SMTP_FROM`, `RAGI_SMTP_SECURITY` | none, `587`, none, none, none, `starttls` | the platform's one mail account, which sends every workspace's alert emails (3.14). `RAGI_SMTP_SECURITY` is `starttls`, `ssl` or `none`. No host and sender means no email. |
@@ -1397,7 +1425,8 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 - **Close sign-up**: set `RAGI_ALLOW_REGISTRATION=false`.
 - **Rotate the secret key**: set `RAGI_SECRET_KEY` to `new,old`, redeploy; stored secrets keep working and new saves use the new key.
 - **Scheduled audits**: serverless has no scheduler. Create an API key on Integrations and call `POST /api/audits` from GitHub Actions or cron.
-- **Large corpora**: audit per tenant, or run `ragi audit` outside serverless.
+- **Large corpora**: with *Only audit documents found in the source* on, an audit that stops is resumable (3.12) and a worker can carry it on by itself
+  (`ragi worker` on any server, or `POST /api/worker/step` from a scheduled job, 3.17); otherwise audit per tenant, or run `ragi audit` outside serverless.
 
 ### 14.5 The practice lab (learn it on your own computer)
 `docker compose -f docker-compose.lab.yml up --build` starts a private S3 (the fake-S3 server "moto"), PostgreSQL and Qdrant on your computer, fills them with

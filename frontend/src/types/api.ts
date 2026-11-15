@@ -92,13 +92,25 @@ export interface AuditStats {
   alerts?: { sent?: number; issues?: number; reason?: string; error?: string };
 }
 
+/** Where the audit in progress stands (running, or queued for a worker). `state` says what to do about it, if anything. */
+export interface AuditProgress {
+  run_id: string | null;
+  status: "queued" | "running";
+  state: "working" | "queued" | "waiting_for_worker" | "silent";
+  message: string;
+  done_documents: number | null;
+  total_documents: number | null;
+  percent: number | null;
+  last_worker: string | null;
+}
+
 export interface AuditRun {
   id: string;
   workspace_id: string;
   kind: "full" | "scoped" | "verify";
   trigger: string;
   scope: { tenant?: string; documents?: number };
-  status: "running" | "completed" | "partial" | "failed";
+  status: "queued" | "running" | "completed" | "partial" | "failed";
   started_at: string;
   finished_at: string | null;
   stats: AuditStats;
@@ -135,6 +147,8 @@ export interface Overview {
   latest_full_run: AuditRun | null;
   trend: { at: string | null; health_score: number | null; findings: number | null; documents: number | null }[];
   audit_running: boolean;
+  audit_progress: AuditProgress | null;
+  audit_queue: boolean;
   query_log_size: number;
   target_fingerprint: Record<string, string | number> | null;
   scheduler_interval_minutes: number;
@@ -469,7 +483,7 @@ export interface DeletionCheckResult {
 
 export interface AuditStartResponse {
   run_id: string;
-  status: "running" | "completed" | "partial" | "failed";
+  status: "queued" | "running" | "completed" | "partial" | "failed";
   stats?: AuditStats;
 }
 

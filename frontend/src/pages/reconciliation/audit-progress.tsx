@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import { Card } from "@/components/ui/card";
+import { ProgressBar } from "@/components/shared/page";
 import { cn } from "@/lib/cn";
 import { timeAgo } from "@/lib/format";
-import type { AuditRun } from "@/types/api";
+import type { AuditProgress, AuditRun } from "@/types/api";
 
 /** A progress bar with no known end. It slides with the Web Animations API (no stylesheet needed) and holds still for people who ask for less motion. */
 export function IndeterminateBar({ label, className }: { label: string; className?: string }) {
@@ -23,15 +24,18 @@ export function IndeterminateBar({ label, className }: { label: string; classNam
 }
 
 /** Shown while an audit is running. The page behind it keeps showing the last finished audit. */
-export function AuditProgressCard({ run }: { run: AuditRun | null }) {
+export function AuditProgressCard({ run, progress }: { run: AuditRun | null; progress?: AuditProgress | null }) {
   const scope = run?.scope.tenant ? ` for tenant ${run.scope.tenant}` : "";
+  const needsHelp = progress?.state === "waiting_for_worker" || progress?.state === "silent";
+  const known = typeof progress?.percent === "number";
   return (
     <Card className="p-5" role="status">
-      <h2 className="text-section text-ink">Audit in progress</h2>
+      <h2 className="text-section text-ink">{progress?.status === "queued" ? "Audit waiting to continue" : "Audit in progress"}</h2>
       <p className="mt-0.5 text-support text-ink-2">
         Comparing your source with your index{scope}.{run?.status === "running" ? ` Started ${timeAgo(run.started_at)}.` : ""} This page updates when it finishes.
       </p>
-      <IndeterminateBar label="Audit in progress" className="mt-4" />
+      {progress?.message ? <p className={needsHelp ? "mt-2 text-support font-semibold text-warning" : "mt-2 text-support text-ink"}>{progress.message}</p> : null}
+      {known ? <ProgressBar value={progress?.percent ?? 0} tone={needsHelp ? "warning" : "brand"} label="Audit progress" /> : <IndeterminateBar label="Audit in progress" className="mt-4" />}
     </Card>
   );
 }

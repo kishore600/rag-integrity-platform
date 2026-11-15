@@ -46,7 +46,13 @@ function Dashboard({ o }: { o: Overview }) {
   const navigate = useNavigate();
   const run = o.latest_run;
 
-  const banner = o.audit_running ? <Banner>An audit is running. This page updates when it finishes.</Banner> : null;
+  const progress = o.audit_progress;
+  const needsHelp = progress?.state === "waiting_for_worker" || progress?.state === "silent";
+  const banner = o.audit_running ? (
+    <Banner tone={needsHelp ? "warning" : "info"}>
+      {progress?.message ?? "An audit is running."} {needsHelp ? "" : "This page updates when it finishes."}
+    </Banner>
+  ) : null;
 
   if (!run) {
     return (

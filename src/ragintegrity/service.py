@@ -21,7 +21,7 @@ from .engine.blast import blast_radius
 from .engine.isolation import OVERALL_TEXT
 from .engine.planning import estimate_workload, plan_items
 from .engine.reconcile import parse_ts
-from .ledger import STALE_RUN_SECONDS, Ledger, RunDiff, RunInProgress
+from .ledger import STALE_RUN_SECONDS, Ledger, RunDiff, RunInProgress, _parse_iso, utcnow
 from .models import ConnectionStatus, DocSummary, Finding, IssueType, Scope
 from .repair import RepairManager
 from .security import scrub
@@ -75,6 +75,34 @@ class AuditResult:
     status: str = "completed"  # completed | partial (the scan stopped part-way: see stats.scan)
 
 
+_UNSET: Any = object()
+WORKER_QUIET_SECONDS = 90  # a queued audit nobody has picked up for this long is reported as waiting for a worker
+
+
+class _Heartbeat:
+    """Tells the ledger every few seconds that the worker is alive, so a worker that dies is noticed and its audit taken back."""
+
+    def __init__(self, ledger: Ledger, run_id: str, worker_id: str, every: float = 20.0) -> None:
+        self.ledger, self.run_id, self.worker_id, self.every = ledger, run_id, worker_id, every
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name=f"heartbeat-{run_id[:8]}", daemon=True)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.every):
+            try:
+                self.ledger.touch_run(self.run_id, self.worker_id)
+            except Exception:  # a missed beat is not worth stopping the audit for
+                log.warning("heartbeat for audit %s failed", self.run_id, exc_info=True)
+
+    def __enter__(self) -> _Heartbeat:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2)
+
+
 class IntegrityService:
     def __init__(self, settings: Settings | None = None, ledger: Ledger | None = None,
                  connectors: Connectors | None = None, *,
@@ -104,9 +132,11 @@ class IntegrityService:
                     self._connectors = self._connector_factory(self.settings)
         return self._connectors
 
-    def options(self, probe: bool | None = None, run_id: str | None = None) -> AuditOptions:
+    def options(self, probe: bool | None = None, run_id: str | None = None, budget: Any = _UNSET) -> AuditOptions:
+        """The audit's options. ``budget`` is the seconds the audit may take: left out it is the host's limit (270 s on
+        serverless, none elsewhere), None means no limit."""
         s = self.settings
-        limit = s.audit_seconds_limit
+        limit = s.audit_seconds_limit if budget is _UNSET else (budget or 0)
         return AuditOptions(
             target=s.target_fingerprint(), default_tenant=s.default_tenant, required_fields=s.required_fields,
             known_tenants=self.ledger.known_tenants(), grace_minutes=s.grace_minutes,
@@ -138,9 +168,9 @@ class IntegrityService:
         return limit + 90 if limit else STALE_RUN_SECONDS
 
     # ------------------------------------------------------------------ audits
-    def _resume_info(self) -> dict[str, Any] | None:
+    def _resume_info(self, exclude: str | None = None) -> dict[str, Any] | None:
         """What a resumed audit continues: the interrupted full audit's last checkpoint and the counts it had reported."""
-        run = self.ledger.latest_resumable_run()
+        run = self.ledger.latest_resumable_run(exclude=exclude)
         if run is None:
             return None
         stats = run.get("stats") or {}
@@ -148,14 +178,14 @@ class IntegrityService:
                 "carry": {k: stats.get(k) or {} for k in ("documents_by_status", "findings_by_type", "findings_by_severity")}}
 
     def _execute(self, run_id: str, kind: str, trigger: str, scope: Scope | None, probe: bool | None,
-                 resume: dict[str, Any] | None = None) -> AuditResult:
+                 resume: dict[str, Any] | None = None, budget: Any = _UNSET) -> AuditResult:
         t0 = time.perf_counter()
         diff = RunDiff()
         seen: set[tuple[str, str]] = set()
         sticky: dict[str, Any] = {}  # the last checkpoint: kept in every progress note, so a run that is killed can still be resumed
         try:
             c = self.connectors
-            opts = self.options(probe, run_id)
+            opts = self.options(probe, run_id, budget)
             sliced = opts.source_only and (scope is None or scope.keys is None)
             if sliced and (scope is None or scope.is_full):
                 opts.prior_source_keys = self.ledger.source_present_keys()  # a document that vanished from the source is checked
@@ -252,6 +282,7 @@ class IntegrityService:
         try:
             kind = self._kind(scope, kind)
             _ = self.connectors  # a misconfigured or incomplete setup fails here, before a run row is created
+            self._refuse_while_queued(scope)
             info = self._resume_info() if (resume and scope is None) else None  # (before the run row: it must not hide the checkpoint)
             try:
                 run_id = self.ledger.start_run(kind, trigger, scope, stale_after=self._stale_after())
@@ -270,6 +301,7 @@ class IntegrityService:
         try:
             kind = self._kind(scope, None)
             _ = self.connectors  # fail early (and without a run row) when setup is incomplete
+            self._refuse_while_queued(scope)
             info = self._resume_info() if (resume and scope is None) else None
             run_id = self.ledger.start_run(kind, trigger, scope, stale_after=self._stale_after())
         except RunInProgress as exc:
@@ -292,13 +324,110 @@ class IntegrityService:
 
     @property
     def audit_running(self) -> bool:
+        """An audit is running, or queued (waiting for a worker to start it or to carry it on)."""
         if self._lock.locked():
             return True
-        running = self.ledger.list_runs(limit=1, status="running")  # another process may be running one
-        if running and self.ledger.retire_stale_runs(self._stale_after()):
+        active = self.ledger.active_runs()  # another process may be running one
+        if active and self.ledger.retire_stale_runs(self._stale_after()):
             # a run whose process was killed never records a result; without this the button would stay disabled forever
-            running = self.ledger.list_runs(limit=1, status="running")
-        return bool(running)
+            active = self.ledger.active_runs()
+        return bool(active)
+
+    # ------------------------------------------------------------------ the queue and the worker
+    def _refuse_while_queued(self, scope: Scope | None) -> None:
+        """A second whole-corpus audit cannot start while one waits in the queue (it would do the same work twice).
+        An audit of named documents, such as the check that follows a repair, is small and goes ahead."""
+        if (scope is None or scope.keys is None) and any(r["status"] == "queued" for r in self.ledger.active_runs()):
+            raise AuditBusy("An audit is already waiting for a worker to carry it out.")
+
+    def enqueue_audit(self, trigger: str = "api", probe: bool | None = None, resume: bool = False) -> str:
+        """Queue a whole-corpus audit for a worker instead of running it here (``RAGI_AUDIT_QUEUE``). A worker (``ragi worker``) or
+        a call to ``POST /api/worker/step`` carries it out, and carries on after every pause until it is done."""
+        _ = self.connectors  # a misconfigured or incomplete setup fails now, not an hour later in a worker
+        self.ledger.retire_stale_runs(self._stale_after())
+        if self.ledger.active_runs():
+            raise AuditBusy("An audit is already running, or waiting for a worker.")
+        return self.ledger.queue_run("full", trigger, None, {"probe": probe, "resume": resume, "auto": True})
+
+    def work(self, worker_id: str, budget: float | None = None, run: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """Take the oldest queued audit of this workspace and work on it for up to ``budget`` seconds (None: until it is done).
+
+        What it does is the ordinary audit (sliced, with checkpoints, ``partial`` when it stops part-way). If it stops part-way
+        the next stretch is queued, and resumes from the last checkpoint. Returns what happened (``completed``, ``partial`` or
+        ``failed``), or None when nothing was waiting. ``run`` is an audit the caller has already claimed."""
+        self.ledger.retire_stale_runs(self._stale_after())  # a dead worker's audit goes back in the queue
+        claimed = run or self.ledger.claim_run(worker_id)
+        if claimed is None:
+            return None
+        run_id = claimed["id"]
+        meta = self.ledger.get_run(run_id) or {}
+        asked = self.ledger.get_run_options(run_id)
+        kind, trigger, probe = meta.get("kind", "full"), meta.get("trigger", "worker"), asked.get("probe")
+        status = "failed"
+        try:
+            info = self._resume_info(exclude=run_id) if asked.get("resume") else None
+            with _Heartbeat(self.ledger, run_id, worker_id):
+                status = self._execute(run_id, kind, trigger, None, probe, info, budget=budget).status
+        except Exception as exc:  # _execute has recorded the failure on the run; the worker reports it and goes on
+            log.warning("audit %s failed in worker %s: %s", run_id, worker_id, exc)
+        finished = self.ledger.get_run(run_id) or {}
+        scan = (finished.get("stats") or {}).get("scan") or {}
+        out: dict[str, Any] = {"run_id": run_id, "status": status, "documents_done": scan.get("documents_done"),
+                               "documents_total": scan.get("documents_total"), "percent": scan.get("percent")}
+        if status == "partial" and asked.get("auto"):
+            # Stopped part-way (time ran out, or the index could not be reached): queue the next stretch. One that moved the
+            # checkpoint on is fine; MAX_STALLS in a row that did not are left partial for a person.
+            earlier = ((self.ledger.get_run(asked["continues"]) or {}).get("stats") or {}) if asked.get("continues") else {}
+            before = (earlier.get("scan") or {}).get("checkpoint")
+            progressed = bool(scan.get("checkpoint")) and scan.get("checkpoint") != before
+            out["next"] = self.ledger.queue_continuation(run_id, asked, progressed=progressed)
+        if status == "failed":
+            out["error"] = finished.get("error")
+        return out
+
+    def audit_progress(self) -> dict[str, Any] | None:
+        """Where the audit in progress (running, or waiting in the queue) stands, in words people can act on."""
+        active = self.ledger.active_runs()
+        if not active:
+            return None
+        run = self.ledger.get_run(active[0]["id"]) or {}
+        stats = run.get("stats") or {}
+        worker = stats.get("worker") or {}
+        now = utcnow()
+
+        def ago(value: Any) -> int | None:
+            t = _parse_iso(value)
+            return int((now - t).total_seconds()) if t else None
+
+        # a running audit reports its own progress; a queued continuation shows where the audit it continues had got to
+        source = stats.get("progress") or {}
+        if run.get("status") == "queued":
+            earlier = self.ledger.get_run_options(run["id"]).get("continues")  # (the public run hides the request's details)
+            scan = ((self.ledger.get_run(earlier) or {}).get("stats") or {}).get("scan") if earlier else None
+            source = scan or {}
+        done, total, pct = source.get("documents_done"), source.get("documents_total"), source.get("percent")
+        counts = f"{done:,} of {total:,} documents ({pct}%)" if isinstance(done, int) and isinstance(total, int) and total else ""
+        if run.get("status") == "running":
+            quiet = ago(worker.get("heartbeat_at"))
+            if quiet is not None and quiet > WORKER_QUIET_SECONDS:
+                state = "silent"
+                msg = (f"The worker has not reported for {quiet} seconds. If it does not come back, the audit is taken over "
+                       "and carries on from its last checkpoint.")
+            else:
+                state, msg = "working", ("Checking " + counts) if counts else (source.get("phase") or "The audit is running.")
+        else:
+            waited = ago(stats.get("queued_at")) or 0
+            if waited > WORKER_QUIET_SECONDS:
+                state = "waiting_for_worker"
+                msg = (f"Waiting for a worker for {waited // 60} min. Nothing is running this audit: start one with `ragi worker`, or "
+                       "call POST /api/worker/step (for example from a scheduled job). "
+                       + (f"{counts} are already checked and it carries on from there." if counts else ""))
+            else:
+                state = "queued"
+                msg = ("Paused at a checkpoint: " + counts + ". Waiting for the next step.") if counts else "Waiting for a worker to pick it up."
+        return {"run_id": run.get("id"), "status": run.get("status"), "state": state, "message": msg.strip(),
+                "done_documents": done, "total_documents": total, "percent": pct,
+                "last_worker": worker.get("id") or None}
 
     # ------------------------------------------------------------------ bootstrap / demo
     def ensure_ready(self) -> None:
@@ -345,6 +474,7 @@ class IntegrityService:
             "mode": self.settings.mode, "demo": self.settings.is_demo, "documents": docs,
             "issues": self.ledger.issue_counts(), "latest_run": latest[0] if latest else None,
             "latest_full_run": full[0] if full else None, "trend": trend, "audit_running": self.audit_running,
+            "audit_progress": self.audit_progress(), "audit_queue": self.settings.audit_queue,
             "query_log_size": self.ledger.query_count(),
             "target_fingerprint": (self.settings.target_fingerprint().to_dict() if self.settings.target_fingerprint() else None),
             "scheduler_interval_minutes": self.settings.audit_interval_minutes,
