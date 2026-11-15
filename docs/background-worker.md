@@ -33,7 +33,7 @@ What a person sees (`GET /api/overview` -> `audit_progress`, shown on the Overvi
 |---|---|---|
 | `working` | a worker is on it | "Checking 12,400 of 98,000 documents (12.7%)" |
 | `queued` | paused at a checkpoint, or just queued | "Paused at a checkpoint: ... Waiting for the next step." |
-| `waiting_for_worker` | nobody picked it up for 90 seconds | says how to start a worker |
+| `waiting_for_worker` | nobody picked it up for 90 seconds | the dashboard runs it from its own page (section C); the message also says how to start a worker |
 | `silent` | the worker has not reported for 90 seconds | after 180 seconds the audit is taken back |
 
 ## Choosing who carries the audit on
@@ -75,6 +75,17 @@ jobs:
           done
     env: {RAGI_URL: "${{ secrets.RAGI_URL }}", RAGI_KEY: "${{ secrets.RAGI_KEY }}"}
 ```
+
+### C. The dashboard itself, when nobody else does (nothing to set up)
+
+An audit must never wait for nobody. When an audit has waited 90 seconds with no worker (`waiting_for_worker`), the dashboard does the
+worker's job from the page the person has open: it calls `POST /api/worker/step` (the call of section B) and, when a stretch stops part-way
+and queues the next one, calls it again, until the audit is over. A real worker and the dashboard never clash: the first to claim the audit
+gets it, and the other call answers `idle`. If the call fails it waits 30 seconds and tries again, and after three failures in a row it says
+so and stops.
+
+It works only **while the page stays open**, and each stretch has the host's time limit, so it finishes a big index only when the audit is
+resumable (see below). For a very large index, or for audits nobody watches, run section A.
 
 ## Requirements and limits
 

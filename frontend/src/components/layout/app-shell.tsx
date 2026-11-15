@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/shared/states";
 import { invalidateData, useOverview, useSession } from "@/hooks/queries";
+import { useQueueDriver } from "@/hooks/use-queue-driver";
 import { Sidebar, SidebarContent } from "./sidebar";
 import { Topbar } from "./topbar";
 
@@ -29,6 +30,7 @@ function AuditWatcher() {
   const session = useSession().data;
   const overview = useOverview(session ? (session.app ? !!session.ready : true) : false).data;
   const was = useRef<boolean | null>(null);
+  useQueueDriver(); // an audit that waits in the queue with no worker is run from this page
   useEffect(() => {
     if (!overview) return;
     if (was.current === true && !overview.audit_running) {
