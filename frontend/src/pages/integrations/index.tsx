@@ -51,7 +51,7 @@ function ConnectedSystems({ appMode }: { appMode: boolean }) {
     <Card>
       <CardHeader
         title="Connected systems"
-        description="The three systems RAGGuard compares."
+        description="Your documents and your vector index, plus an optional manifest: the systems RAGGuard compares."
         actions={<LinkButton to="/data-sources" variant="secondary" size="sm">Manage data sources</LinkButton>}
       />
       {appMode ? (

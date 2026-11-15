@@ -215,14 +215,16 @@ def test_lab_b_with_the_settings_the_workbook_tells_you_to_type(seeded):
     assert run.stats["isolation"]["overall"]["status"] == "limited"
 
 
+# The orphans are critical, not high: the search test finds their pieces at rank 1 (the lab's Qdrant payloads have no tenant field, and until
+# the probe learned to search such an index it never found anything, so a leak that a search returns used to read as "high").
 @pytest.mark.parametrize("n, overrides, documents, findings, extra", [
     (1, {"s3_lookup_from_manifest": False}, 6, 3, {"9000001": ["metadata_inconsistent(medium)"]}),
-    (2, {"source_documents_only": False}, 11, 8, {"2200001": ["orphan_vector(high)"], "3300001": ["manifest_orphan(low)"],
+    (2, {"source_documents_only": False}, 11, 8, {"2200001": ["orphan_vector(critical)"], "3300001": ["manifest_orphan(low)"],
                                                  "3300002": ["manifest_orphan(low)"], "3300003": ["manifest_orphan(low)"],
-                                                 "8000001": ["orphan_vector(high)"], "9000001": ["orphan_vector(high)"]}),
+                                                 "8000001": ["orphan_vector(critical)"], "9000001": ["orphan_vector(critical)"]}),
     (3, {"s3_lookup_from_manifest": False, "source_documents_only": False}, 11, 8,
-     {"2200001": ["orphan_vector(high)"], "3300001": ["manifest_orphan(low)"], "3300002": ["manifest_orphan(low)"],
-      "3300003": ["manifest_orphan(low)"], "8000001": ["orphan_vector(high)"], "9000001": ["metadata_inconsistent(medium)"]}),
+     {"2200001": ["orphan_vector(critical)"], "3300001": ["manifest_orphan(low)"], "3300002": ["manifest_orphan(low)"],
+      "3300003": ["manifest_orphan(low)"], "8000001": ["orphan_vector(critical)"], "9000001": ["metadata_inconsistent(medium)"]}),
 ])
 def test_the_exercises_give_what_the_workbook_says(seeded, n, overrides, documents, findings, extra):
     _svc, run, by = audit(seeded, "B", **overrides)

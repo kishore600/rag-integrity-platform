@@ -44,9 +44,38 @@ export interface RunWarning {
   examples?: { tenant_id: string; document_id: string; copies: number; found_in: string[] }[];
 }
 
+/** How complete and how reliable the scan of the vector index was (GUIDE.md 3.12). Absent on runs recorded before it existed. */
+export interface ScanBlock {
+  status: "completed" | "partial" | "failed" | "in_progress";
+  complete: boolean;
+  /** true while the result is not final: a partial audit reports only the documents it finished. */
+  provisional: boolean;
+  mode: "sliced" | "single_pass";
+  points_scanned: number;
+  estimated_total: number | null;
+  percent: number | null;
+  pages: number;
+  retries: number;
+  recovered_errors: number;
+  unrecoverable_errors: number;
+  rate_limited: number;
+  waited_seconds: number;
+  slices_total: number;
+  slices_done: number;
+  documents_done: number | null;
+  documents_total: number | null;
+  checkpoint: [string, string] | null;
+  resumed_from: string | null;
+  stopped_because: string | null;
+}
+
 export interface AuditStats {
   /** Absent on runs recorded before ID warnings existed: treat as none. */
   warnings?: RunWarning[];
+  scan?: ScanBlock;
+  /** Whether a manifest took part in this audit, and which checks were left out when it did not. */
+  manifest?: { connected: boolean; checks_not_run?: string[] };
+  deletion_check?: { documents_checked: number; with_remaining_vectors: number; verified_gone: number };
   source_documents?: number;
   manifest_rows?: number;
   index_points?: number;
@@ -69,7 +98,7 @@ export interface AuditRun {
   kind: "full" | "scoped" | "verify";
   trigger: string;
   scope: { tenant?: string; documents?: number };
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "partial" | "failed";
   started_at: string;
   finished_at: string | null;
   stats: AuditStats;
@@ -83,8 +112,22 @@ export interface TenantHealth {
   health_score: number | null;
 }
 
+/** An interrupted full audit that can be continued (GUIDE.md 3.12). */
+export interface ResumableAudit {
+  run_id: string;
+  finished_at: string | null;
+  documents_done: number | null;
+  documents_total: number | null;
+  percent: number | null;
+  stopped_because: string | null;
+}
+
 export interface Overview {
   mode: string;
+  resumable_audit?: ResumableAudit | null;
+  /** False when no manifest is connected (it is optional). */
+  manifest_connected?: boolean;
+  index_type?: "qdrant" | "pgvector";
   demo: boolean;
   documents: { total: number; by_status: Record<string, number>; health_score: number | null; tenants: TenantHealth[] };
   issues: { open: number; by_severity: Record<Severity, number>; by_type: Record<string, number>; resolved: number; ignored: number };
@@ -189,6 +232,7 @@ export interface LiveSnapshot {
   tenant_id: string;
   document_id: string;
   status: string;
+  manifest_connected?: boolean;
   source: { source_uri: string; source_version: string | null; source_hash: string | null; size_bytes: number; last_modified: string | null; hash_reliable: boolean } | null;
   manifest: {
     processing_status: string | null;
@@ -306,7 +350,7 @@ export interface BlastRadius {
 }
 
 // ---- settings (connections) --------------------------------------------------------------------------
-export type SettingsKind = "s3" | "manifest" | "qdrant" | "pipeline" | "repair" | "alerts" | "policy";
+export type SettingsKind = "s3" | "manifest" | "qdrant" | "index" | "pgvector" | "pipeline" | "repair" | "alerts" | "policy";
 export type FieldType = "str" | "int" | "float" | "bool" | "enum" | "url" | "pgurl" | "json" | "ident" | "regex" | "csv";
 
 export interface SettingsField {
@@ -349,6 +393,8 @@ export interface SettingsView {
   kinds: SettingsGroup[];
   ready: boolean;
   missing: SettingsKind[];
+  /** Where this workspace's vectors are: Qdrant (the default) or pgvector. */
+  index_type?: "qdrant" | "pgvector";
 }
 
 export interface ApiKey {
@@ -365,9 +411,64 @@ export interface CreatedApiKey {
   note: string;
 }
 
+/** One step a notification offers. A `link` opens a page of the app; a `post` calls one of two known endpoints (see hooks/use-notification-actions.ts). */
+export interface NotificationAction {
+  id: string;
+  label: string;
+  kind: "link" | "post";
+  target: string;
+  primary?: boolean;
+  body?: Record<string, unknown>;
+}
+
+/** What an audit told the workspace when it finished, and what to do about it. */
+export interface AppNotification {
+  id: string;
+  kind: "audit_completed" | "audit_partial" | "audit_failed";
+  tone: "success" | "info" | "warning" | "critical";
+  title: string;
+  body: string;
+  details: string[];
+  run_id: string | null;
+  actions: NotificationAction[];
+  created_at: string;
+  read_at: string | null;
+  /** The id of the action that was taken from this notification, if any. */
+  done_action: string | null;
+  emailed_at: string | null;
+}
+
+export interface NotificationList {
+  items: AppNotification[];
+  unread: number;
+}
+
+/** The answer of the Send test email button (POST /api/alerts/test-email). `reason` says in words why nothing was sent. */
+export interface TestEmailResult {
+  ok: boolean;
+  sent: number;
+  to: string[];
+  reason?: string;
+  rate_limited?: boolean;
+}
+
+/** The answer of the deletion check (GUIDE.md 3.13): only the numbers the notification button reports. */
+export interface DeletionCheckResult {
+  summary: {
+    documents_checked: number;
+    verified_deleted: number;
+    deletion_mismatch: number;
+    manifest_not_updated: number;
+    not_deleted: number;
+    vectors_remaining: number;
+    retrievable: number;
+  };
+  note?: string;
+}
+
 export interface AuditStartResponse {
   run_id: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "partial" | "failed";
   stats?: AuditStats;
 }
 
@@ -375,6 +476,8 @@ export interface AuditRequest {
   tenant?: string;
   documents?: { tenant_id: string; document_id: string }[];
   probe?: boolean;
+  /** Continue the last audit that stopped part-way, from its checkpoint (a full audit only: leave out tenant and documents). */
+  resume?: boolean;
 }
 
 /** One line of GET /api/connections: the live health of a connected system, as measured by the server. */
@@ -531,6 +634,10 @@ export interface CoverageLink {
 export interface SetupCheckResult {
   status: SetupStatus;
   headline: string;
+  /** False when no manifest is connected: only S3 and the index were compared. */
+  manifest_connected?: boolean;
+  /** What the vector store is called in the messages ("Qdrant" or "pgvector"). */
+  index_label?: string;
   checks: SetupCheckItem[];
   coverage: { source_to_manifest?: CoverageLink | null; manifest_to_source?: CoverageLink | null; source_to_index?: CoverageLink | null };
   counts: {
@@ -541,6 +648,7 @@ export interface SetupCheckResult {
     manifest_documents?: number | null;
     index_points_approx?: number | null;
     index_points_sampled?: number | null;
+    manifest_connected?: boolean;
   };
   ids_at_a_glance: { source?: string[]; manifest?: string[]; index?: string[] };
   id_types_in_index: Partial<Record<"integer" | "digits" | "text" | "decimal" | "other", number>>;

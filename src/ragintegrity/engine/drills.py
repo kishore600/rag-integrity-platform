@@ -55,7 +55,7 @@ def drill_tenant_mismatch(
     wrapped = _MislabelledIndex(index, key, opts.default_tenant)
     c = collect(source, manifest, wrapped, opts, scope)
     # evaluate everything that was collected: the relabelled vectors sit under a tenant outside the one-document scope
-    result = reconcile(c.source, c.manifest, c.chunk_rows, c.agg, _config(index, opts, c.required), None)
+    result = reconcile(c.source, c.manifest, c.chunk_rows, c.agg, _config(index, opts, c.required, c.has_manifest), None)
     moved = c.agg.states.get((DRILL_TENANT, key[1]))
     findings = [{"type": f.type.value, "severity": f.severity.value, "tenant_id": f.tenant_id, "document_id": f.document_id,
                  "title": f.title, "detail": f.detail} for f in result.findings]

@@ -84,7 +84,7 @@ Expected audit with these settings: **5 documents compared, 2 findings** (one cr
 | # | Change | What you should see | What it teaches |
 |---|---|---|---|
 | 1 | Turn **off** *Look up files from the manifest* | 6 documents, 3 findings. The new one is `9000001`: **Metadata mismatch (medium)**, vectors but no table row. | Without the lookup the app lists the bucket and finds files the table does not know (it also gets slow on a huge bucket). |
-| 2 | Turn **off** *Only audit documents found in the source* | 11 documents, 8 findings, health 27%: orphan vectors for bill `2200001`, orphan-row warnings for `3300001` to `3300003`, orphan vectors for `8000001` and `9000001`, plus the two real ones. | Why the switch exists: the key pattern skips most documents, so everything the pattern skips looks like a leftover. On a big shared index the audit would also read every piece and run out of time. |
+| 2 | Turn **off** *Only audit documents found in the source* | 11 documents, 8 findings, health 27%: orphan vectors for bill `2200001`, orphan-row warnings for `3300001` to `3300003`, orphan vectors for `8000001` and `9000001` (all the orphan vectors are **critical**: the search test finds their pieces at rank 1), plus the two real ones. | Why the switch exists: the key pattern skips most documents, so everything the pattern skips looks like a leftover. On a big shared index the audit would also read every piece and run out of time. |
 | 3 | Turn **off both** switches | 11 documents, 8 findings. Same as above, except `9000001` is now a **Metadata mismatch (medium)**. | The two switches decide which of the two directions (file to shelf, shelf to file) the audit checks. |
 | 4 | Per bill: Key pattern `^(?P<document_id>[^/]+)/[^/]+\.pdf$` and Column map `document_id` set to `external_bill_id` | 7 documents, 3 findings (bill `2200002` **critical**, `2300004` critical, `2300005` high), a **duplicate manifest ID** warning, health 57%. | Bill-level checking works, but bill `2200001` (two documents) would stay healthy even if only one of them were indexed, because Qdrant only knows the bill. |
 
@@ -98,3 +98,4 @@ Put the settings back as in the first table (and save the repair webhook from it
 4. **Run audit** again: **5 documents compared, 0 findings, health 100%**.
 
 Lab A has its own worker, so a repair there never touches Lab B (and the other way round). A worker is *your* pipeline: it must know where your files live and how your vectors and table are laid out, which is why the two labs need two workers.
+

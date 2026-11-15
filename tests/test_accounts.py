@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 
 import pytest
@@ -165,6 +166,7 @@ def test_settings_version_changes_when_settings_change(accounts):
     v0 = accounts.settings_version(ws)
     accounts.save_settings(ws, "s3", {"bucket": "a"}, {})
     v1 = accounts.settings_version(ws)
+    time.sleep(0.05)  # the version is the save's timestamp: Windows' clock ticks about every 15 ms, so two saves in one tick would look alike
     accounts.save_settings(ws, "s3", {"bucket": "b"}, {})
     assert len({v0, v1, accounts.settings_version(ws)}) == 3
 

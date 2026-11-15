@@ -9,8 +9,9 @@ question:
 
 > *Is the information in my vector database exactly consistent with the latest source data?*
 
-It does **not** replace your ingestion pipeline. It reads your source documents (S3), your processing manifest
-(PostgreSQL / Supabase) and your vector index (Qdrant) through **read-only** connectors, reconciles the three, records
+It does **not** replace your ingestion pipeline. It reads your source documents (S3) and your vector index (Qdrant, or a
+pgvector table in PostgreSQL / Supabase), plus your processing manifest if you have one (it is optional), through
+**read-only** connectors, reconciles them, records
 every inconsistency with evidence in an issue ledger, and - when you ask it to - hands a repair plan to **your own**
 worker and independently verifies the result.
 
@@ -50,8 +51,8 @@ Click through *Issues -> Repairs -> Trigger -> Verify -> Approve cleanup* and wa
 
 ## The hosted product
 
-**https://rag-integrity-platform.vercel.app**: sign up, then connect **your own** S3 bucket, processing manifest (Postgres) and
-Qdrant in *Settings*. There is no sample data: a new workspace is empty until you connect it, and the demo above is for local
+**https://rag-integrity-platform.vercel.app**: sign up, then connect **your own** S3 bucket and vector index (Qdrant or pgvector) in *Data Sources*; a processing
+manifest (Postgres) is optional. There is no sample data: a new workspace is empty until you connect it, and the demo above is for local
 exploration only. Each connection has a **Save & test** button that runs the real connector against your infrastructure and
 tells you what it found (how many sampled keys match your key pattern, whether objects carry a SHA-256, whether the manifest
 columns are mapped and the database role is read-only, which Qdrant collections exist and whether their payloads carry
@@ -135,6 +136,8 @@ See [docs/repair-webhook.md](docs/repair-webhook.md) and the runnable [reference
 cp .env.example .env     # then edit; secrets stay in the environment, never in the ledger
 RAGI_MODE=live ragi connections     # tests S3, the manifest DB, Qdrant and the ledger, naming whichever is misconfigured
 RAGI_MODE=live ragi setup-check    # do S3, the manifest and Qdrant use the same document IDs? (read-only, takes seconds)
+RAGI_MODE=live ragi verify-deletions   # were deleted documents really removed from the index, and can a search still return them? (read-only)
+RAGI_MODE=live ragi audit --resume      # continue an audit that stopped part-way, from its last checkpoint
 RAGI_MODE=live ragi serve
 ```
 

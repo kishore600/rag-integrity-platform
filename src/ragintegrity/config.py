@@ -11,6 +11,7 @@ import os
 import re
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlparse
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -57,6 +58,7 @@ class Settings(BaseSettings):
     grace_minutes: int = 10  # don't flag documents that are probably still being ingested
     required_payload_fields: str = ""  # comma separated; default document_id,source_hash(+tenant_id if multi-tenant)
     source_documents_only: bool = False  # audit only documents found in S3; ignore other manifest rows / vectors (and read only theirs)
+    audit_slice_documents: int = 5000  # documents per slice of the index when only the source's documents are audited: each slice is a checkpoint
 
     # --- source: S3 -------------------------------------------------------------------------
     s3_bucket: str | None = None
@@ -90,6 +92,16 @@ class Settings(BaseSettings):
     qdrant_page_size: int = 1000
     default_tenant: str = "default"  # tenant to assume when a payload has no tenant field
 
+    # --- vector index: pgvector (PostgreSQL), an alternative to Qdrant ---------------------------------------
+    index_type: str = "qdrant"  # qdrant | pgvector: where the vectors live
+    pgvector_database_url: str | None = None
+    pgvector_schema: str = "public"
+    pgvector_table: str | None = None
+    pgvector_column_map: str = ""  # JSON: {"document_id": "doc_id", "source_hash": "metadata.hash", "vector": "embedding"}
+    pgvector_distance: str = "cosine"  # cosine | l2 | inner_product: the operator the table's index uses (for the retrieval probe)
+    pgvector_check_vectors: bool = False  # also read the vectors to find empty / all-zero embeddings (slower)
+    pgvector_page_size: int = 1000
+
     # --- target pipeline fingerprint (what *should* be in the index) -------------------------------
     target_parser_version: str | None = None
     target_chunking_version: str | None = None
@@ -113,6 +125,17 @@ class Settings(BaseSettings):
     alert_webhook_url: str | None = None  # Slack-compatible incoming webhook
     alert_min_severity: str = "high"
     embedding_price_per_mtok: float = 0.13  # USD per 1M tokens, for workload estimates
+
+    # --- audit notifications: an in-app notification after every audit, and an email -----------------
+    alert_email_when: str = "always"  # always | attention (failed, partial, or new issues at/above the minimum severity) | never
+    alert_email_to: str | None = None  # single-user modes: who gets the email (comma separated). App mode emails the workspace's own users.
+    app_url: str | None = None  # the address of this deployment: the links in emails point here. Never taken from a request.
+    smtp_host: str | None = None  # the platform's own mail account; one account sends every workspace's alerts
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None  # e.g. "RAGGuard <alerts@example.com>"
+    smtp_security: str = "starttls"  # starttls | ssl | none
     chunk_size_tokens: int = 512
 
     # ------------------------------------------------------------------------------------------
@@ -162,6 +185,14 @@ class Settings(BaseSettings):
         return self._json_map(self.manifest_chunk_column_map, "RAGI_MANIFEST_CHUNK_COLUMN_MAP")
 
     @property
+    def pgvector_columns(self) -> dict[str, str]:
+        return self._json_map(self.pgvector_column_map, "RAGI_PGVECTOR_COLUMN_MAP")
+
+    @property
+    def uses_pgvector(self) -> bool:
+        return (self.index_type or "qdrant").lower() == "pgvector"
+
+    @property
     def is_demo(self) -> bool:
         return self.mode.lower() == "demo"
 
@@ -174,6 +205,22 @@ class Settings(BaseSettings):
         """Wall-clock budget for one audit. Serverless functions are killed at their max duration (vercel.json), so stop
         gracefully first; ``HOSTED_AUDIT_SECONDS`` must stay well below it (a test enforces that)."""
         return self.max_audit_seconds or (HOSTED_AUDIT_SECONDS if self.run_audits_inline else 0)
+
+    @property
+    def link_base(self) -> str | None:
+        """Where the links in an email point. Only ever configuration (RAGI_APP_URL, or the production address Vercel sets):
+        a link built from a request's Host header could be made to point anywhere by whoever sent the request."""
+        raw = (self.app_url or "").strip()
+        if not raw and os.environ.get("VERCEL_PROJECT_PRODUCTION_URL"):
+            raw = os.environ["VERCEL_PROJECT_PRODUCTION_URL"].strip()
+        if not raw:
+            return None
+        if "://" not in raw:
+            raw = "https://" + raw
+        parsed = urlparse(raw)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+            return None
+        return f"{parsed.scheme}://{parsed.netloc}"
 
     @property
     def run_audits_inline(self) -> bool:

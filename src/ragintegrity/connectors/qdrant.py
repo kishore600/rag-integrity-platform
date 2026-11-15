@@ -14,8 +14,9 @@ from typing import Any
 from ..config import Settings
 from ..ids import number_form
 from ..models import ConnectionStatus, IndexedChunk, Scope
-from .base import ConnectorError, check_deadline
+from .base import ConnectorError, ScanStats, check_deadline
 from .payload import _dig, build_payload_map, payload_to_chunk
+from .resilience import call_with_retry
 
 FILTER_BATCH = 5000  # document ids per server-side filter (each batch is one scroll pass over the collection)
 
@@ -76,6 +77,37 @@ class QdrantIndex:
         self.client = client
         self._names = settings.collections
         self.deadline: float | None = None  # set by the audit: a time.monotonic() value after which scanning must stop
+        self.scan_stats = ScanStats()  # shared with the engine: pages, retries, recovered and unrecoverable errors
+        self.on_progress: Any = None  # called (at most every couple of seconds) with the scan stats while a scan runs
+        self.retry_attempts = 4
+        self._sleep = time.sleep  # replaced in tests so backoff does not slow them down
+        self._last_progress = 0.0
+
+    # --------------------------------------------------------------------------------- reliability
+    def _call(self, fn: Any) -> Any:
+        """One request to Qdrant, retried with backoff when the failure can pass (see resilience.py)."""
+        return call_with_retry(fn, stats=self.scan_stats, deadline=self.deadline, attempts=self.retry_attempts, sleep=self._sleep)
+
+    def estimated_points(self) -> int | None:
+        """The approximate number of points in the collections being audited (one cheap request each), or None."""
+        total = 0
+        try:
+            for name in self.collections():
+                total += self._call(lambda n=name: self.client.count(collection_name=n, exact=False)).count
+        except Exception:
+            return None
+        self.scan_stats.estimated_total = total
+        return total
+
+    def _progress(self) -> None:
+        cb = self.on_progress
+        if cb is None or time.monotonic() - self._last_progress < 2.0:
+            return
+        self._last_progress = time.monotonic()
+        try:
+            cb(self.scan_stats)
+        except Exception:  # a progress note must never break a scan
+            pass
 
     # --------------------------------------------------------------------------------- meta
     def collections(self) -> list[str]:
@@ -149,11 +181,14 @@ class QdrantIndex:
                 while True:
                     check_deadline(self.deadline, "the vector index", f" ({read:,} points so far)")  # a page can be empty of matches
                     flt = flt_text if text_only else flt_both
-                    try:
-                        points, offset = self.client.scroll(
+                    def fetch(coll: str = coll, flt: Any = flt, offset: Any = offset) -> Any:  # bound now: retries repeat THIS page
+                        return self.client.scroll(
                             collection_name=coll, scroll_filter=flt, limit=self.s.qdrant_page_size, offset=offset,
                             with_payload=include, with_vectors=vectors_arg,
                         )
+
+                    try:
+                        points, offset = self._call(fetch)
                     except Exception as exc:
                         # only the very first page of a pass can be retried: nothing has been read with this filter yet
                         if offset is None and flt is not flt_text and _is_rejection(exc):
@@ -161,6 +196,8 @@ class QdrantIndex:
                             continue
                         raise
                     read += len(points)
+                    self.scan_stats.pages += 1
+                    self._progress()
                     for p in points:
                         chunk = payload_to_chunk(
                             coll, p.id, p.payload, self.pmap, vector=getattr(p, "vector", None),
@@ -184,7 +221,8 @@ class QdrantIndex:
 
         names = self.collections()
         paths = {"document_id": self.pmap["document_id"], "tenant_id": self.pmap["tenant_id"]}
-        include = sorted({self._top_level(p) for p in paths.values()})
+        revision = (self.pmap["source_hash"], self.pmap["source_version"])  # what tells a changed file from an unchanged one
+        include = sorted({self._top_level(p) for p in (*paths.values(), *revision)})
         per = max(1, limit // max(1, len(names)))
         rows: list[dict[str, Any]] = []
         approx = 0
@@ -204,15 +242,17 @@ class QdrantIndex:
             for p in points:
                 pl = p.payload or {}
                 rows.append({"collection": coll, "point_id": str(p.id),
-                             "document_id": _dig(pl, paths["document_id"]), "tenant_id": _dig(pl, paths["tenant_id"])})
+                             "document_id": _dig(pl, paths["document_id"]), "tenant_id": _dig(pl, paths["tenant_id"]),
+                             "has_revision": any(_dig(pl, r) not in (None, "") for r in revision)})
         return {"rows": rows, "random": random_sample, "approx_points": approx, "collections": names}
 
     # --------------------------------------------------------------------------------- probe
     def probe(
         self, collection: str, point_id: str, tenant_id: str | None, top_k: int
     ) -> list[tuple[str, float, str | None]] | None:
+        tenant_field = self.pmap["tenant_id"]
         recs = self.client.retrieve(collection_name=collection, ids=[_coerce_id(point_id)], with_vectors=True,
-                                    with_payload=False)
+                                    with_payload=[self._top_level(tenant_field)])
         if not recs or recs[0].vector is None:
             return None
         vec = recs[0].vector
@@ -221,10 +261,14 @@ class QdrantIndex:
         if not vec:
             return None
         flt = None
-        if tenant_id is not None:
+        # A real query is scoped to its tenant, so the probe is too, but only when the points have a tenant at all. An index whose
+        # payloads carry no tenant field (a single-tenant corpus) would otherwise answer every probe with zero hits, which reads
+        # as "not searchable" when nothing was searched. The point's own stored value is used, so a number stays a number.
+        own = _dig(recs[0].payload or {}, tenant_field)
+        if tenant_id is not None and own is not None:
             from qdrant_client import models as qm
 
-            flt = qm.Filter(must=[qm.FieldCondition(key=self.pmap["tenant_id"], match=qm.MatchValue(value=tenant_id))])
+            flt = qm.Filter(must=[qm.FieldCondition(key=tenant_field, match=qm.MatchValue(value=own))])
         res = self.client.query_points(
             collection_name=collection, query=vec, using=self.vector_name, limit=top_k, query_filter=flt,
             with_payload=[self._top_level(self.pmap["document_id"])],

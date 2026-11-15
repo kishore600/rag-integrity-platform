@@ -176,6 +176,7 @@ class IndexedChunk:
     source_version: str | None = None
     fingerprint: Fingerprint = field(default_factory=Fingerprint)
     acl_hash: str | None = None
+    chunk_total: int | None = None  # how many chunks the pipeline cut the document into, when each vector says so
     vector_checked: bool = False
     vector_ok: bool = True  # False = vector missing / empty / all zeros (only if vector_checked)
     present_fields: frozenset[str] = frozenset()  # payload fields that carried a value

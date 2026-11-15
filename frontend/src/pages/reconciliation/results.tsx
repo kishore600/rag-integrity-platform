@@ -57,7 +57,7 @@ export function ResultsCard({ run }: { run: AuditRun }) {
             <p className="text-support text-ink-2">{total === 1 ? "issue found" : "issues found"}</p>
             {total === 0 ? (
               <p className="mt-3 flex items-center gap-2 text-body text-success">
-                <CircleCheck className="h-4 w-4" aria-hidden /> Source, manifest and index agree.
+                <CircleCheck className="h-4 w-4" aria-hidden /> Everything this audit compared agrees.
               </p>
             ) : (
               <ul className="mt-3 space-y-2">

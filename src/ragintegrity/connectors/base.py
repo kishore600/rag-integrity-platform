@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Protocol
 
 from ..models import (
@@ -48,6 +49,27 @@ class IndexConnector(Protocol):
         ...
 
     def health(self) -> ConnectionStatus: ...
+
+
+@dataclass
+class ScanStats:
+    """What a scan of the vector index went through. Shared between the engine (which counts points) and the connector
+    (which counts pages and what it had to retry), so a result can say how reliable the scan was."""
+
+    points: int = 0  # points read
+    pages: int = 0  # requests that returned a page
+    retries: int = 0  # requests repeated after a failure that can pass (timeout, rate limit, 5xx)
+    recovered_errors: int = 0  # requests that failed at least once and then succeeded
+    unrecoverable_errors: int = 0  # requests that gave up (retries used up, or an error that retrying cannot fix)
+    rate_limited: int = 0  # of the retries, how many were because the server said "slow down" (HTTP 429)
+    waited_seconds: float = 0.0  # time spent waiting between retries
+    estimated_total: int | None = None  # the index's own (approximate) point count, for a percentage
+
+    def snapshot(self) -> dict:
+        return {"points_scanned": self.points, "pages": self.pages, "retries": self.retries,
+                "recovered_errors": self.recovered_errors, "unrecoverable_errors": self.unrecoverable_errors,
+                "rate_limited": self.rate_limited, "waited_seconds": round(self.waited_seconds, 1),
+                "estimated_total": self.estimated_total}
 
 
 class ConnectorError(RuntimeError):

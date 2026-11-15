@@ -157,11 +157,15 @@ def test_a_server_that_refuses_the_number_form_falls_back_to_text_only_for_the_r
     assert isinstance(retry, qm.FieldCondition) and retry.match.any == ["170"]
 
 
-def test_a_failure_that_is_not_a_refusal_is_not_retried():
+def test_a_timeout_is_not_mistaken_for_a_refusal_of_the_number_form():
+    """A timeout is repeated by the retry layer (same filter each time); it never switches the filter to text only."""
     client = FakeClient(error=TimeoutError("timed out"))
+    idx = index(client)
+    idx._sleep = lambda s: None  # no real waiting in a test
     with pytest.raises(TimeoutError):
-        list(index(client).scan(Scope(keys=frozenset({("default", "170")}))))
-    assert len(client.calls) == 1
+        list(idx.scan(Scope(keys=frozenset({("default", "170")}))))
+    assert len(client.calls) == idx.retry_attempts
+    assert all(isinstance(c["scroll_filter"].must[0], qm.Filter) for c in client.calls)  # still the both-forms filter
 
 
 def test_a_refusal_that_also_hits_the_text_only_filter_is_raised_unchanged():

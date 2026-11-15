@@ -32,7 +32,7 @@ export function ErrorState({ error, onRetry, className, compact }: { error: unkn
         {setup ? <Sparkles className="h-5 w-5" aria-hidden /> : <AlertTriangle className="h-5 w-5" aria-hidden />}
       </div>
       <h3 className="text-section text-ink">{setup ? "Connect your data sources first" : "We couldn't load this"}</h3>
-      <p className="mt-1 max-w-md text-body text-ink-2">{setup ? "RAGGuard needs your S3 source, manifest database and Qdrant index before it can compare them." : errorMessage(error)}</p>
+      <p className="mt-1 max-w-md text-body text-ink-2">{setup ? "RAGGuard needs your S3 source and your vector index before it can compare them." : errorMessage(error)}</p>
       <div className="mt-4 flex gap-2">
         {setup ? <LinkButton variant="primary" to="/data-sources">Go to Data Sources</LinkButton> : null}
         {onRetry && !setup ? (

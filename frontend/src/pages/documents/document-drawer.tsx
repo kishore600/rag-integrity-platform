@@ -11,7 +11,7 @@ import { DataTable } from "@/components/shared/data-table";
 import { KeyValue, Mono, Section } from "@/components/shared/page";
 import { EmptyState, ErrorState, Skeleton } from "@/components/shared/states";
 import { DocStateBadge, IssueStatusBadge, SeverityBadge } from "@/components/shared/status";
-import { useCreatePlan, useDocument } from "@/hooks/queries";
+import { useCreatePlan, useDocument, useManifestConnected } from "@/hooks/queries";
 import { useRunAudit } from "@/hooks/use-run-audit";
 import { ApiError, errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -43,7 +43,16 @@ function versionsDiffer(d: Pick<DocumentRow, "source_version" | "indexed_version
 }
 
 // ---- overview -----------------------------------------------------------------------------------------------
-function Presence({ label, system, present }: { label: string; system: string; present: boolean }) {
+function Presence({ label, system, present, na }: { label: string; system: string; present: boolean; na?: boolean }) {
+  if (na) {
+    return (
+      <div className="rounded-control border border-line bg-surface p-3">
+        <span className="text-card text-ink">{label}</span>
+        <p className="mt-1 text-support text-ink-2">{system}</p>
+        <p className="mt-1 text-support font-medium text-ink-2">Not connected</p>
+      </div>
+    );
+  }
   return (
     <div className={cn("rounded-control border p-3", present ? "border-success/30 bg-success-bg" : "border-critical/30 bg-critical-bg")}>
       <div className="flex items-center gap-1.5">
@@ -58,6 +67,7 @@ function Presence({ label, system, present }: { label: string; system: string; p
 
 function OverviewTab({ detail }: { detail: DocumentDetail }) {
   const d = detail.document;
+  const manifestConnected = useManifestConnected();
   if (!d) {
     return (
       <div className="px-5 py-5">
@@ -84,11 +94,11 @@ function OverviewTab({ detail }: { detail: DocumentDetail }) {
         </div>
       </Section>
 
-      <Section title="Where this document exists" description="RAGGuard compares these three systems.">
+      <Section title="Where this document exists" description={manifestConnected ? "RAGGuard compares these three systems." : "RAGGuard compares these two systems. No manifest is connected, and it is optional."}>
         <div className="grid grid-cols-3 gap-3">
           <Presence label="Source" system="Amazon S3" present={!!d.source_present} />
-          <Presence label="Manifest" system="PostgreSQL" present={!!d.manifest_present} />
-          <Presence label="Index" system="Qdrant" present={!!d.index_present} />
+          <Presence label="Manifest" system="PostgreSQL" present={!!d.manifest_present} na={!manifestConnected} />
+          <Presence label="Index" system="Vector index" present={!!d.index_present} />
         </div>
       </Section>
 
@@ -134,7 +144,7 @@ function OverviewTab({ detail }: { detail: DocumentDetail }) {
                 "—"
               ),
             },
-            { label: "Manifest status", value: d.manifest_status ? cap(d.manifest_status) : "No manifest row" },
+            { label: "Manifest status", value: d.manifest_status ? cap(d.manifest_status) : manifestConnected ? "No manifest row" : "Not connected" },
             { label: "Manifest updated", value: d.manifest_updated_at ? <span title={formatDateTime(d.manifest_updated_at)}>{formatDateTime(d.manifest_updated_at)}</span> : "—" },
             {
               label: "Last verified",
@@ -235,7 +245,7 @@ function LiveView({ live }: { live: LiveSnapshot }) {
             ]}
           />
         ) : (
-          <p className="text-body text-ink-2">No manifest row. The pipeline has no record of this document.</p>
+          <p className="text-body text-ink-2">{live.manifest_connected === false ? "No manifest is connected. It is optional: connect one on the Data Sources page for the checks that need it." : "No manifest row. The pipeline has no record of this document."}</p>
         )}
         {live.expected_chunks.length > 0 ? <p className="mt-3 text-support text-ink-2">The manifest lists <span className="tabular-nums">{formatNumber(live.expected_chunks.length)}</span> expected chunk{live.expected_chunks.length === 1 ? "" : "s"}.</p> : null}
       </Section>

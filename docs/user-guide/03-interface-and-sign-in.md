@@ -192,7 +192,7 @@ The sidebar holds the RAGGuard mark at the top, ten menu items, a **Help and use
 | Menu item | Page title | Address | What the page is for | Chapter |
 |---|---|---|---|---|
 | **Overview** | Overview | `/` | "How healthy your RAG index is right now." | [Overview](05-overview.md) |
-| **Data Sources** | Data sources | `/data-sources` | "The three systems RAGGuard compares." Connect and test S3, PostgreSQL and Qdrant. | [Connect your data sources](04-data-sources.md) |
+| **Data Sources** | Data sources | `/data-sources` | "Your documents and your vector index, plus an optional manifest: the systems RAGGuard compares." Connect and test S3, your vector index (Qdrant or pgvector) and, if you have one, the manifest. | [Connect your data sources](04-data-sources.md) |
 | **Reconciliation** | Reconciliation | `/reconciliation` | "Compare your source documents, your manifest and your vector index." Run audits. | [Reconciliation](06-reconciliation.md) |
 | **Integrity Issues** | Integrity issues | `/issues` | "Everything that makes your index disagree with your source." Issues, repair plans and impact analysis. | [Integrity issues](07-integrity-issues.md), [Repair plans](08-repair-plans.md), [Impact analysis](09-impact-analysis.md) |
 | **Isolation** | Isolation | `/isolation` | "Tenant isolation means one customer's content never shows up for another customer. This page shows whether your index keeps tenants apart." Whether any customer's documents are indexed under another customer, with a practice drill and an evidence report. | [Isolation](20-isolation.md) |
@@ -271,7 +271,7 @@ The indigo **Run audit** button in the top bar starts an audit of **everything**
 | State | What you see | Why |
 |---|---|---|
 | Ready | A play icon and **Run audit** (**Audit** on screens narrower than 640 pixels) | You can start an audit. |
-| Disabled | The same button, greyed. Hover over it or tab to it and the tooltip says "Connect your data sources first". | A hosted workspace has not saved all three systems yet. |
+| Disabled | The same button, greyed. Hover over it or tab to it and the tooltip says "Connect your data sources first". | A hosted workspace has not saved its source and its vector index yet. |
 | Running | A spinner and **Audit running** (**Running** on small screens). Not clickable. | An audit is in progress, started by you, a colleague, a script or a schedule. |
 
 On a single-user server the button is never disabled because the connections come from the server.
@@ -430,7 +430,7 @@ When a request fails, the page shows a red warning icon, the heading **We couldn
 
 ### Connect your data sources first
 
-One error is special. When a page needs your three systems and they are not all connected, you see a blue sparkle icon and the heading **Connect your data sources first**, with the text "RAGGuard needs your S3 source, manifest database and Qdrant index before it can compare them." and a **Go to Data Sources** button. Several pages show their own version of the same prompt, for example Documents and Integrity Issues: "RAGGuard needs your S3 source, manifest database and Qdrant index before it can find integrity issues." The Overview shows the **Connect your data** card instead, with three steps (see [Overview](05-overview.md#the-connect-your-data-card)). Reconciliation says "Connect your data first". Isolation also says "Connect your data first", with the text "Isolation is checked from a full audit of your S3 documents, your PostgreSQL manifest and your Qdrant index. Connect all three, then run your first audit." Audit history says "No audits yet" and offers the same button. All of them lead to [Connect your data sources](04-data-sources.md).
+One error is special. When a page needs your three systems and they are not all connected, you see a blue sparkle icon and the heading **Connect your data sources first**, with the text "RAGGuard needs your S3 source and your vector index before it can compare them." and a **Go to Data Sources** button. Several pages show their own version of the same prompt, for example Documents and Integrity Issues: "RAGGuard needs your S3 source, manifest database and Qdrant index before it can find integrity issues." The Overview shows the **Connect your data** card instead, with three steps (see [Overview](05-overview.md#the-connect-your-data-card)). Reconciliation says "Connect your data first". Isolation also says "Connect your data first", with the text "Isolation is checked from a full audit of your S3 documents, your PostgreSQL manifest and your Qdrant index. Connect all three, then run your first audit." Audit history says "No audits yet" and offers the same button. All of them lead to [Connect your data sources](04-data-sources.md).
 
 ### Page not found
 
@@ -444,7 +444,7 @@ When you first open RAGGuard, before it knows who you are, you see only a small 
 
 ## Tips and common mistakes
 
-- **The Run audit button is greyed out.** All three connections must be saved first (hosted mode). Hover over the button to read the reason, then open **Data Sources**.
+- **The Run audit button is greyed out.** The source and the vector index must be saved first (hosted mode); the manifest is optional. Hover over the button to read the reason, then open **Data Sources**.
 - **I pressed Run audit and nothing seems to happen.** On serverless hosting the audit runs inside your request and can take minutes. Leave the page open. On other servers wait for the "Audit finished" notice.
 - **My search found nothing.** The top bar searches **Open** issues only, and searches document ids on the **Documents** page, not tenants or file contents. Use the **Status** filter on the Issues page to include resolved or ignored issues.
 - **The page keeps its filters when I come back.** That is deliberate: filters live in the address. Press **Clear filters** to start again.

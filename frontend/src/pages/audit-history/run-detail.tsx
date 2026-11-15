@@ -1,7 +1,8 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, CircleCheck, FileQuestion, Loader2, TriangleAlert } from "lucide-react";
+import { ArrowLeft, CircleCheck, FileQuestion, Info, Loader2, TriangleAlert } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/shared/data-table";
 import { KpiCard, PageHeader } from "@/components/shared/page";
@@ -10,7 +11,8 @@ import { CopyButton } from "@/components/shared/copy-button";
 import { LinkButton } from "@/components/shared/link-button";
 import { RunWarningsSection, runWarnings } from "@/components/shared/run-warnings";
 import { IssueStatusBadge, RunStatusBadge, SeverityBadge, healthTone } from "@/components/shared/status";
-import { useAudit, useIssues } from "@/hooks/queries";
+import { useAudit, useIssues, useOverview } from "@/hooks/queries";
+import { useRunAudit } from "@/hooks/use-run-audit";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatDateTime, formatDuration, formatNumber, formatPercent, shortHash, timeAgo } from "@/lib/format";
@@ -30,6 +32,21 @@ const DIFF_ROWS = [
   { key: "resolved", label: "Resolved", tone: "text-success" },
   { key: "unchanged", label: "Unchanged", tone: "text-ink" },
 ] as const;
+
+/** Continues a partial audit from its checkpoint. Only offered while this run is still the one that can be resumed. */
+function ResumeButton({ run }: { run: AuditRun }) {
+  const { run: start, running } = useRunAudit();
+  const resumable = useOverview(true).data?.resumable_audit;
+  const can = resumable?.run_id === run.id;
+  return (
+    <div className="mt-3">
+      <Button variant="primary" size="sm" disabled={!can || running} loading={running} onClick={() => start({ resume: true })}>
+        Resume audit
+      </Button>
+      {!can ? <p className="mt-1.5 text-support text-ink-2">This audit has already been resumed, or a newer audit replaced it.</p> : null}
+    </div>
+  );
+}
 
 function BackLink() {
   return (
@@ -102,8 +119,8 @@ function RunView({ run }: { run: AuditRun }) {
   const statTiles: { label: string; value: ReactNode; hint?: string }[] = [];
   if (s.documents_total !== undefined) statTiles.push({ label: "Documents", value: formatNumber(s.documents_total), hint: "compared in total" });
   if (s.source_documents !== undefined) statTiles.push({ label: "Source documents", value: formatNumber(s.source_documents), hint: "in Amazon S3" });
-  if (s.manifest_rows !== undefined) statTiles.push({ label: "Manifest rows", value: formatNumber(s.manifest_rows), hint: "in PostgreSQL" });
-  if (s.index_points !== undefined) statTiles.push({ label: "Index vectors", value: formatNumber(s.index_points), hint: "in Qdrant" });
+  if (s.manifest_rows !== undefined && s.manifest?.connected !== false) statTiles.push({ label: "Manifest rows", value: formatNumber(s.manifest_rows), hint: "in PostgreSQL" });
+  if (s.index_points !== undefined) statTiles.push({ label: "Index vectors", value: formatNumber(s.index_points), hint: "in the vector index" });
   if (s.retrieval_probes !== undefined) statTiles.push({ label: "Retrieval probes", value: formatNumber(s.retrieval_probes), hint: "queries sent to the index" });
   if (s.health_score !== undefined) {
     statTiles.push({
@@ -149,6 +166,36 @@ function RunView({ run }: { run: AuditRun }) {
             <p className="text-body text-ink">
               This audit is still running. It started {timeAgo(run.started_at)}, and this page updates when it finishes.
             </p>
+          </div>
+        ) : null}
+
+        {s.manifest?.connected === false ? (
+          <div className="rounded-card border border-line bg-surface px-4 py-3" role="note">
+            <p className="flex items-center gap-2 text-card text-ink">
+              <Info className="h-4 w-4 text-ink-2" aria-hidden /> This audit ran without a manifest
+            </p>
+            <p className="mt-1 text-body text-ink">It compared your files with the vector index directly. These checks need a manifest, so they were not run:</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5 text-body text-ink-2">
+              {(s.manifest.checks_not_run ?? []).map((c) => (
+                <li key={c} className="break-words">{c}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {run.status === "partial" ? (
+          <div className="rounded-card border border-warning/30 bg-warning-bg px-4 py-3" role="note">
+            <p className="flex items-center gap-2 text-card text-ink">
+              <TriangleAlert className="h-4 w-4 text-warning" aria-hidden /> This audit stopped part-way
+            </p>
+            <p className="mt-1 break-words text-body text-ink">
+              {s.scan?.documents_total
+                ? `It checked ${formatNumber(s.scan.documents_done ?? 0)} of ${formatNumber(s.scan.documents_total)} documents (${formatPercent(s.scan.percent ?? 0)}). What it checked is reported; the rest is not, so nothing is claimed about it. `
+                : "What it checked is reported; the rest is not. "}
+              {s.scan?.stopped_because ? `Why it stopped: ${s.scan.stopped_because}. ` : ""}
+              Resume it to continue from the last checkpoint.
+            </p>
+            <ResumeButton run={run} />
           </div>
         ) : null}
 

@@ -16,6 +16,7 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Path as FPath
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -50,6 +51,7 @@ class AuditRequest(BaseModel):
     documents: list[DocRef] | None = Field(default=None, max_length=5000)
     probe: bool | None = None
     wait: bool = False  # run synchronously and return the result (handy for CI)
+    resume: bool = False  # continue the last interrupted (partial) full audit instead of starting over
 
 
 class PlanRequest(BaseModel):
@@ -69,6 +71,15 @@ class BlastRequest(BaseModel):
 
 class QueryLogRequest(BaseModel):
     queries: list[dict[str, Any]] = Field(max_length=5000)
+
+
+class DeletionCheckRequest(BaseModel):
+    documents: list[DocRef] | None = Field(default=None, max_length=500)  # documents to verify, besides the ones found automatically
+    record: bool = True  # write the findings to the issue list (a scoped run); false = look only
+
+
+class NotificationDone(BaseModel):
+    action: str = Field(max_length=32)  # the id of one of the notification's actions
 
 
 class DrillRequest(BaseModel):
@@ -491,10 +502,12 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
         if req.tenant or req.documents:
             keys = frozenset((d.tenant_id, d.document_id) for d in req.documents) if req.documents else None
             scope = Scope(tenant=req.tenant, keys=keys)
+        if req.resume and scope is not None:
+            raise HTTPException(422, "Only a full audit can be resumed: leave out tenant and documents.")
         if req.wait:
-            r = s.run_audit(scope=scope, trigger="api", probe=req.probe)
-            return {"run_id": r.run_id, "status": "completed", "stats": r.stats}
-        run_id = s.start_audit_async(scope=scope, trigger="api", probe=req.probe)
+            r = s.run_audit(scope=scope, trigger="api", probe=req.probe, resume=req.resume)
+            return {"run_id": r.run_id, "status": r.status, "stats": r.stats}
+        run_id = s.start_audit_async(scope=scope, trigger="api", probe=req.probe, resume=req.resume)
         run = s.ledger.get_run(run_id)  # already "completed" on serverless hosts, where audits run inline
         return {"run_id": run_id, "status": run["status"] if run else "running"}
 
@@ -508,6 +521,35 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
         if run is None:
             raise HTTPException(404, "Audit run not found")
         return run
+
+    # ------------------------------------------------------------------ notifications
+    @app.get("/api/notifications")
+    def list_notifications(limit: int = Query(30, ge=1, le=100), unread: bool = False,
+                           s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:
+        rows, unread_total = s.ledger.list_notifications(limit=limit, unread_only=unread)
+        return {"items": rows, "unread": unread_total}
+
+    @app.post("/api/notifications/read-all")
+    def read_all_notifications(s: IntegrityService = Depends(get_svc)) -> dict[str, int]:
+        return {"marked": s.ledger.mark_all_notifications_read()}
+
+    @app.post("/api/notifications/{notification_id}/read")
+    def read_notification(notification_id: str = FPath(max_length=64), s: IntegrityService = Depends(get_svc)) -> dict[str, bool]:
+        if not s.ledger.mark_notification_read(notification_id):
+            raise HTTPException(404, "Notification not found")
+        return {"ok": True}
+
+    @app.post("/api/notifications/{notification_id}/done")
+    def notification_done(body: NotificationDone, notification_id: str = FPath(max_length=64),
+                          s: IntegrityService = Depends(get_svc)) -> dict[str, bool]:
+        """The reader took one of the notification's actions (the browser has already done it through the normal endpoint)."""
+        found = s.ledger.get_notification(notification_id)
+        if found is None:
+            raise HTTPException(404, "Notification not found")
+        if body.action not in {a.get("id") for a in found["actions"]}:
+            raise HTTPException(422, "That action is not part of this notification.")
+        s.ledger.mark_notification_done(notification_id, body.action)
+        return {"ok": True}
 
     # ------------------------------------------------------------------ issues
     @app.get("/api/issues")
@@ -582,6 +624,30 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
             if not state.accounts.hit(f"setup-check:{p.workspace_id}", 20, 600):
                 raise HTTPException(429, "Too many setup checks. Try again in a few minutes.")
         return s.setup_check()
+
+    # ------------------------------------------------------------------ the Send test email button
+    @app.post("/api/alerts/test-email")
+    def alerts_test_email(request: Request, s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:
+        if multi:
+            # it makes the platform's mail account send a message: keep it from being used to flood an inbox
+            assert state is not None and state.accounts is not None
+            p = get_principal(request)
+            if not state.accounts.hit(f"test-email:{p.workspace_id}", 5, 600):
+                raise HTTPException(429, "Too many test emails. Try again in a few minutes.")
+        return s.send_test_email()
+
+    # ------------------------------------------------------------------ deletion and retrieval verification
+    @app.post("/api/deletion-check")
+    def deletion_check(request: Request, req: DeletionCheckRequest | None = None, s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:
+        req = req or DeletionCheckRequest()
+        if multi:
+            # it queries the user's index with real vectors: keep it from being used to hammer it
+            assert state is not None and state.accounts is not None
+            p = get_principal(request)
+            if not state.accounts.hit(f"deletion-check:{p.workspace_id}", 20, 600):
+                raise HTTPException(429, "Too many deletion checks. Try again in a few minutes.")
+        docs = [(d.tenant_id, d.document_id) for d in req.documents] if req.documents else None
+        return s.verify_deletions(docs, record=req.record)
 
     # ------------------------------------------------------------------ tenant isolation
     @app.get("/api/isolation")

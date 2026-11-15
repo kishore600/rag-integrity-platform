@@ -255,7 +255,7 @@ export default function DocumentsPage() {
           <EmptyState
             icon={Database}
             title="Connect your data sources first"
-            description="RAGGuard needs your S3 source, manifest database and Qdrant index before it can compare your documents."
+            description="RAGGuard needs your S3 source and your vector index before it can compare your documents."
             action={<LinkButton variant="primary" to="/data-sources">Go to Data Sources</LinkButton>}
           />
         </Card>

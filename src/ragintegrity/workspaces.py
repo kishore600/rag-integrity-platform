@@ -76,8 +76,9 @@ SPECS: dict[str, Spec] = {
     ),
     "manifest": Spec(
         "Processing manifest (PostgreSQL / Supabase)",
-        "The table your pipeline writes after processing each document. Read-only: every query runs in a READ ONLY transaction. "
-        "Use a role that can only SELECT.",
+        "Optional. The table your pipeline writes after processing each document. Without it RAGGuard compares your files with the vector index "
+        "directly; with it, it can also check what the pipeline claimed against what is indexed. Read-only: every query runs in a READ ONLY "
+        "transaction. Use a role that can only SELECT.",
         (
             Field("database_url", "manifest_database_url", "Connection string", type="pgurl", secret=True, required=True,
                   help="postgresql://user:password@host:5432/dbname?sslmode=require", placeholder="postgresql://reader:***@db.example.com:5432/postgres?sslmode=require"),
@@ -104,6 +105,32 @@ SPECS: dict[str, Spec] = {
             Field("vector_name", "qdrant_vector_name", "Named vector", help="Only if your collection uses named vectors.", max_len=64),
             Field("check_vectors", "qdrant_check_vectors", "Detect empty embeddings", type="bool",
                   help="Also fetches vectors to find empty or all-zero embeddings (slower)."),
+        ),
+    ),
+    "index": Spec(
+        "Where your vectors are stored",
+        "Qdrant, or pgvector (a PostgreSQL table with a vector column: Supabase, Neon, AWS RDS and plain Postgres).",
+        (
+            Field("type", "index_type", "Vector store", type="enum", choices=("qdrant", "pgvector"),
+                  help="qdrant: a Qdrant server or Qdrant Cloud. pgvector: a PostgreSQL table with a pgvector column."),
+        ),
+    ),
+    "pgvector": Spec(
+        "Vector index (pgvector / PostgreSQL)",
+        "A PostgreSQL table with a pgvector column, one row per chunk. Read-only: every query runs in a READ ONLY transaction. "
+        "Use a role that can only SELECT.",
+        (
+            Field("database_url", "pgvector_database_url", "Connection string", type="pgurl", secret=True, required=True,
+                  help="postgresql://user:password@host:5432/dbname?sslmode=require", placeholder="postgresql://reader:***@db.example.com:5432/postgres?sslmode=require"),
+            Field("schema", "pgvector_schema", "Schema", type="ident", placeholder="public", max_len=63),
+            Field("table", "pgvector_table", "Table", type="ident", required=True, placeholder="documents_embeddings", max_len=63),
+            Field("column_map", "pgvector_column_map", "Column map (JSON)", type="json",
+                  help='Point our names at your columns. A key inside a JSON column works too: {"document_id": "doc_id", "source_hash": "content_hash", '
+                       '"vector": "embedding", "tenant_id": "metadata.tenant"}. "id" is the row id (the primary key).', max_len=4000),
+            Field("distance", "pgvector_distance", "Distance", type="enum", choices=("cosine", "l2", "inner_product"),
+                  help="The operator your table's index uses (cosine is the usual one). It decides how the retrieval test searches."),
+            Field("check_vectors", "pgvector_check_vectors", "Detect empty embeddings", type="bool",
+                  help="Also reads the vectors to find empty or all-zero embeddings (slower)."),
         ),
     ),
     "pipeline": Spec(
@@ -133,8 +160,12 @@ SPECS: dict[str, Spec] = {
     ),
     "alerts": Spec(
         "Alerts",
-        "Slack-compatible incoming webhook, notified only about new, reopened or escalated issues.",
+        "After every audit: a notification in the app and an email, each with the next step. Plus an optional Slack-compatible webhook "
+        "for new, reopened or escalated issues.",
         (
+            Field("email_when", "alert_email_when", "Email me", type="enum", choices=("always", "attention", "never"),
+                  help="always: after every audit. attention: only when an audit fails or stops part-way, or finds a new issue at or above the "
+                       "minimum severity. never: no email. The notification in the app is always created."),
             Field("webhook_url", "alert_webhook_url", "Webhook URL", type="url", secret=True, placeholder="https://hooks.slack.com/services/..."),
             Field("min_severity", "alert_min_severity", "Minimum severity", type="enum", choices=("critical", "high", "medium", "low")),
         ),
@@ -157,7 +188,16 @@ SPECS: dict[str, Spec] = {
         ),
     ),
 }
-REQUIRED_KINDS = ("s3", "manifest", "qdrant")  # all three are needed before the first audit
+REQUIRED_KINDS = ("s3", "qdrant")  # the default: S3 and the index. The manifest is optional; the index is pgvector when the workspace chooses it
+
+
+def required_kinds(index_type: str | None) -> tuple[str, ...]:
+    """The connections an audit needs: the source and the vector index the workspace chose. The manifest is optional."""
+    return ("s3", "pgvector") if (index_type or "qdrant").lower() == "pgvector" else ("s3", "qdrant")
+
+
+def index_type_of(rows: dict[str, dict[str, Any]]) -> str:
+    return str(((rows.get("index") or {}).get("config") or {}).get("type") or "qdrant")
 CSV_ITEM = re.compile(r"^[A-Za-z0-9_.\-]{1,255}$")
 
 
@@ -269,7 +309,8 @@ def overlay(base: Settings, rows: dict[str, dict[str, Any]]) -> Settings:
     """The engine Settings for one workspace. Anything the workspace did not set falls back to the *default*, never to
     the platform's environment, so one deployment's env can never leak into a user's connections."""
     defaults = Settings.model_fields
-    upd: dict[str, Any] = {"mode": "live", "audit_interval_minutes": 0, "public_base_url": None}
+    # alert_email_to is the operator's own address (single-user modes): a workspace's emails go to the workspace's users only
+    upd: dict[str, Any] = {"mode": "live", "audit_interval_minutes": 0, "public_base_url": None, "alert_email_to": None}
     for kind, spec in SPECS.items():
         data = rows.get(kind) or {"config": {}, "secrets": {}}
         for f in spec.fields:
@@ -288,6 +329,8 @@ def guard_settings(settings: Settings, kind: str | None = None) -> None:
             validate_postgres_url(settings.manifest_database_url, ap)
         if kind in (None, "qdrant") and settings.qdrant_url:
             assert_public_url(settings.qdrant_url, ap)
+        if kind in (None, "pgvector") and settings.pgvector_database_url:
+            validate_postgres_url(settings.pgvector_database_url, ap)
         if kind in (None, "repair") and settings.repair_webhook_url:
             assert_public_url(settings.repair_webhook_url, ap)
         if kind in (None, "alerts") and settings.alert_webhook_url:
@@ -300,9 +343,10 @@ def _factory(settings: Settings) -> Connectors:
     missing = []
     if not (settings.s3_bucket and settings.s3_access_key_id and settings.s3_secret_access_key):
         missing.append("S3 source documents")
-    if not settings.manifest_database_url:
-        missing.append("the processing manifest")
-    if not settings.qdrant_url:
+    if settings.uses_pgvector:  # the manifest is optional: only S3 and the vector index are needed
+        if not (settings.pgvector_database_url and settings.pgvector_table):
+            missing.append("the pgvector index")
+    elif not settings.qdrant_url:
         missing.append("the Qdrant index")
     if missing:
         raise SetupIncomplete("Finish setup first: connect " + ", ".join(missing) + " on the Data Sources page.")
@@ -336,12 +380,16 @@ class WorkspaceManager:
                           "updated_at": iso(data["updated_at"]) if data.get("updated_at") else None,
                           "last_test": data.get("last_test"), "required_for_audit": kind in REQUIRED_KINDS})
         configured = {k["kind"]: k["configured"] for k in kinds}
-        missing = [k for k in REQUIRED_KINDS if not configured[k]]
-        return {"kinds": kinds, "ready": not missing, "missing": missing}
+        needed = required_kinds(index_type_of(rows))
+        for k in kinds:
+            k["required_for_audit"] = k["kind"] in needed
+        missing = [k for k in needed if not configured[k]]
+        return {"kinds": kinds, "ready": not missing, "missing": missing, "index_type": index_type_of(rows)}
 
     def is_ready(self, ws: str) -> bool:
         rows = self.accounts.load_settings(ws)
-        return all(is_configured(k, (rows.get(k) or {}).get("config", {}), (rows.get(k) or {}).get("secrets", {})) for k in REQUIRED_KINDS)
+        return all(is_configured(k, (rows.get(k) or {}).get("config", {}), (rows.get(k) or {}).get("secrets", {}))
+                   for k in required_kinds(index_type_of(rows)))
 
     # ---- changes
     def save(self, ws: str, kind: str, values: dict[str, Any]) -> dict[str, Any]:
@@ -417,4 +465,12 @@ class WorkspaceManager:
             from .connectors.qdrant import QdrantIndex
 
             return QdrantIndex(settings, fast=True).diagnose()
+        if kind == "pgvector":
+            from .connectors.pgvector import PgVectorIndex
+
+            idx = PgVectorIndex(settings, fast=True)
+            try:
+                return idx.diagnose()
+            finally:
+                idx.engine.dispose()
         return [{"name": "Settings", "status": "ok", "detail": "valid"}]

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from ..ids import same_hash
 from ..models import (
     EMBEDDING_FIELDS,
     SEVERITY_RANK,
@@ -28,6 +29,7 @@ from ..models import (
     max_severity,
 )
 from .index_state import (
+    LIVE_CLASSES,
     OUTDATED,
     STALE,
     UNKNOWN,
@@ -68,6 +70,7 @@ class ReconcileConfig:
     now: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     vector_sizes: dict[str, int | None] = field(default_factory=dict)
     required_fields: list[str] = field(default_factory=list)
+    has_manifest: bool = True  # False: no manifest is connected, so no document is expected to have a manifest row
 
 
 @dataclass
@@ -232,6 +235,9 @@ def _check_missing(key: DocKey, s: SourceDoc, m: ManifestRow | None, cfg: Reconc
     if m and status in INFLIGHT_STATUSES:
         ev["stuck_in_flight_since"] = m.updated_at
         reason = f"The pipeline has had this document in '{m.processing_status}' since {m.updated_at}."
+    elif not cfg.has_manifest:
+        reason = ("No vector in the index carries this document's id, although the file is in the source. It was never indexed, "
+                  "or it was indexed under a different id (the Setup check shows whether the ids line up).")
     elif m is None:
         reason = "The document has never been picked up by the pipeline (no manifest row)."
     elif status in FAILED_STATUSES:
@@ -278,6 +284,9 @@ def _check_indexed(
         ev = {**base_ev, "indexed_hashes": _trim([h for h in ix.hashes if h]),
               "indexed_versions": _trim(list(ix.versions)), "pipeline_status": m.processing_status if m else None,
               "outdated_points": stale, **_removal(stale_points)}
+        if ix.chunk_hash_reclassified:
+            ev["stale_by"] = "chunk_hash"
+            ev["chunk_hash_examples"] = ix.chunk_hash_examples
         sev = Severity.HIGH if s.hash_reliable else Severity.MEDIUM
         note = "" if s.hash_reliable else " (source hash is a multipart ETag, so a re-upload of identical content can look like a change)"
         out.append(_finding(
@@ -303,7 +312,7 @@ def _check_indexed(
 
     # when the index cannot say which version it holds, fall back to what the manifest recorded
     if live == ix.classes[UNKNOWN] and live > 0 and stale == 0 and m and m.source_hash and s.source_hash \
-            and m.source_hash != s.source_hash:
+            and not same_hash(m.source_hash, s.source_hash):
         stale_by_manifest = True
         out.append(_finding(
             IssueType.STALE_EMBEDDING, Severity.HIGH, key, "Embeddings are from an older version of the document",
@@ -316,10 +325,19 @@ def _check_indexed(
 
     # ---- completeness (only meaningful for the live generation) ---------------------------------
     partial: Finding | None = None
+    leftover_found = False
     if live > 0 and not is_stale:
         partial = _check_partial(key, m, ix, chunk_rows, claims_success)
         if partial:
             out.append(partial)
+        leftover = _check_leftover_chunks(key, m, ix, chunk_rows, base_ev)
+        leftover_found = leftover is not None
+        if leftover:
+            earlier = next((f for f in out if f.type == IssueType.SUPERSEDED_ACTIVE), None)
+            if earlier is None:
+                out.append(leftover)
+            else:  # one issue per document and type: fold the left-over chunks into the superseded-vectors finding
+                _merge_leftovers(earlier, leftover)
         drop, dup_chunks, examples = ix.duplicate_points()
         if dup_chunks:
             extra = sum(len(v) for v in drop.values())
@@ -349,7 +367,8 @@ def _check_indexed(
         out.append(drift)
 
     # ---- metadata ---------------------------------------------------------------------------
-    meta = _check_metadata(key, s, m, ix, base_ev, is_stale, live, explained_count=partial is not None)
+    meta = _check_metadata(key, s, m, ix, base_ev, is_stale, live, explained_count=partial is not None or leftover_found,
+                           cfg_has_manifest=cfg.has_manifest)
     if meta:
         out.append(meta)
 
@@ -384,9 +403,11 @@ def _check_partial(
             else:  # payloads without chunk ids: compare chunk indexes instead
                 have_idx = {i for i in chunks.values() if i is not None}
                 missing += [f"{coll}:{cid}" for i, cid in sorted(by_index.items()) if i not in have_idx]
-    elif m and m.expected_chunk_count:
-        method = "expected_chunk_count"
-        expected_total = m.expected_chunk_count
+    elif (m and m.expected_chunk_count) or ix.payload_total():
+        # the manifest's count when there is one; otherwise the total the vectors themselves declare (a payload field)
+        from_manifest = bool(m and m.expected_chunk_count)
+        method = "expected_chunk_count" if from_manifest else "payload_chunk_total"
+        expected_total = (m.expected_chunk_count if from_manifest else ix.payload_total()) or 0
         for coll, chunks in live.items():
             idx = {i for i in chunks.values() if i is not None}
             if idx:
@@ -426,6 +447,63 @@ def _check_partial(
     )
 
 
+def _check_leftover_chunks(
+    key: DocKey, m: ManifestRow | None, ix: DocIndexState, chunk_rows: dict[str, ChunkRow] | None, base_ev: dict,
+) -> Finding | None:
+    """Chunks the current version of the document does not have, still active in the index.
+
+    A document that gets shorter is re-indexed with fewer chunks. If the old tail is never removed, those chunks keep
+    answering queries. They are caught here when the payload cannot say which revision a point belongs to (when it can,
+    they are already ``stale`` and reported as superseded vectors)."""
+    expected_ids = set(chunk_rows) if chunk_rows else set()
+    expected_total = m.expected_chunk_count if m and m.expected_chunk_count else ix.payload_total()
+    if not expected_ids and expected_total is None:
+        return None
+    expected_indexes = {r.chunk_index for r in chunk_rows.values() if r.chunk_index is not None} if chunk_rows else set()
+    extra: dict[str, list[str]] = {}
+    chunks: list[str] = []
+    for (coll, ck, cls), slot in ix.slots.items():
+        if cls not in LIVE_CLASSES:
+            continue
+        if expected_ids:
+            named = not ck.startswith(("idx:", "pt:"))
+            beyond = (ck not in expected_ids) if named else (slot.index is not None and slot.index not in expected_indexes)
+        else:
+            beyond = slot.index is not None and expected_total is not None and slot.index >= expected_total
+        if beyond:
+            extra.setdefault(coll, []).extend(slot.ids)
+            chunks.append(f"{coll}:{ck}")
+    if not chunks:
+        return None
+    total = sum(len(v) for v in extra.values())
+    expected = len(expected_ids) or expected_total
+    ev = {**base_ev, "unexpected_chunks": _trim(sorted(chunks)), "unexpected_chunk_count": len(chunks),
+          "expected_chunks": expected,
+          "method": "chunk_manifest" if expected_ids else ("expected_chunk_count" if (m and m.expected_chunk_count) else "payload_chunk_total"),
+          **_removal(extra)}
+    return _finding(
+        IssueType.SUPERSEDED_ACTIVE, Severity.MEDIUM, key,
+        "Chunks the current version no longer has are still active",
+        f"The index holds {len(chunks)} chunk(s) ({total} vectors) that the current version of the document does not have "
+        f"({expected} expected): the tail of an older, longer version that was never removed.",
+        ev, Action.CLEANUP_VECTORS,
+    )
+
+
+def _merge_leftovers(into: Finding, leftover: Finding) -> None:
+    """Fold a left-over-chunks finding into the superseded-vectors finding of the same document."""
+    into.evidence["unexpected_chunks"] = leftover.evidence["unexpected_chunks"]
+    into.evidence["unexpected_chunk_count"] = leftover.evidence["unexpected_chunk_count"]
+    mine = into.evidence.get("removal_points") or {}
+    for coll, ids in (leftover.evidence.get("removal_points") or {}).items():
+        merged = mine.setdefault(coll, [])
+        merged.extend(i for i in ids if i not in merged)
+    into.evidence["removal_points"] = mine
+    into.evidence["removal_count"] = sum(len(v) for v in mine.values())
+    into.detail += (f" {leftover.evidence['unexpected_chunk_count']} more chunk(s) are not part of the current version at all "
+                    "(the document got shorter and its old tail was never removed).")
+
+
 def _check_drift(
     key: DocKey, m: ManifestRow | None, ix: DocIndexState, cfg: ReconcileConfig, base_ev: dict,
     live: int, stale: int, outdated: int,
@@ -460,7 +538,7 @@ def _check_drift(
 
 def _check_metadata(
     key: DocKey, s: SourceDoc, m: ManifestRow | None, ix: DocIndexState, base_ev: dict, is_stale: bool, live: int,
-    explained_count: bool = False,
+    explained_count: bool = False, cfg_has_manifest: bool = True,
 ) -> Finding | None:
     problems: list[dict[str, Any]] = []
 
@@ -470,7 +548,15 @@ def _check_metadata(
             "message": "Vector payloads lack required fields: "
                        + ", ".join(f"{f} ({n} points)" for f, n in sorted(ix.missing_fields.items())),
         })
-    if m is None and live > 0 and not is_stale:
+    bad_live = ix.chunk_hash_bad - ix.chunk_hash_reclassified
+    if bad_live > 0 and not is_stale:
+        problems.append({
+            "code": "chunk_hash_mismatch", "severity": "medium",
+            "message": f"{bad_live} of {ix.chunk_hash_checked} chunks carry a different chunk hash than the pipeline recorded, "
+                       "although the document's own hash says the index is current: the chunking may have changed since, "
+                       f"or the two sides compute chunk hashes differently (for example chunk {ix.chunk_hash_examples[0]['chunk_id']}).",
+        })
+    if m is None and live > 0 and not is_stale and cfg_has_manifest:
         problems.append({
             "code": "untracked_in_manifest", "severity": "medium",
             "message": "Vectors exist for a current document but the pipeline has no manifest row for it.",
@@ -490,13 +576,13 @@ def _check_metadata(
                     "message": f"{sum(bad.values())} vectors carry a different ACL than the manifest "
                                "(permissions may be wrong at query time).",
                 })
-        if live and m.source_hash and s.source_hash and m.source_hash != s.source_hash:
+        if live and m.source_hash and s.source_hash and not same_hash(m.source_hash, s.source_hash):
             problems.append({
                 "code": "manifest_lags_index", "severity": "low",
                 "message": "The index is current but the manifest still records an older source hash.",
             })
         if m.indexed_version and s.source_version and m.indexed_version != s.source_version and live \
-                and not (m.source_hash and s.source_hash and m.source_hash != s.source_hash):
+                and not (m.source_hash and s.source_hash and not same_hash(m.source_hash, s.source_hash)):
             problems.append({
                 "code": "manifest_version_mismatch", "severity": "low",
                 "message": f"Manifest indexed_version {m.indexed_version} differs from the source version "
@@ -623,6 +709,20 @@ def _derived_stats(result: ReconcileResult) -> dict[str, Any]:
     }
 
 
+# What an audit cannot check when no manifest is connected, in plain words. The guide (3.15) lists the same checks.
+CHECKS_NEEDING_A_MANIFEST = (
+    "The pipeline said it succeeded, but nothing is indexed (only the manifest records what the pipeline claimed).",
+    "The number of chunks the manifest expects against the number indexed, and a stale index found only through the manifest's hash.",
+    "Manifest rows for documents that no longer exist, and documents the manifest marks deleted.",
+    "Permission (ACL) hashes recorded in the manifest, the manifest's status values, and a manifest that lags behind the index.",
+)
+
+
+def manifest_block(connected: bool) -> dict[str, Any]:
+    """The run's own record of whether a manifest took part, and if not, which checks were therefore left out."""
+    return {"connected": True} if connected else {"connected": False, "checks_not_run": list(CHECKS_NEEDING_A_MANIFEST)}
+
+
 def _stats(result: ReconcileResult, source: dict, manifest: dict, agg: IndexAggregator) -> dict[str, Any]:
     return {
         "source_documents": len(source),
@@ -630,3 +730,8 @@ def _stats(result: ReconcileResult, source: dict, manifest: dict, agg: IndexAggr
         "index_points": agg.points_seen,
         **_derived_stats(result),
     }
+
+
+# public names for the pieces the sliced audit assembles itself (see audit.py)
+collection_checks = _collection_checks
+compute_stats = _stats

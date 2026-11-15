@@ -603,7 +603,7 @@ Repairs are reactive. Alerts tell you when something new breaks.
 
 **What good looks like:** after an audit that opens a new issue, **Recent deliveries** shows **Delivered** with "Sent to the alert webhook." and the message arrives in your Slack channel. To see why other audits sent nothing, set **Show** to **Every audit**: the reason is "No new issues at or above the minimum severity." or "No alert webhook was configured."
 
-**Not available yet:** email alerts, per-issue-type rules, and digest and quiet hours are marked **Not available yet**. The webhook and the minimum severity are the only controls. Slack, Jira and PagerDuty integrations are also **Not available yet** on Integrations; use the alert webhook to forward findings.
+**Not available yet:** per-issue-type rules and quiet hours are marked **Not available yet**. The **Email me** setting, the webhook and the minimum severity are the controls. Slack, Jira and PagerDuty integrations are also **Not available yet** on Integrations; use the alert webhook to forward findings.
 
 **If it did not work:** see "Alerts not arriving" in [Troubleshooting](18-troubleshooting.md). More in [Alerts](13-alerts.md).
 

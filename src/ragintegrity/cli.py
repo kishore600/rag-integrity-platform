@@ -61,12 +61,20 @@ def cmd_audit(args: argparse.Namespace) -> int:
     svc = _service()
     svc.bootstrap()
     scope = Scope(tenant=args.tenant) if args.tenant else None
-    result = svc.run_audit(scope=scope, trigger="cli", probe=not args.no_probe)
+    result = svc.run_audit(scope=scope, trigger="cli", probe=not args.no_probe, resume=args.resume)
     if args.json:
-        print(json.dumps({"run_id": result.run_id, "stats": result.stats}, indent=2, default=str))
+        print(json.dumps({"run_id": result.run_id, "status": result.status, "stats": result.stats}, indent=2, default=str))
     else:
-        print("Audit complete:")
+        print("Audit complete:" if result.status == "completed" else "Audit PARTIAL (the scan stopped part-way):")
         _print_summary(result.stats, result.run_id)
+        scan = result.stats.get("scan") or {}
+        if scan.get("status") == "partial":
+            print(f"  checked           : {scan.get('documents_done')} of {scan.get('documents_total')} documents "
+                  f"({scan.get('percent')}%); the rest is NOT reported")
+            print(f"  stopped because   : {scan.get('stopped_because')}")
+            print("  next step         : run `ragi audit --resume` to continue from the last checkpoint")
+    if result.status == "partial":
+        return 3
     if args.fail_on:
         floor = SEVERITY_RANK[args.fail_on]
         bad = [f for f in svc.ledger.open_issues() if SEVERITY_RANK[f["severity"]] >= floor]
@@ -74,6 +82,31 @@ def cmd_audit(args: argparse.Namespace) -> int:
             print(f"\nFAIL: {len(bad)} open issue(s) at or above '{args.fail_on}'", file=sys.stderr)
             return 2
     return 0
+
+
+def cmd_verify_deletions(args: argparse.Namespace) -> int:
+    svc = _service()
+    docs = []
+    for ref in args.document or []:
+        tenant, _, doc = ref.partition("/") if "/" in ref and args.tenant is None else (args.tenant or svc.settings.default_tenant, "", ref)
+        docs.append((tenant, doc))
+    report = svc.verify_deletions(docs or None, record=not args.no_record)
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+    else:
+        s = report["summary"]
+        if not s["documents_checked"]:
+            print(report.get("note", "Nothing to verify."))
+        for d in report["documents"]:
+            print(f"{d['title'].upper():<22}{d['tenant_id']}/{d['document_id']}  ({d['reason']})")
+            for chk in d["checks"]:
+                print(f"    {chk['check']:<22}{chk['result']}")
+            if d["verdict"] != "verified_deleted":
+                print(f"    -> {d['recommended_action']}")
+        print(f"\n{s['documents_checked']} document(s) checked: {s['verified_deleted']} verified deleted, "
+              f"{s['deletion_mismatch']} with vectors remaining ({s['retrievable']} retrievable), "
+              f"{s['manifest_not_updated']} manifest not updated, {s['not_deleted']} still in the source")
+    return 1 if report["summary"]["deletion_mismatch"] else 0
 
 
 def cmd_issues(args: argparse.Namespace) -> int:
@@ -187,6 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
     a = sub.add_parser("audit", help="run an audit now (suitable for cron / CI)")
     a.add_argument("--tenant")
     a.add_argument("--no-probe", action="store_true", help="skip retrieval probes")
+    a.add_argument("--resume", action="store_true", help="continue the last interrupted (partial) audit from its checkpoint; exits 3 when an audit ends partial")
     a.add_argument("--json", action="store_true")
     a.add_argument("--fail-on", choices=SEV_ORDER, help="exit 2 if open issues at/above this severity remain")
     a.set_defaults(fn=cmd_audit)
@@ -207,6 +241,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("connections", help="test connectivity to S3, the manifest database, Qdrant and the ledger")
     c.set_defaults(fn=cmd_connections)
+
+    vd = sub.add_parser("verify-deletions", help="were deleted documents really removed from the index, and can a search still return them? (read-only; exits 1 when vectors remain)")
+    vd.add_argument("--document", action="append", metavar="ID", help="also verify this document (repeatable; TENANT/ID or, with --tenant, just the id)")
+    vd.add_argument("--tenant", help="the tenant of the --document ids that have none")
+    vd.add_argument("--no-record", action="store_true", help="look only: do not write the findings to the issue list")
+    vd.add_argument("--json", action="store_true")
+    vd.set_defaults(fn=cmd_verify_deletions)
 
     sc = sub.add_parser("setup-check", help="check that S3, the manifest and Qdrant use the same document IDs (read-only, takes seconds)")
     sc.add_argument("--json", action="store_true")

@@ -14,6 +14,7 @@ import type {
   ConnectionStatus,
   CreatedApiKey,
   DocumentDetail,
+  DeletionCheckResult,
   DocumentRow,
   DrillRequest,
   DrillResult,
@@ -21,6 +22,7 @@ import type {
   IsolationView,
   IssueDetail,
   Issue,
+  NotificationList,
   Overview,
   Paged,
   PlanRequest,
@@ -30,6 +32,7 @@ import type {
   SettingsKind,
   SettingsView,
   SetupCheckResult,
+  TestEmailResult,
   TestResult,
 } from "@/types/api";
 
@@ -63,6 +66,9 @@ export const useOverview = (enabled = true) =>
     refetchInterval: (q) => (q.state.data?.audit_running ? 3000 : false),
   });
 
+/** False when no manifest is connected (it is optional), so a screen can say "not connected" instead of showing a row as missing. */
+export const useManifestConnected = (): boolean => useOverview(true).data?.manifest_connected !== false;
+
 export const useConnections = (enabled = true) =>
   useQuery({ queryKey: qk.connections, queryFn: () => get<ConnectionStatus[]>("/api/connections"), enabled, retry: noRetryOnClientError, staleTime: 30_000 });
 
@@ -86,6 +92,38 @@ export function useStartAudit() {
     onSettled: () => invalidateData(qc),
   });
 }
+
+// ---- notifications -----------------------------------------------------------------------------------------
+/** What the audits told this workspace. It changes when an audit finishes (invalidateData refreshes it) and, for audits started elsewhere, every 30 seconds while the tab is open. */
+export const useNotifications = (limit = 30, enabled = true) =>
+  useQuery({
+    queryKey: ["notifications", limit],
+    queryFn: () => get<NotificationList>(`/api/notifications${qs({ limit })}`),
+    enabled,
+    retry: noRetryOnClientError,
+    placeholderData: keepPreviousData,
+    refetchInterval: () => (typeof document !== "undefined" && document.visibilityState === "visible" ? 30_000 : false),
+  });
+
+function useNotificationMutation<V>(fn: (v: V) => Promise<unknown>) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: fn, onSettled: () => qc.invalidateQueries({ queryKey: ["notifications"] }) });
+}
+
+export const useMarkNotification = () => useNotificationMutation((id: string) => post(`/api/notifications/${encodeURIComponent(id)}/read`));
+export const useMarkAllNotificationsRead = () => useNotificationMutation((_: void) => post("/api/notifications/read-all"));
+/** Remember that a button of a notification was pressed (the button itself has already done its work through its own endpoint). */
+export const useNotificationDone = () =>
+  useNotificationMutation(({ id, action }: { id: string; action: string }) => post(`/api/notifications/${encodeURIComponent(id)}/done`, { action }));
+
+/** Looks, and records what it finds as a scoped run: it changes the issue list, so every read is refreshed afterwards. */
+export function useDeletionCheck() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (_: void) => post<DeletionCheckResult>("/api/deletion-check", {}), onSettled: () => invalidateData(qc) });
+}
+
+/** Sends one message to the people an alert goes to. It changes nothing in the ledger, so it invalidates nothing. */
+export const useSendTestEmail = () => useMutation({ mutationFn: (_: void) => post<TestEmailResult>("/api/alerts/test-email") });
 
 // ---- issues ------------------------------------------------------------------------------------------------
 export interface IssueFilters {

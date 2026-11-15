@@ -1,9 +1,10 @@
 # Connect your data sources
 
-RAGGuard cannot check anything until it can read three systems: the Amazon S3 bucket that holds your documents (the **source**), the PostgreSQL table where your ingestion pipeline recorded what it processed (the **manifest**), and the Qdrant vector store that answers searches (the **index**). This chapter explains the Data sources page and every control on it, then walks through each of the three connections field by field: where to find the values, what each field changes, what **Test connection** checks, what **Save** does, and the mistakes people make most often. RAGGuard only ever reads from these systems. It never writes to your bucket, your database or your index.
+RAGGuard cannot check anything until it can read two systems: the Amazon S3 bucket that holds your documents (the **source**) and the vector store that answers searches (the **index**: Qdrant, or a pgvector table in PostgreSQL). A third, the PostgreSQL table where your ingestion pipeline recorded what it processed (the **manifest**), is optional: it adds checks, and audits work without it (see [The manifest is optional](#the-manifest-is-optional-and-your-vectors-can-live-in-pgvector)). This chapter explains the Data sources page and every control on it, then walks through each of the three connections field by field: where to find the values, what each field changes, what **Test connection** checks, what **Save** does, and the mistakes people make most often. RAGGuard only ever reads from these systems. It never writes to your bucket, your database or your index.
 
 **On this page**
 
+- [The manifest is optional, and your vectors can live in pgvector](#the-manifest-is-optional-and-your-vectors-can-live-in-pgvector)
 - [Purpose, who needs it, how to open it](#purpose-who-needs-it-how-to-open-it)
 - [What you need before you start](#what-you-need-before-you-start)
 - [The page at a glance](#the-page-at-a-glance)
@@ -26,6 +27,48 @@ RAGGuard cannot check anything until it can read three systems: the Amazon S3 bu
 - [Related chapters](#related-chapters)
 
 ---
+
+## The manifest is optional, and your vectors can live in pgvector
+
+**In short:** RAGGuard needs **two** connections to run an audit: your **S3 bucket** and your **vector index**. The **manifest** is optional. The vector index can be **Qdrant** or **pgvector** (a PostgreSQL table with a vector column).
+
+| Connection | Needed? | What it is |
+|---|---|---|
+| Amazon S3 | Yes | The documents that should be searchable |
+| Vector index | Yes | Qdrant, or a pgvector table in PostgreSQL (Supabase, Neon, AWS RDS or any Postgres) |
+| Manifest | No | A table where your pipeline writes down what it processed. With it, RAGGuard can do a few extra checks |
+
+**If you have no manifest.** Most pipelines read a file, cut it into chunks, embed them and save them, and record nothing. That is fine. Leave the **Manifest** card alone (it says **Optional**). RAGGuard then compares your files with the vectors directly. Each vector already carries its document id, and ideally the hash of the file it came from (`source_hash`):
+
+| File | In S3 | In the index | What RAGGuard says |
+|---|---|---|---|
+| refund-policy.pdf | hash abc | hash abc | Healthy |
+| pricing.pdf | hash xyz | hash old | Stale: the file changed, the vectors are old |
+| faq.pdf | exists | nothing | Missing: it was never indexed |
+| old-terms.pdf | deleted | still there | Orphan: a deleted file can still be found by a search |
+
+Missing documents, stale vectors, deleted-but-searchable documents, duplicates, empty vectors and wrong-tenant vectors are all found without a manifest. Two things need more from your vectors, and one cannot be done:
+
+- **Half-indexed documents** are found only if each vector stores its chunk number (`chunk_index`). A gap in the numbers is a *suspected* problem. If each vector also stores the total (`chunk_total`), the missing chunks are *confirmed*.
+- **A changed file** is recognised from the `source_hash` stored on each vector. The **Setup check** has a check, **Vectors carry the file's hash**, that warns you when it is missing.
+- **"The pipeline said success, but nothing is indexed"** cannot be checked: only a manifest records what the pipeline claimed. The document is still reported as missing, with high severity instead of critical.
+
+Every audit run tells you which checks it left out because no manifest was connected. The run page shows the list under **This audit ran without a manifest**. Documents show **Not connected** for the manifest instead of **Missing**.
+
+**If your vectors are in pgvector.** On **Data sources**, under **Where are your vectors stored?**, choose **pgvector (PostgreSQL)**. The Qdrant card is replaced by a **pgvector (PostgreSQL)** card. Press **Configure** and fill in:
+
+| Field | What to enter |
+|---|---|
+| Connection string | `postgresql://user:password@host:5432/dbname?sslmode=require`. Use a role that can only `SELECT`. It is saved encrypted and never shown again |
+| Schema | The schema of the table. Default `public` |
+| Table | The table with one row per chunk |
+| Column map (JSON) | Only if your column names differ from ours. Point our names at your columns, or at a key inside a JSON column, for example `{"document_id": "doc_id", "source_hash": "content_hash", "vector": "embedding"}` or `{"id": "uuid", "document_id": "cmetadata.doc_id"}`. `id` is the row id (the primary key) |
+| Distance | `cosine` (the usual one), `l2` or `inner_product`: the operator your table's index uses |
+| Detect empty embeddings | Also reads the vectors to find empty or all-zero ones. Slower |
+
+**Test connection** checks that the database answers, that the pgvector extension is installed, that the table and its columns are found, the size of the vectors, and that the rows carry a document id and a `source_hash`. RAGGuard only reads: every query runs in a read-only transaction, and nothing is ever written to your table.
+
+The rest of this chapter describes all three connections. If you have no manifest, skip the manifest parts. If you use pgvector, read the pgvector card where the chapter says Qdrant.
 
 ## Purpose, who needs it, how to open it
 
@@ -67,12 +110,12 @@ If your pipeline records a different id or a different hash, every document will
 
 From top to bottom the page shows:
 
-1. **Header.** The title **Data sources**, the line "The three systems RAGGuard compares.", and a **Refresh status** button.
-2. **Guide card** (only until all three connections are saved). Titled **Connect your three systems**, with the line "RAGGuard needs all three before it can run an audit. Start with the highlighted step." It has three numbered steps and three reassurances.
-3. **Three system cards** in a row: Amazon S3, PostgreSQL and Qdrant. The first one that is not yet saved has a coloured outline so you know where to start.
-4. **Setup check card** (appears once all three connections are saved). It checks that the three systems call the same documents by the same ID. See [The Setup check](#the-setup-check).
+1. **Header.** The title **Data sources**, the line "Your documents and your vector index, plus an optional manifest: the systems RAGGuard compares.", and a **Refresh status** button.
+2. **Guide card** (only until your source and your index are saved). Titled **Connect your systems**, with the line "RAGGuard needs your documents (S3) and your vector index before it can run an audit. The manifest is optional: add it for extra checks." It has the steps (the manifest marked optional) and three reassurances. Below it, **Where are your vectors stored?** lets you choose **Qdrant** or **pgvector (PostgreSQL)**.
+3. **System cards** in a row: Amazon S3, the optional PostgreSQL manifest (its badge says **Optional** until you connect one) and the vector index you chose (Qdrant or pgvector). The first required card that is not yet saved has a coloured outline so you know where to start.
+4. **Setup check card** (appears once your source and your index are saved). It checks that your systems call the same documents by the same ID. See [The Setup check](#the-setup-check).
 5. **Issue ledger card** (appears once at least one connection is saved).
-6. **How RAGGuard connects** card (only after all three are saved). It repeats the three reassurances as a reminder.
+6. **How RAGGuard connects** card (only after the source and the index are saved). It repeats the three reassurances as a reminder.
 
 **Refresh status** checks every saved connection again and reloads the saved settings. While it works the icon spins and the button is disabled. The page otherwise reuses the last check for up to 30 seconds, so press **Refresh status** after you fix something.
 

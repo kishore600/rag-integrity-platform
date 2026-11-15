@@ -63,7 +63,7 @@ trustworthy, which exact documents are wrong, why, and what it will cost to fix.
 |---|---|---|
 | **Live web app** | https://rag-integrity-platform.vercel.app | the multi-user product: sign up, connect your own infrastructure, audit, repair |
 | **Vercel project** | `rag-integrity-platform`, team `kishore600s-projects` (Hobby) | hosts the app as one FastAPI serverless function |
-| **Supabase project** | `rag-integrity` (ref `uyoewjceiiwlmmhsdlga`, region ap-northeast-2) | accounts, sessions, encrypted connection secrets, and the ledger (13 tables in the private `ragi` schema) |
+| **Supabase project** | `rag-integrity` (ref `uyoewjceiiwlmmhsdlga`, region ap-northeast-2) | accounts, sessions, encrypted connection secrets, and the ledger (14 tables in the private `ragi` schema) |
 | **GitHub repository** | `kishore600/rag-integrity-platform` (private) | source code, CI, and the Vercel auto-deploy trigger |
 | **CI** | GitHub Actions | runs the tests on Python 3.10 and 3.12 against a real Postgres, a real Qdrant server and S3 over HTTP; builds the Docker image and publishes it to GHCR |
 
@@ -75,39 +75,46 @@ Your S3 bucket, manifest table and Qdrant cluster are **not** part of the produc
 |---|---|---|
 | `models.py` | 214 | the vocabulary: `SourceDoc`, `ManifestRow`, `IndexedChunk`, `Fingerprint`, `Finding`, `DocSummary`, `Scope`; enums for issue types, severities, actions |
 | `ids.py` | 67 | how an ID is written: a number, a decimal and text for the same ID become one text form; the form a number takes in a filter |
-| `config.py` | 154 | every `RAGI_*` setting (pydantic-settings), identifier validation |
+| `config.py` | 234 | every `RAGI_*` setting (pydantic-settings), identifier validation |
 | `connectors/s3.py` | 326 | read-only S3 inventory, hash modes, key parsing, `diagnose()` for the connection test |
 | `connectors/postgres.py` | 315 | read-only manifest reader (READ ONLY transactions, column mapping), `diagnose()` |
-| `connectors/qdrant.py` | 301 | read-only vector scan (scroll), retrieval probe, `diagnose()` |
+| `connectors/qdrant.py` | 345 | read-only vector scan (scroll), retrieval probe, `diagnose()` |
+| `connectors/pgvector.py` | 423 | the read-only pgvector (PostgreSQL) vector index: pages, scoped reads, the retrieval probe, diagnostics (3.16) |
+| `connectors/nomanifest.py` | 30 | stands in for the optional manifest: no rows, and says so (3.15) |
+| `connectors/resilience.py` | 96 | retry with backoff for requests to the index: which failures are worth retrying, rate limits, never past the time budget |
 | `connectors/payload.py` | 101 | maps a Qdrant payload to the canonical chunk record (supports dotted paths) |
 | `connectors/factory.py`, `base.py` | 57 | connector contracts and the demo/live factory |
-| `engine/index_state.py` | 162 | classifies every vector as it is scanned (fresh / stale / outdated / unknown / orphan) |
-| `engine/reconcile.py` | 560 | the reconciliation engine: compares source vs manifest vs index and emits findings |
+| `engine/index_state.py` | 233 | classifies every vector as it is scanned (fresh / stale / outdated / unknown / orphan) |
+| `engine/reconcile.py` | 737 | the reconciliation engine: compares source vs manifest vs index and emits findings |
 | `engine/retrieval.py` | 58 | retrieval probes: can the bad content actually be returned by a search? |
-| `engine/audit.py` | 205 | pulls the three inventories, enforces the time budget, runs the engine |
-| `engine/coverage.py` | 665 | duplicate-ID warnings, and the setup and coverage check (what the three systems call their documents, and whether the IDs line up) |
+| `engine/versions.py` | 156 | the expected-versus-actual table for one document (source version and hash, chunk counts, chunk ids, chunk hashes, pipeline settings) and its verdict |
+| `engine/deletions.py` | 173 | deletion and retrieval verification: deleted documents, their remaining vectors, a search test, the verdict and the advice |
+| `engine/audit.py` | 494 | pulls the three inventories, enforces the time budget, runs the engine |
+| `engine/coverage.py` | 722 | duplicate-ID warnings, and the setup and coverage check (what the three systems call their documents, and whether the IDs line up) |
 | `engine/planning.py` | 100 | turns issues into per-document repair items and estimates the work and cost |
 | `engine/blast.py` | 117 | blast-radius analysis |
 | `engine/isolation.py` | 156 | the tenant isolation summary, per-tenant status, five checks and the evidence report |
 | `engine/drills.py` | 60 | the read-only isolation drill (pretend leak on one real document) |
-| `ledger.py` | 680 | the workspace-scoped store of issues, documents, runs, plans, and the account tables (SQLite locally, Postgres/Supabase in production) |
-| `service.py` | 414 | the one object the API/CLI use: audits, locking, overview, inspection, friendly errors |
+| `ledger.py` | 929 | the workspace-scoped store of issues, documents, runs, plans, and the account tables (SQLite locally, Postgres/Supabase in production) |
+| `service.py` | 591 | the one object the API/CLI use: audits, locking, overview, inspection, friendly errors |
 | `repair.py` | 215 | plan, signed webhook, independent verification, approved cleanup |
 | `alerts.py`, `report.py` | 115 | Slack-compatible alerts; markdown/CSV/JSON integrity report |
+| `notifications.py` | 307 | what to tell people when an audit finishes: the notification and the email, each with its next-step buttons (3.14) |
+| `mailer.py` | 93 | email over SMTP: bounded, one message per recipient, never raises (3.14) |
 | `security.py` | 180 | password hashing, the secret vault, SSRF guard, credential scrubbing |
 | `accounts.py` | 242 | users, sessions, rate limits, API keys, encrypted per-workspace settings |
-| `workspaces.py` | 383 | the declarative Settings specification, validation, per-workspace service, connection tests |
-| `api/app.py` | 691 | the HTTP API and authentication |
+| `workspaces.py` | 476 | the declarative Settings specification, validation, per-workspace service, connection tests |
+| `api/app.py` | 757 | the HTTP API and authentication |
 | `api/static/` | built | the committed build of the web interface (`index.html` and hashed files in `assets/`): deploys need no Node step |
 | `frontend/` (outside `src/`) | 10,326 | the web interface source: React, TypeScript, Vite, Tailwind, TanStack Query and Table, Recharts; `npm run build` writes `api/static/` |
-| `cli.py` | 251 | the `ragi` command |
+| `cli.py` | 292 | the `ragi` command |
 | `demo/` | 501 | a synthetic world with 47 injected faults, a toy pipeline, seeding for real infrastructure (local exploration and tests only) |
 
 Also: `api/index.py` (the Vercel entrypoint), `examples/reference_worker/worker.py` (a runnable receiver for the repair webhook),
-`supabase/migrations/` (2 migrations, 328 lines of SQL), `scripts/vercel-env.ps1` and `scripts/seed_live.py`, `Dockerfile`,
+`supabase/migrations/` (4 migrations, 392 lines of SQL), `scripts/vercel-env.ps1` and `scripts/seed_live.py`, `Dockerfile`,
 `docker-compose.yml`, `.github/workflows/ci.yml`, and `docs/`.
 
-**Size:** about 8,000 lines of Python in `src`, 5,200 lines of tests, 10,326 lines of interface TypeScript and CSS, 328 lines of SQL.
+**Size:** about 10,900 lines of Python in `src`, 8,200 lines of tests, 14,200 lines of interface TypeScript and CSS, 392 lines of SQL.
 
 ### 2.3 The three ways it can run
 
@@ -136,6 +143,10 @@ column, where an ID that is not a number cannot be present; the text form agains
 cannot filter by a decimal such as `2329961.0` (store IDs as text or whole numbers, or turn off **Only audit documents found in the source (S3)**),
 and only the *type* is reconciled. IDs that differ in letter case, spaces, leading zeros, a prefix or a file extension are different IDs: the
 setup check (3.10) shows such pairs and says so, and does not guess.
+
+**A hash is the same hash however it is spelled.** Content hashes are compared by value: upper or lower case, quotes, spaces and an algorithm
+prefix (`sha256:`, `sha-256=`, `md5:`) are ignored, for the source hash in a payload, in the manifest and in S3, and for chunk hashes. Before this,
+a payload that stored `sha256:<hex>` made every document look stale against a file whose hash is bare hex.
 
 ### 3.2 Every vector gets a class
 While the index is scanned, each vector is classified against the live source and your target pipeline:
@@ -169,6 +180,8 @@ above, red below.
 3. Read the **manifest rows** (and the chunk manifest if configured). While reading, count document IDs that appear twice (two files in S3
    or two rows in the manifest) and rows whose ID is empty: see **Warnings about IDs** below.
 4. **Scan the vector index** page by page, classifying every point as above. Memory stays proportional to the corpus, not to scan buffers.
+   When only the source's documents are audited (**Only audit documents found in the source (S3)**) the scan is made in slices of documents, and
+   steps 5 to 7 are done for each slice as soon as it is read (3.12). Requests that fail for a reason that can pass are retried with backoff.
 5. **Reconcile**: run the per-document checks and emit findings.
 6. **Retrieval probes** (up to 25 per audit): for findings about content that should not be searchable, query the live index with one
    affected chunk's own vector, filtered to the owning tenant, and record the rank. A confirmed probe escalates severity.
@@ -283,6 +296,7 @@ a `fix`, `examples` and sometimes a `hint`.
 | Files the manifest names (`manifest_files_exist`) | lookup mode only: do a sample of the manifest's files exist in S3? | fewer than 20% exist, or no manifest row names a file of this bucket |
 | Files without a manifest row (`lookup_blind_spot`) | lookup mode only: a reminder that a file with no manifest row is not seen | it is always a warning while that setting is on |
 | Tenant names agree (`tenant_labels`) | do the sides use the same tenant names? | two sides share no tenant name at all (their documents cannot match; the hint says when the same IDs exist under another tenant name) |
+| Vectors carry the file's hash (`index_revision`) | no manifest only: do the sampled vectors carry `source_hash` or `source_version`? | never fails; warns below 80% |
 | Document IDs in Qdrant (`index_ids`) | do the points carry a document ID, and how is it stored (numbers, text, decimals)? | Qdrant cannot be read, the collection is empty, or no sampled point carries the mapped payload field; warns for missing IDs on some points, decimals, or numbers mixed with text |
 | S3 against Qdrant (`source_vs_index`) | of 200 S3 documents, how many have pieces in Qdrant under the same ID? | fewer than 20% (warns from 20% to 80%) |
 | Qdrant against S3 (`index_vs_source`) | what share of the sampled points belongs to a document S3 or the manifest knows? | never fails; warns when most of the index belongs to other documents, unless **Only audit documents found in the source (S3)** is on (then those points are ignored and it passes) |
@@ -294,12 +308,243 @@ warns, else `ready`; `headline` says which in a sentence, and `next_steps` lists
 **What else is in the result.** `coverage` (`source_to_manifest`, `manifest_to_source`, `source_to_index`, each `matched`, `of`, `percent`, or
 `null` when it could not be measured), `counts` (files, documents, rows, approximate points, points sampled), `ids_at_a_glance` (five IDs from each
 side, to compare by eye), `id_types_in_index` (how many sampled IDs are stored as `integer`, `digits`, `text`, `decimal` or `other`), `limits`,
-`generated_at` and `duration_seconds`.
+`generated_at` and `duration_seconds`; also `manifest_connected` and `index_label` ("Qdrant" or "pgvector": the messages use the name of the store in use).
+With no manifest connected the manifest checks are left out (section 3.15).
 
 **It never guesses.** When the unmatched IDs on two sides differ only by letter case, spaces or leading zeros, or one contains the other (a prefix
 or suffix), the check says so with examples. RAGGuard still compares IDs exactly: an ID clean-up rule is not available yet, so make both sides
 write the ID the same way or change the key pattern. The call needs a session or an API key; in the hosted app it is limited to 20 checks per
 workspace per 10 minutes because it opens connections to your systems.
+
+### 3.11 Document version integrity
+An index can be wrong while the pipeline says "success" and the chunk count is right: a document was updated to version 3, the pipeline ran,
+and every chunk in the index still describes version 2. A chunk id alone cannot see that, because the same ids are reused. The audit compares the
+**revision** of what the index holds with the source, and `GET /api/document?live=true` returns the evidence for one document as a table
+(`live.version_check`) with a verdict:
+
+| Property | Expected | Actual |
+|---|---|---|
+| Source version | `v3` (the source) | `v2` (what the payloads say, or the manifest's `indexed_version` as a fallback) |
+| Source hash | the file's hash | the hash(es) the vectors carry, with counts when they differ |
+| Chunk count (any revision) | the chunk table's count, else `expected_chunk_count` | the distinct chunk ids present, of any revision |
+| Chunks of the current revision | the same count | how many belong to the current revision (the trap: the line above can match while this is 0) |
+| Chunk IDs | the ids in the chunk table | how many of them are found in the current revision, how many are missing, how many are not in the current version at all |
+| Chunk hashes | as recorded by the pipeline | how many chunks carry the hash the chunk table records |
+| Parser version, Chunking version, Chunk size, Chunk overlap, Embedding model, Embedding model version, Embedding dim, Preprocessing | your target pipeline | what the vectors were built with (a row only when it can be compared or varies inside the document) |
+
+Each row has a `status` (`match`, `mismatch`, `partial` or `unknown`). The verdict is one of `in_sync`, `version_mismatch` ("24 chunk(s) exist in the index
+(24 expected), but they belong to an outdated revision of the document"), `partly_outdated`, `config_changed`, `unknown_revision` (the payloads carry no hash
+or version, so the revision cannot be verified; counts and ids are still compared), `not_indexed` and `source_missing`. `points_by_revision` counts the
+vectors by `current`, `older_revision`, `older_config` and `revision_unknown`.
+
+**How each situation is reported:**
+
+| Situation | Found by | Reported as |
+|---|---|---|
+| Every chunk is from an older revision (the counts look right) | the payload's source hash or version differs from the source | `stale_embedding` (high; the evidence lists the old and the current revision) |
+| The new revision is indexed and old chunks are still active, often under the same chunk ids | stale or older-configuration points next to current ones | `superseded_active`, with exactly the old point ids to remove |
+| The document got shorter and its old tail was never removed | chunk ids not in the chunk table, or a chunk index at or beyond `expected_chunk_count`, among live vectors | `superseded_active` "Chunks the current version no longer has are still active" (folded into the same issue when old-revision vectors exist too); the manifest's chunk-count difference is then not reported separately |
+| The payloads carry no revision, but a chunk's hash differs from the chunk table | chunk hash against the chunk table | the chunk counts as stale: `stale_embedding` with `stale_by: chunk_hash` |
+| The document hash says current, but chunk hashes differ | the same comparison | `metadata_inconsistent`, problem `chunk_hash_mismatch` (medium): the chunking may have changed, or the two sides compute chunk hashes differently |
+| The hash is spelled differently on two sides | hashes are compared by value | nothing (3.1) |
+| The chunking or embedding settings changed | the vectors' settings against your target pipeline | `pipeline_drift` (high when the embedding model or dimension differs); one document built with mixed settings is reported without any target; half way through a re-chunking the old chunks are `superseded_active` |
+| The document was modified a few minutes ago | the grace period (3.6) | `pending`, not stale |
+
+**Changed chunking configuration.** Old vectors are `outdated` (built the old way) rather than `stale` (older content): the text is current but
+the chunks differ. They are never mistaken for the new generation. While a re-chunking is under way both generations are active, which is
+`superseded_active` (medium; high when a retrieval test returns old content); once only old vectors remain it is `pipeline_drift`. The target is your
+**Target pipeline** settings; without one, a document whose own chunks disagree is still reported.
+
+### 3.12 Reading a large index reliably
+An audit of millions of vectors makes thousands of requests. One timeout, rate limit or dropped connection must not abort it, and an audit that could
+not finish must never make documents look missing.
+
+**Run states.** `running` (in progress; the run record shows the step, points scanned and the checkpoint), `completed` (everything was read),
+`partial` (the scan stopped after finishing some slices: what was finished is reported and final, the rest is **not** reported, and the run says so) and
+`failed` (nothing usable). Every result carries `stats.scan`: `status`, `complete`, `provisional`, `mode` (`sliced` or `single_pass`), `points_scanned`,
+`estimated_total` (the index's own approximate size), `percent`, `pages`, `slices_done`, `slices_total`, `documents_done`, `documents_total`, `checkpoint`,
+`checkpoints_saved`, `retries`, `recovered_errors`, `unrecoverable_errors`, `rate_limited`, `waited_seconds`, `resumed_from` and `stopped_because`. A scan that
+stops before finishing one slice (or that is not sliced) fails and reports nothing, instead of reporting documents as missing.
+
+**Retry with backoff.** A request is repeated when its failure can pass: a timeout, a dropped connection, or HTTP `408`, `425`, `429`, `500`, `502`,
+`503`, `504`. It is tried up to 4 times, waiting 0.5 s, 1 s, 2 s (doubling, at most 10 s, each wait between 50% and 100% of that step), or as long as the
+server asks in a `Retry-After` header (at most 60 s). It never waits past the audit's time budget. A refusal (`400`, `401`, `403`, `404`: a wrong key, a missing index,
+no such collection) is not retried: asking again changes nothing. The counters above say how many requests were retried, how many recovered and how many gave up.
+
+**Slices, checkpoints and resume.** With **Only audit documents found in the source (S3)** on, the index is read for a slice of documents at a time
+(`RAGI_AUDIT_SLICE_DOCUMENTS`, default 5000). Each finished slice is reconciled and recorded in the ledger immediately: that is the checkpoint. If the scan
+then stops (a timeout, a cluster that stays unreachable) the run ends `partial` and the Audit History shows how far it got. A **resumed** audit continues
+after the last checkpoint and carries the earlier counts over, so its health score and totals are those of the whole audit:
+`POST /api/audits {"resume": true}` or `ragi audit --resume`; `GET /api/overview` has `resumable_audit` (`run_id`, `documents_done`, `documents_total`,
+`percent`, `stopped_because`) while one exists. If the process is killed (a serverless function at its time limit) the abandoned run is turned into a partial run
+from its last checkpoint, so nothing is lost. A resumed audit that cannot reach the index again stays partial with the same checkpoint. A completed audit
+after a partial one makes it history. When an audit completes, documents the ledger still holds that exist nowhere any more (not in the source, the manifest
+or the index) are closed and removed, as a full audit always did; when it resumed, only documents after the checkpoint are swept.
+
+**What does not resume.** A scan of the whole index (the setting is off) is one pass: it cannot be resumed and, if it stops, reports nothing. The isolation
+picture is built from a complete audit and is left to the next full audit after a resumed one. Documents added to the source before the checkpoint are picked
+up by the next full audit.
+
+**Measured** on a local Qdrant (150,000 points, no network; `python scripts/benchmark_scan.py --synthetic 150000` repeats it, and `--collection NAME` measures a
+real cluster read-only): a plain scroll reads about 9,600 points/s at page size 100, 16,700 at 256 and 45,000 at 1,000 (the default); a scroll filtered by
+document id on a field without a payload index costs about one pass over the collection (0.2 s for 10 ids, 1.0 s for 5,000 points), whatever the number of ids.
+That is why a slice is thousands of documents, and why the real throughput of a remote cluster (about 2,500 points/s was measured to one) is set by
+latency, not by the audit.
+
+### 3.13 Deletion and retrieval verification
+A confidential document is deleted from S3. Its vectors stay in Qdrant, and a search still returns its text. `POST /api/deletion-check` and
+`ragi verify-deletions` check each deleted document and answer with evidence:
+
+| Check | Result |
+|---|---|
+| Source document | `Deleted` (or `Still in the source`) |
+| Manifest status | the status, or `no manifest row`; anything but deleted is a mismatch (the pipeline still believes the document is indexed) |
+| Vector chunks found | how many vectors remain, in which collections |
+| Retrieval test | up to 3 of the document's chunks are used as queries (their own stored vectors, top 10, filtered to the tenant when the points carry one); how many of the document's chunks come back and at which rank, or `not returned` |
+
+Verdicts: `verified_deleted` (gone from the source, the manifest and the index), `deletion_mismatch` (vectors remain; **critical** when a search returns
+them, otherwise high), `manifest_not_updated` (the vectors are gone but the manifest still lists the document) and `not_deleted` (the document is still in the
+source). The row gives the **recommended action**; removal itself is the repair workflow's `cleanup_vectors` plan, which waits for your approval.
+
+**Which documents are checked:** documents an earlier audit saw in the source that are gone now, documents the manifest marks deleted, documents with an
+open `orphan_vector` or `tenant_mismatch` issue (so a cleanup is verified and its issue closed), and any `documents` you name (`tenant_id`, `document_id`).
+At most 200 per check (`truncated` says how many were left out). With `record` (the default) the findings are written to the issue list as a scoped run with
+trigger `deletion-check`, which also resolves issues whose vectors are gone; `record: false` only looks. It is refused while an audit runs, and limited to 20
+checks per workspace per 10 minutes in the hosted app. Without any earlier audit and without a deleted status in the manifest there is nothing to
+verify, and the result says so.
+
+**Audits do this too.** With **Only audit documents found in the source (S3)** on, an audit ignores other documents on purpose, but it still looks in the
+index for the documents that were deleted: the ones an earlier audit saw in the source that are gone now, and the ones the manifest marks deleted.
+`stats.deletion_check` counts them (`documents_checked`, `with_remaining_vectors`, `verified_gone`). Other manifest rows with no file in this source
+(another document type) stay ignored. The retrieval probe filters by tenant only when the points carry one: a payload without a tenant field is searched
+as a whole (before, such an index answered every probe with no hits, which read as "not searchable").
+
+---
+
+### 3.14 Audit notifications: in the app and by email
+
+After every audit that finishes, RAGGuard tells you what happened and what to do next, in two places made from the same text: a **notification**
+under the bell (and on the **Notifications** page, `/notifications`), and an **email**. Each carries the next step as buttons.
+
+| How the audit ended | Notification kind | Title | Buttons |
+|---|---|---|---|
+| Completed, no issues | `audit_completed` | Audit complete: no integrity issues | See the run |
+| Completed with issues | `audit_completed` | Audit complete: 2 critical, 3 high issues | Review critical issues (or Review high issues, or Review the issues) · Verify deletions (only when orphan vectors or wrong-tenant vectors were found) · See the run |
+| Stopped part-way | `audit_partial` | Audit stopped part-way: 4,000 of 12,000 documents checked | Resume audit · Review the issues found so far (only if it found critical or high ones) · See the run |
+| Failed | `audit_failed` | Audit failed | Run it again · Check connections · See the run |
+
+The first audit of the demo, and the verification steps inside a repair, do not notify: their result is shown where they were started.
+
+**Buttons.** An action is either a *link* (it opens a page of the app) or a *post* (it does something). There are exactly two things a button can
+do, through the same signed-in session and the same endpoints as the page's own buttons: `/api/audits` (Resume audit and Run it again) and
+`/api/deletion-check` (Verify deletions, which runs the check in 3.13 and says what it found). Nothing else can be a button: a notification can never
+do anything its reader could not do themselves. **Resume audit** is only offered while that audit is still the one that can be resumed. After a button
+that does something is pressed, the notification shows it as *done* and is marked read.
+
+**The email.** The recipients are the sign-in addresses of the workspace's own users (in single-user modes: `RAGI_ALERT_EMAIL_TO`); in app mode nobody
+else can ever be a recipient, and the operator's own address is never used. One message goes to each recipient, as text and HTML, marked
+`Auto-Submitted`. **When** is the *Email me* setting: `always` (after every audit; the default), `attention` (only when an audit fails or stops part-way,
+or finds a new, reopened or escalated issue at or above the minimum severity, the same rule as the Slack webhook) or `never`. The notification in the
+app is created in every case.
+
+- **The mail account** belongs to the operator: one SMTP account (`RAGI_SMTP_HOST`, `RAGI_SMTP_PORT`, `RAGI_SMTP_USER`, `RAGI_SMTP_PASSWORD`,
+  `RAGI_SMTP_FROM`, `RAGI_SMTP_SECURITY` = `starttls`, `ssl` or `none`) sends every workspace's alerts. A workspace chooses only whether it gets them; it
+  never supplies a mail server, a sender or an address. Without `RAGI_SMTP_HOST` and `RAGI_SMTP_FROM` no email is sent and the run says so.
+- **Links in the email** are built only from `RAGI_APP_URL` (on Vercel, the production address Vercel provides), never from a request's `Host` header,
+  because a link built from a request could be pointed anywhere. Without an address the email has no links and says to open RAGGuard.
+- **An email link never changes anything.** Mail scanners open links, so a button that does something (Resume audit, Verify deletions, Run it again)
+  links to the Notifications page, where its button is. Links that only open a page go straight there.
+- **Limits.** At most 12 emails an hour per workspace; if the limit cannot be checked, no email is sent (it fails closed). A mail server is waited for
+  at most 8 seconds. A failure to send never fails the audit: the run's `stats.notifications` records what happened, for example
+  `{"in_app": "<id>", "email": {"sent": 1, "to": 1}}` or `{"email": {"sent": 0, "reason": "..."}}`.
+- **Escaping.** Everything that came from your data (issue titles, tenant and document ids, error text) is escaped before it reaches the HTML of an email,
+  and passwords in error text are removed first.
+
+**What is stored.** The `notifications` table (12): the title, a short body, a few lines of detail (counts, and the top new issues as severity, title and
+ids), the buttons, and when it was read, emailed and acted on. No document contents. Only the newest 200 per workspace are kept.
+
+**Send test email.** The *Alerts* page has a **Send a test email** card: one message, clearly marked as a test, to the people an alert would go to (in the hosted app the workspace's own users, in single-user modes `RAGI_ALERT_EMAIL_TO`). The answer says who got it, or why nothing was sent (no mail account, no address, the mail server refused it, with the server's reason and never the password). It creates no notification and does not count towards the hourly cap; it is limited to 5 every 10 minutes.
+
+API: `GET /api/notifications` (`limit`, `unread`), `POST /api/notifications/read-all`, `POST /api/notifications/{notification_id}/read` and
+`POST /api/notifications/{notification_id}/done` (the button was pressed; body `{"action": "<id of one of its buttons>"}`).
+
+---
+
+### 3.15 Working without a manifest
+
+Most teams have no manifest table: their pipeline reads a file, cuts it into chunks, embeds them and saves them, and records nothing. The
+manifest is therefore **optional**. An audit needs two connections, **S3** (the files) and the **vector index**; the manifest adds checks when
+you have one. Leave the manifest group empty (hosted app) or `RAGI_MANIFEST_DATABASE_URL` unset (single-user modes) and the audit compares the
+files with the vectors directly, using what every vector already carries: its document id and the hash of the file it came from (`source_hash`).
+
+| File | In S3 | In the index | What RAGGuard says |
+|---|---|---|---|
+| refund-policy.pdf | hash abc | hash abc | healthy |
+| pricing.pdf | hash xyz | hash old | `stale_embedding`: the file changed, the vectors are old |
+| faq.pdf | exists | nothing | `missing_embedding`: never indexed |
+| old-terms.pdf | deleted | still there | `orphan_vector`: a deleted file is still searchable |
+
+| Check | Without a manifest |
+|---|---|
+| Missing documents | works (`missing_embedding`, severity high) |
+| Stale vectors | works when each vector carries `source_hash` (or `source_version`); the Setup check warns (`index_revision`) when they do not |
+| Deleted but still searchable, and the deletion check (3.13) | works |
+| Duplicates, empty vectors, the wrong tenant | work |
+| Half-indexed documents | only if each vector stores its chunk number (`chunk_index`: a gap is a *suspected* `partial_index`, medium) and ideally the total (`chunk_total`: the missing chunks are *confirmed*, high). With neither, a four-chunk document with two chunks looks complete |
+| "The pipeline said success, but nothing is indexed" | **not possible**: only a manifest records what the pipeline claimed. The document is still found as `missing_embedding`, severity high instead of critical |
+
+**What the run says.** `stats.manifest` is `{"connected": true}` or `{"connected": false, "checks_not_run": [...]}`, and the run page shows
+the list. These are the checks a missing manifest leaves out:
+
+- The pipeline said it succeeded, but nothing is indexed (only the manifest records what the pipeline claimed).
+- The number of chunks the manifest expects against the number indexed, and a stale index found only through the manifest's hash.
+- Manifest rows for documents that no longer exist, and documents the manifest marks deleted.
+- Permission (ACL) hashes recorded in the manifest, the manifest's status values, and a manifest that lags behind the index.
+
+No document is called untracked (`untracked_in_manifest`) just because there is no manifest. `manifest_present` is false for every document and
+the screens say **Not connected** instead of **Missing**. The setting *Look up files from the manifest* is ignored without a manifest (the bucket is
+listed). The Setup check compares only S3 and the index, replaces the manifest checks with one `na` check (`manifest_rows`), and adds
+`index_revision` (*Vectors carry the file's hash*): `pass` when at least 80% of the sampled vectors carry `source_hash` or `source_version`, else a
+warning, because without a manifest a changed file can only be recognised by that hash.
+
+### 3.16 pgvector as the vector index
+
+pgvector is an add-on for PostgreSQL that stores vectors in an ordinary table (built into Supabase, Neon and AWS RDS). In **Data Sources**,
+*Where are your vectors stored?* offers **Qdrant** and **pgvector (PostgreSQL)**; single-user servers set `RAGI_INDEX_TYPE` to `qdrant` (the
+default) or `pgvector`. A workspace needs S3 and the index it chose; a team that keeps its vectors and its records in one database needs one
+connection string plus the bucket.
+
+**The table.** One row per chunk: a row id, a vector column and the columns (or one JSON column) that say where the chunk came from. The
+**column map** points our field names at yours. A value is a plain column (`"doc_id"`) or a key inside a JSON column (`"metadata.doc_id"`).
+
+| Our name | Default column | What it is |
+|---|---|---|
+| `id` | `id` | the row id (the primary key): rows are read in this order, page by page |
+| `vector` | `embedding` | the embedding (a pgvector `vector` column) |
+| `document_id`, `tenant_id`, `source_hash`, `source_version`, `chunk_id`, `chunk_index`, `chunk_total`, `chunk_hash`, `acl_hash` and the pipeline fingerprint fields | the same name | as in section 5.3 (payload fields); a column the table lacks is simply absent |
+
+For LangChain's table: `{"id": "uuid", "vector": "embedding", "document_id": "cmetadata.doc_id", "source_hash": "cmetadata.hash"}`. For
+LlamaIndex's `data_<name>` tables: `{"id": "node_id", "document_id": "metadata_.doc_id"}`.
+
+**How it reads.** Rows are read in pages of 1,000 (`RAGI_PGVECTOR_PAGE_SIZE`) in primary-key order, each page one short `READ ONLY` transaction
+with a 45-second statement timeout; nothing is ever written. A failure that can pass (a dropped connection, a timeout) is retried and counted
+exactly like Qdrant's (3.12); a refusal such as *permission denied* is not retried. A scoped read (a few documents, one tenant, the slices of 3.12)
+filters on the server with `= ANY(...)` on the document id column, in batches of 5,000 ids, comparing in the column's own type (a number column
+is given numbers). **Index the document id column on a large table**, or each batch reads the whole table. Vectors are fetched (as text) only
+when *Detect empty embeddings* is on.
+
+**The retrieval test** (the probe, and the deletion check of 3.13) takes a row's own stored vector and runs a nearest-neighbour query with the
+operator the table's index uses: `<=>` for `cosine` (the default), `<->` for `l2`, `<#>` for `inner_product` (the **Distance** setting). It is
+limited to the row's tenant only when the rows have one, and returns the top matches with a score where higher always means closer. It needs the
+`vector` extension; an HNSW or IVFFlat index keeps it fast on a large table (the audit runs at most 25 probes).
+
+**"Test connection" checks (pgvector):** *Database reachable*; *pgvector extension* (its version); *Table* (found, how many columns); *Column for
+document_id* and *Column for id* (a missing one is a failure that says what to map); *Vector column* (its declared size); *Rows* (an estimate
+from the table statistics); *Fields used for checks* (warns when rows carry no `source_hash`); *Role is read-only* (warns when the role can
+write; a `SELECT`-only role is safer).
+
+**Limits.** One table per workspace. A table whose primary key is not called `id` needs `id` in the column map. Row counts for the progress
+bar come from the table statistics (run `ANALYZE` after a big load). The Setup check samples with `TABLESAMPLE` on a big table.
 
 ---
 
@@ -382,8 +627,9 @@ The answer to "is my index consistent with the source?"
   system, checked live, with response time.
 
 ### Data Sources
-The three systems that are compared: **Amazon S3** (the documents), **PostgreSQL** (the manifest) and **Qdrant** (the vector index), plus a
-read-only **Issue ledger** status. Until all three are configured a guide at the top walks through *1 Source, 2 Manifest, 3 Index*.
+The systems that are compared: **Amazon S3** (the documents) and the **vector index** (**Qdrant** or **pgvector**, chosen under *Where are your vectors
+stored?*), plus an optional **PostgreSQL manifest** card and a read-only **Issue ledger** status. Until the source and the index are configured a guide at the top
+walks through *Source, Index*, with the manifest marked optional (3.15).
 - Each card shows its state (*Connected*, *Not connected*, *Error*), what the server measured just now (for example "bucket reachable,
   hash mode metadata", response time), the key non-secret settings, and when it was saved and last tested.
 - **Configure** / **Edit** opens a form for that group (the fields are listed in section 5). **Test connection** checks what is typed
@@ -509,9 +755,14 @@ resolved, alert delivery, the error if it failed).
 - *Slack*, *Jira* and *PagerDuty* are marked **Not available yet** (use the alert webhook to forward findings today).
 
 ### Alerts
-The *Alerts* group (webhook address and minimum severity), an explanation of when alerts are sent and what they contain, and **Recent
-deliveries** from your audits (issues included, whether it was delivered, the reason or error). *Email alerts*, *per-issue-type rules*
-and *digest and quiet hours* are marked **Not available yet**.
+A **Send a test email** card (one real message through the mail account, with the result in words), the *Alerts* group (email setting, webhook address and minimum severity), an explanation of when alerts are sent and what they contain, and **Recent
+deliveries** from your audits (issues included, whether it was delivered, the reason or error). The group also has **Email me**
+(always, attention or never). *Per-issue-type rules* and *quiet hours* are marked **Not available yet**.
+
+### Notifications and the bell
+The **bell** at the top right shows how many notifications are unread and opens a panel with the latest ten and the next-step buttons; **See all
+notifications** opens the **Notifications** page (`/notifications`, reached from the bell and from the emails; it is not a menu page). The same
+buttons work in both places (3.14).
 
 ### Settings
 Tabs: **General** (workspace, account email, server mode and version, and **Change password**, which signs out your other devices; on
@@ -595,8 +846,9 @@ Qdrant payload, otherwise every document will look stale.
 access denied, bad access key, wrong secret or region, unreachable endpoint); *Documents found*; *Key pattern* (how many sampled keys
 match, with an example); *Object metadata* and *Content hashes* (how many of 5 sampled objects carry a SHA-256).
 
-### 5.2 Processing manifest (PostgreSQL / Supabase)
-The table your pipeline writes after processing each document. Read-only: **every query runs in a READ ONLY transaction** with a 45-second
+### 5.2 Processing manifest (PostgreSQL / Supabase), optional
+**Optional.** Without a manifest the audit compares your files with the vector index directly (section 3.15). With one it can also check what the
+pipeline claimed against what is indexed. The table your pipeline writes after processing each document. Read-only: **every query runs in a READ ONLY transaction** with a 45-second
 statement timeout. Use a database role that can only `SELECT`.
 
 | Field | Required | Secret | Default | What it means and what it changes |
@@ -640,13 +892,31 @@ Your vector store. Read-only: `scroll`, `retrieve` and `query`; nothing is writt
 | **Named vector** | no | no | none | Only if your collection uses named vectors. |
 | **Detect empty embeddings** | no | no | off | Also fetch vectors to find points whose vector is missing, empty or all zeros. Slower and heavier for Qdrant. |
 
-**Payload fields the engine reads:** `tenant_id`, `document_id`, `chunk_id`, `chunk_index`, `chunk_hash`, `source_hash`, `source_version`,
+**Payload fields the engine reads:** `tenant_id`, `document_id`, `chunk_id`, `chunk_index`, `chunk_total` (how many chunks the document has: with it a
+half-indexed document is found without a manifest, section 3.15), `chunk_hash`, `source_hash`, `source_version`,
 `parser_version`, `chunking_version`, `chunk_size`, `chunk_overlap`, `embedding_model`, `embedding_model_version`, `embedding_dim`,
 `preprocessing`, `acl_hash`. At minimum put `document_id` and `source_hash` in every payload (plus `tenant_id` if you have several tenants).
 
 **What "Test connection" checks (Qdrant):** *Qdrant reachable* (explains a rejected API key, timeout, unresolved host, refused connection);
 *Collections* (names any missing one); *Collection <name>* (approximate point count and vector size) and *Payload of <name>* (samples
 20 points and tells you whether `document_id` and `source_hash` are present), for up to the first 5 collections.
+
+### 5.3.1 Where your vectors are stored
+One choice, saved on its own: **Vector store** (`type`, `RAGI_INDEX_TYPE`) is `qdrant` (the default) or `pgvector`. The group is titled *Where your vectors
+are stored*. An audit needs S3 and the index chosen here; the other index group is ignored.
+
+### 5.3.2 Vector index (pgvector / PostgreSQL)
+A PostgreSQL table with a pgvector column (section 3.16). Read-only: every query runs in a `READ ONLY` transaction with a 45-second statement timeout. Use a role
+that can only `SELECT`.
+
+| Field | Required | Secret | Default | What it means and what it changes |
+|---|---|---|---|---|
+| **Connection string** | yes | **yes** | none | `postgresql://user:password@host:5432/dbname?sslmode=require`. A public host in the hosted app; the same option rules as the manifest's. |
+| **Schema** | no | no | `public` | The schema holding the table. Letters, digits and underscores only. |
+| **Table** | yes | no | none | The table with one row per chunk. Same character rule. |
+| **Column map (JSON)** | no | no | empty | Point our names at your columns, or at a key inside a JSON column: `{"document_id": "doc_id", "source_hash": "content_hash", "vector": "embedding", "tenant_id": "metadata.tenant"}`. `id` is the row id. |
+| **Distance** | no | no | `cosine` | `cosine`, `l2` or `inner_product`: the operator your table's index uses; the retrieval test searches with it. |
+| **Detect empty embeddings** | no | no | off | Also reads the vectors to find empty or all-zero embeddings (slower). |
 
 ### 5.4 Target pipeline (optional)
 How documents **should** currently be processed. A vector whose recorded configuration conflicts with this (where both sides know a
@@ -675,6 +945,7 @@ Your own ingestion worker. The platform never writes to your systems: approved r
 ### 5.6 Alerts (optional)
 | Field | Secret | Default | Meaning |
 |---|---|---|---|
+| **Email me** | no | `always` | `always`, `attention` or `never`: when the email after an audit is sent (3.14). The notification in the app is always created. |
 | **Webhook URL** | **yes** | none | A Slack-compatible incoming webhook (JSON with a `text` field). Treated as a secret because Slack webhook URLs are. |
 | **Minimum severity** | no | `high` | `critical`, `high`, `medium` or `low`. Only **new, reopened or escalated** issues at or above it are sent, so a steady state is silent. |
 
@@ -720,6 +991,13 @@ settings, create keys or change passwords. Up to 20 keys per workspace; **Revoke
 | qdrant | Payload field map (JSON) | `payload_map` | `RAGI_QDRANT_PAYLOAD_MAP` | JSON |
 | qdrant | Named vector | `vector_name` | `RAGI_QDRANT_VECTOR_NAME` | text |
 | qdrant | Detect empty embeddings | `check_vectors` | `RAGI_QDRANT_CHECK_VECTORS` | on/off |
+| index | Vector store | `type` | `RAGI_INDEX_TYPE` | qdrant / pgvector |
+| pgvector | Connection string | `database_url` | `RAGI_PGVECTOR_DATABASE_URL` | Postgres URL, secret |
+| pgvector | Schema | `schema` | `RAGI_PGVECTOR_SCHEMA` | identifier |
+| pgvector | Table | `table` | `RAGI_PGVECTOR_TABLE` | identifier |
+| pgvector | Column map (JSON) | `column_map` | `RAGI_PGVECTOR_COLUMN_MAP` | JSON |
+| pgvector | Distance | `distance` | `RAGI_PGVECTOR_DISTANCE` | cosine / l2 / inner_product |
+| pgvector | Detect empty embeddings | `check_vectors` | `RAGI_PGVECTOR_CHECK_VECTORS` | on/off |
 | pipeline | Parser version | `parser_version` | `RAGI_TARGET_PARSER_VERSION` | text |
 | pipeline | Chunking version | `chunking_version` | `RAGI_TARGET_CHUNKING_VERSION` | text |
 | pipeline | Chunk size | `chunk_size` | `RAGI_TARGET_CHUNK_SIZE` | integer |
@@ -731,6 +1009,7 @@ settings, create keys or change passwords. Up to 20 keys per workspace; **Revoke
 | repair | Webhook URL | `webhook_url` | `RAGI_REPAIR_WEBHOOK_URL` | URL |
 | repair | Signing secret | `webhook_secret` | `RAGI_REPAIR_WEBHOOK_SECRET` | secret |
 | repair | Vector removal | `cleanup_policy` | `RAGI_CLEANUP_POLICY` | manual / auto |
+| alerts | Email me | `email_when` | `RAGI_ALERT_EMAIL_WHEN` | always / attention / never |
 | alerts | Webhook URL | `webhook_url` | `RAGI_ALERT_WEBHOOK_URL` | URL, secret |
 | alerts | Minimum severity | `min_severity` | `RAGI_ALERT_MIN_SEVERITY` | critical / high / medium / low |
 | policy | Grace period (minutes) | `grace_minutes` | `RAGI_GRACE_MINUTES` | integer |
@@ -808,7 +1087,8 @@ Severity runs `critical` > `high` > `medium` > `low` (> `info`). The **Recommend
 `untracked_in_manifest` (medium: vectors for a current document but no manifest row), `manifest_count_mismatch` (medium: manifest says
 N chunks indexed but the index holds a different number; suppressed when `partial_index` already explains it), `acl_mismatch` (**high**:
 vectors carry a different ACL hash than the manifest, so permissions may be wrong at query time), `manifest_lags_index` (low: the index is
-current but the manifest records an older hash), `manifest_version_mismatch` (low), `status_failed_but_indexed` (low), and
+current but the manifest records an older hash), `manifest_version_mismatch` (low), `status_failed_but_indexed` (low), `chunk_hash_mismatch` (medium: chunks carry a different hash than the chunk
+table records although the document hash says the index is current; see 3.11), and
 `unattributed_vectors` (high, collection-level: points with no document id).
 
 **Recommended actions:** `reindex_full` re-process the whole document; `reindex_chunks` re-embed only the missing chunks;
@@ -877,10 +1157,16 @@ Interactive docs are at `/docs`. Authentication: **public**; **session** (signed
 | DELETE | `/api/keys/{key_id}` | session only | revoke a key |
 | GET | `/api/overview` | session or key | health, counts, trend, latest runs |
 | GET | `/api/connections` | session or key | connector status |
+| POST | `/api/deletion-check` | session or key (20 per 10 min per workspace in the hosted app) | verify deleted documents: remaining vectors, a search test, the verdict and the advice; body `documents` (optional) and `record` (default true) (3.13) |
 | POST | `/api/setup-check` | session or key (20 per 10 min per workspace in the hosted app) | the read-only setup and coverage check: do S3, the manifest and Qdrant use the same document IDs (3.10) |
-| POST | `/api/audits` | session or key | run an audit (`tenant`, `documents`, `probe`, `wait` options) |
+| POST | `/api/audits` | session or key | run an audit (`tenant`, `documents`, `probe`, `wait` options; `resume: true` continues the last partial audit; the status can be `partial`, see 3.12) |
 | GET | `/api/audits` | session or key | recent runs |
 | GET | `/api/audits/{run_id}` | session or key | one run |
+| GET | `/api/notifications` | session or key | the workspace's notifications, newest first, and how many are unread; `limit`, `unread` (3.14) |
+| POST | `/api/alerts/test-email` | session or key (5 per 10 min per workspace in the hosted app) | the **Send test email** button: one message to the people an alert goes to; the answer says who got it or why not (3.14) |
+| POST | `/api/notifications/read-all` | session or key | mark every notification read |
+| POST | `/api/notifications/{notification_id}/read` | session or key | mark one read |
+| POST | `/api/notifications/{notification_id}/done` | session or key | remember that one of its buttons was pressed; body `action` must be the id of one of its buttons |
 | GET | `/api/issues` | session or key | list issues (filters `status`, `severity`, `type`, `tenant`, `q`, paging) |
 | GET | `/api/issues/{issue_id}` | session or key | one issue with its timeline |
 | POST | `/api/issues/{issue_id}/ignore` | session or key | ignore with a reason |
@@ -919,7 +1205,8 @@ Install with `pip install -e ".[dev]"`; the command is `ragi`.
 |---|---|
 | `ragi serve [--host H] [--port P] [--demo] [--app]` | run the API and web interface (default `127.0.0.1:8000`); `--demo` the synthetic world, `--app` the multi-user mode |
 | `ragi demo [--seed N]` | seed the demo world and audit it, print a summary |
-| `ragi audit [--tenant T] [--no-probe] [--json] [--fail-on SEVERITY]` | run an audit now; with `--fail-on` it exits **2** if open issues at or above that severity remain (cron/CI gating) |
+| `ragi audit [--tenant T] [--no-probe] [--resume] [--json] [--fail-on SEVERITY]` | run an audit now; with `--fail-on` it exits **2** if open issues at or above that severity remain (cron/CI gating); `--resume` continues the last partial audit; it exits **3** when the audit ends partial (3.12) |
+| `ragi verify-deletions [--document ID] [--tenant T] [--no-record] [--json]` | verify deleted documents (3.13); `--document` is repeatable (`TENANT/ID`, or an id with `--tenant`); exits **1** when vectors remain |
 | `ragi issues [--status S] [--severity S] [--type T] [--tenant T] [--limit N]` | list issues from the ledger |
 | `ragi report [--format md\|json\|csv] [--all] [-o FILE \| --output FILE]` | the document-level integrity report |
 | `ragi connections` | test the ledger, S3, the manifest database and Qdrant, naming whichever is misconfigured |
@@ -945,6 +1232,11 @@ Install with `pip install -e ".[dev]"`; the command is `ragi`.
 | `RAGI_MAX_AUDIT_SECONDS` | `0` | audit time budget; `0` is unlimited, and 270 is implied on serverless. |
 | `RAGI_SYNC_AUDITS` | `false` | run audits inside the request (implied on Vercel). |
 | `RAGI_PROBE_RETRIEVAL`, `RAGI_PROBE_MAX`, `RAGI_PROBE_TOP_K` | `true`, `25`, `10` | retrieval-probe switches and limits. |
+| `RAGI_AUDIT_SLICE_DOCUMENTS` | `5000` | documents per slice of the index when only the source's documents are audited; each finished slice is a checkpoint (3.12). |
+| `RAGI_SMTP_HOST`, `RAGI_SMTP_PORT`, `RAGI_SMTP_USER`, `RAGI_SMTP_PASSWORD`, `RAGI_SMTP_FROM`, `RAGI_SMTP_SECURITY` | none, `587`, none, none, none, `starttls` | the platform's one mail account, which sends every workspace's alert emails (3.14). `RAGI_SMTP_SECURITY` is `starttls`, `ssl` or `none`. No host and sender means no email. |
+| `RAGI_APP_URL` | none | the public address of this deployment; the links in emails point here (on Vercel the production address is used when this is unset). Never taken from a request. |
+| `RAGI_ALERT_EMAIL_TO` | none | single-user modes only: who gets the email, comma-separated. App mode emails each workspace's own users and ignores it. |
+| `RAGI_PGVECTOR_PAGE_SIZE` | `1000` | rows per page when the vector index is a pgvector table (3.16). |
 | `RAGI_S3_WORKERS` | `16` | parallel HEAD requests during an S3 inventory. |
 | `RAGI_QDRANT_PAGE_SIZE` | `1000` | points per Qdrant scroll page. |
 
@@ -970,13 +1262,14 @@ hashes, versions, counts and evidence about them. Row-level security is on for e
 | `workspace_settings` | workspace_id, kind, config, secrets, updated_at, last_test | per-group settings: `config` readable, `secrets` Fernet-encrypted |
 | `api_keys` | id, workspace_id, name, token_hash, prefix, created_at, last_used_at, revoked_at | automation keys (hash only) |
 | `rate_limits` | key, window_start, count | brute-force and abuse counters |
-| `audit_runs` | id, workspace_id, kind, trigger, scope, status, started_at, finished_at, stats, error | each audit; a unique index allows one `running` per workspace |
+| `audit_runs` | id, workspace_id, kind, trigger, scope, status, started_at, finished_at, stats, error | each audit; `status` is `running`, `completed`, `partial` or `failed` (3.12); a unique index allows one `running` per workspace |
 | `issues` | workspace_id, id, type, severity, status, tenant_id, document_id, collection, title, detail, evidence, action, first_seen_at, last_seen_at, first_run_id, last_run_id, resolved_at, resolved_run_id, occurrences, reopened_count, ignored_reason | the issue ledger |
 | `issue_events` | id, workspace_id, issue_id, run_id, ts, event, details | issue lifecycle trail |
 | `documents` | workspace_id, tenant_id, document_id, status, issue_count, worst_severity, issue_types, fingerprint, source_uri, source_hash, source_version, size_bytes, expected_chunks, indexed_chunks, manifest_status, manifest_updated_at, collections, source_present, manifest_present, index_present, last_verified_at, last_run_id, indexed_version | the latest verified state of every document |
 | `repair_plans` | id, workspace_id, status, created_at, updated_at, items, summary | repair plans |
 | `repair_events` | id, workspace_id, plan_id, ts, event, details | repair trail |
 | `query_log` | id, workspace_id, ts, tenant_id, query_hash, retrieved_doc_ids | retrieval logs (query text hashed, never stored) |
+| `notifications` | id, workspace_id, created_at, kind, tone, title, body, details, run_id, actions, read_at, done_action, emailed_at | what each audit told the workspace and the buttons it offered; the newest 200 are kept (3.14) |
 
 `workspace_id` is on every ledger table and every query is filtered by it (section 13).
 
@@ -989,7 +1282,7 @@ The full threat model, with what is and is not covered, is in [docs/security.md]
 - **Passwords**: scrypt with a per-user salt, constant-time compare; unknown emails burn the same CPU, so timing does not reveal accounts.
 - **Sessions**: a random 256-bit token in an `HttpOnly`, `SameSite=Lax`, `Secure` cookie; only its SHA-256 is stored; 7-day sliding expiry; logout and password change revoke on the server.
 - **CSRF**: `SameSite=Lax` plus an `Origin` check on every cookie-authenticated write.
-- **Rate limits** (database-backed, so they hold across serverless instances): 8 sign-in attempts per account and 30 per network per 15 minutes; 5 sign-ups per network per hour; 10 password changes per account per 15 minutes; 30 connection tests per workspace per 10 minutes; 20 setup checks per workspace per 10 minutes.
+- **Rate limits** (database-backed, so they hold across serverless instances): 8 sign-in attempts per account and 30 per network per 15 minutes; 5 sign-ups per network per hour; 10 password changes per account per 15 minutes; 30 connection tests per workspace per 10 minutes; 20 setup checks and 20 deletion checks per workspace per 10 minutes.
 - **Tenant isolation**: every ledger statement carries the workspace id; the tests attack read, modify, resolve, reset and plan-hijack across workspaces, on SQLite and a real Postgres.
 - **Secrets at rest**: Fernet (AES-128-CBC + HMAC-SHA256) under `RAGI_SECRET_KEY`, which exists only in the server environment. Secrets are write-only in the UI/API. Errors and ledger rows are scrubbed of `scheme://user:password@host` credentials, and the error of a failed alert or repair webhook delivery has every web address removed (a webhook address is itself a secret), in the ledger, the logs and the interface. That includes the target of a redirect (even a relative one) and the host, path, query and user info of the configured address wherever a library echoes them without the scheme; run rows stored before this existed have any web address removed when they are read.
 - **SSRF guard**: every host a user supplies (S3 endpoint, Qdrant URL, manifest database, repair and alert webhooks) must be public. Loopback, private, link-local (including the cloud metadata address), carrier-grade NAT, IPv4-mapped IPv6, multicast and reserved ranges are refused; hostnames are resolved and every address must be public; checked when saved **and again before every connection**. URLs may not contain credentials; databases must be `postgresql://` with only `sslmode`, `connect_timeout`, `application_name` options.
@@ -997,7 +1290,7 @@ The full threat model, with what is and is not covered, is in [docs/security.md]
 - **API keys** are hashed, revocable, and cannot read settings or mint keys.
 - **Web hardening**: strict `Content-Security-Policy` (`script-src 'self'`), `X-Frame-Options: DENY`, `nosniff`, no referrer, `no-store` on API responses; the web interface renders every value as text (React escapes it; there is no raw HTML anywhere) (document ids come from S3 keys, so they are untrusted).
 
-**Not covered:** no email verification or password reset (no mail provider), no two-factor authentication, no teams or roles, and the DNS-rebinding window between validation and connection is narrow but not zero.
+**Not covered:** no email verification or password reset (the mail account only sends audit alerts), no two-factor authentication, no teams or roles, and the DNS-rebinding window between validation and connection is narrow but not zero.
 
 ---
 
@@ -1021,13 +1314,15 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 | `.vercelignore` | hides `pyproject.toml`, tests, docs, `.env*` from the upload |
 | `supabase/migrations/20261107000000_ragi_ledger.sql` | v1 ledger |
 | `supabase/migrations/20261108000000_multi_user.sql` | v2 accounts and workspace-scoped ledger; **refuses to run if the old tables hold data** |
+| `supabase/migrations/20261109000000_documents_indexed_version.sql` | adds the indexed version of each document |
+| `supabase/migrations/20261110000000_notifications.sql` | the notifications table (the app also creates it itself on start-up) |
 | `scripts/vercel-env.ps1` | sets the two secrets on Vercel (run by you; writes exact bytes: no BOM, no newline) |
 | `Dockerfile`, `docker-compose.yml` | container image and a full local stack (MinIO, Postgres, Qdrant, seed, reference worker, app) |
 | `.github/workflows/ci.yml` | tests against Postgres, Qdrant (API key enforced) and S3 over HTTP; image build and push |
 
 ### 14.3 Setup recap
 1. `npx vercel login`, then `npx vercel link --project rag-integrity-platform`.
-2. `supabase link --project-ref <ref>` then `supabase db push` (13 tables, RLS on).
+2. `supabase link --project-ref <ref>` then `supabase db push` (14 tables, RLS on).
 3. Put `RAGI_DATABASE_URL` in `.env`, run `scripts/vercel-env.ps1` yourself (it generates and keeps `RAGI_SECRET_KEY`).
 4. Deploy: `npx vercel deploy --prod`, or push to `main`.
 
@@ -1054,16 +1349,21 @@ port to 127.0.0.1, keeps a throwaway ledger inside each container, and its seedi
 ## 15. Verification status
 
 **Verified** (and how):
-- **417 tests.** On a plain checkout with no external services **385 pass and 32 skip** (checked before publishing). The 32 skipped need real servers; with a real local Qdrant, S3 over HTTP and Postgres attached, the 32 real-service tests (Qdrant 14, S3 over HTTP 5, end-to-end connectors 4, Postgres 9) all pass, so all 417 pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, big corpus 15, connectors 19, docs 12, duplicate ids 13, engine 11, help pages 8, id types 47, isolation 28, live mode 6, Postgres integration 5, real Qdrant 10, reference worker 3, repair cleanup only 5, S3 over HTTP 5, schema 4, security 26, serverless 8, service 15, setup check 36, source only 13, stuck audits 4, webhook error leaks 15, webhook errors 6.
+- **620 tests.** On a plain checkout with no external services **560 pass and 60 skip** (checked before publishing). The 60 skipped need real servers; with a real local Qdrant (API key enforced), S3 over HTTP and a PostgreSQL with the pgvector extension attached, the 60 real-service tests (Qdrant 16, S3 over HTTP 5, end-to-end connectors 4, Postgres 9, pgvector 20, and 6 scenarios that use all three) all pass, so all 620 pass. Per file: accounts 22, api 31, app connectors 4, app mode 46, audit notifications 38, big corpus 15, connectors 19, deletion verification 22, docs 18, duplicate ids 13, edge cases end to end 6, engine 11, help pages 8, id types 47, isolation 28, lab 22, landing scenarios 4, live mode 6, optional manifest 23, pgvector 20, Postgres integration 5, real qdrant 10, reference worker 3, repair cleanup only 5, S3 over HTTP 5, scan reliability 39, schema 4, security 26, serverless 8, service 15, setup check 36, source only 13, stuck audits 4, version integrity 23, webhook error leaks 15, webhook errors 6.
 - The engine finds **exactly** the injected faults (compared with ground truth) in the in-memory demo *and* through the real connector code.
 - A **real Qdrant 1.20 server** (checksum-verified official build, API key enforced): paging past one page, server-side filters, empty-vector detection, probes, wrong-key and unreachable diagnostics, ids stored as numbers and as text found by the same filter, and the setup check against it.
-- A **real Postgres engine** (also number, decimal and text ID columns read the same way, including scoped reads): both migrations apply in order and idempotently, RLS on all 13 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.
+- A **real Postgres engine** (also number, decimal and text ID columns read the same way, including scoped reads): both migrations apply in order and idempotently, RLS on all 14 tables, the destructive migration refuses to drop data, workspace isolation and the one-running-audit index hold.
 - **S3 over real HTTP** with a custom endpoint and path-style addressing (inventory, compute hashing, scoped listing, diagnostics).
+- **Feature 1, no manifest and pgvector** (`tests/test_optional_manifest.py`, `tests/test_pgvector.py`): the example from the product description (healthy, stale, never indexed, deleted-but-searchable) with no manifest; half-indexed documents from `chunk_total` and from gaps; the Setup check and the deletion check without a manifest; the workspace settings (the index choice, the secret connection string, the private-network refusal, isolation between workspaces); and, against a **real PostgreSQL with pgvector 0.8.7**: rows read in pages, LangChain-shaped tables with JSON keys and uuid row ids, scoped reads on number and text columns, empty vectors, the retrieval test under all three distances, a read-only proof, injection attempts, retries of a dropped connection, an audit that finds exactly the planted faults, a stopped sliced audit resumed to the same ledger, and a real search proving a deleted document is still found. It was also run by hand in a browser with no manifest and a pgvector table (sign-up, the index choice, the connection test, the Setup check, an audit, the bell and the email).
+- **Audit notifications** (`tests/test_audit_notifications.py`): the text and buttons for every way an audit can end; the email going out over a **real local SMTP server** (text and HTML parts, one message per recipient, no header injection, secure connection before login, credentials never echoed); the email only to the workspace's own users; the hourly cap and the fail-closed rule; a mail server that is down, a missing table and a failing notification never failing an audit; and notifications staying inside their workspace over HTTP.
+- **Versions, deletions and scan reliability end to end** (`tests/test_edge_cases_end_to_end.py`): real S3 over HTTP, a real PostgreSQL holding the manifest, the chunk table **and** the ledger, and a real Qdrant. A file changed in S3 and re-indexed; a shortened document and a changed chunk hash; a document deleted from S3, proved searchable by a real search, cleaned up and verified; a misbehaving cluster that changes nothing in the answer; a cluster that never recovers (partial, then resumed to exactly the ledger of an uninterrupted audit); and a document deleted between the stop and the resume. The edge cases are listed in `docs/edge-case-report-features-1-2-4.md`.
 - The app run against the **real Supabase** with a throwaway account (16 of 16 checks: empty workspace, SSRF refusal, secrets encrypted at rest, API keys, logout, login), then cleaned to zero rows.
 - The **live site**: healthy, connected to Supabase, protected endpoints return 401 to anonymous visitors, headers present, sign-in and sign-up screens render in a real browser.
 
 **Not verified:**
 - A user's own S3 bucket, manifest database and Qdrant cluster on the live site (none existed to test against).
+- Email through a real mail provider (a provider account is the operator's to create). The sending code is tested against a real local SMTP server, with the secure-connection and login order checked.
+- The version table, the deletion check and scan resuming against a user's own systems; and a collection of millions of points (the largest measured is 150,000; `scripts/benchmark_scan.py` measures a real cluster read-only).
 - `docker-compose.yml` was validated but never run (Docker Desktop could not start on the development machine).
 - Registration and login **on the live site itself** were not exercised by automation (account creation there is yours to do); the same flows were tested locally against the real Supabase.
 
@@ -1078,7 +1378,16 @@ port to 127.0.0.1, keeps a throwaway ledger inside each container, and its seedi
 - **IDs are matched exactly** (apart from number versus text, see 3.1): letter case, spaces, leading zeros, prefixes and extensions all make IDs
   different. One S3 file or manifest row per ID is followed; duplicates are warned about, not merged. The setup check looks at a bounded sample
   (200,000 files, 500,000 rows, 1,000 points, 200 documents looked up in the index), so its percentages for a very large system are estimates.
-- **Retrieval probe** replays an affected chunk's own vector, not real user traffic: it proves searchability and rank, not user impact.
+- **Retrieval probe** replays an affected chunk's own vector, not real user traffic: it proves searchability and rank, not user impact. The deletion check uses
+  up to 3 chunks of a document; a document whose other chunks rank lower than 10 can read as not returned although a different query would find it.
+- **Resume works in slices.** Only audits of the source's documents are sliced and resumable (3.12); a whole-index scan is one pass. A slice is thousands of
+  documents, so a stop loses at most one slice of work. A filtered read of a field without a payload index costs about a pass over the collection per slice.
+- **Version evidence depends on the pipeline.** Without a hash or version in the payloads the revision cannot be verified from the index (the verdict says
+  `unknown_revision`); chunk hashes and counts are used when the chunk table has them. Preventing out-of-order writes belongs in the ingestion pipeline
+  (version-aware writes, conditional activation, fencing); the audit detects the result (`stale_embedding`, `superseded_active`), it does not track job timelines.
+- **Deletion checks** find a deleted document only if an earlier audit saw it in the source, the manifest marks it deleted, an issue is open for it, or you name it.
+- **Email needs the operator's mail account** (`RAGI_SMTP_*`) and, for links, `RAGI_APP_URL`; the in-app notification does not. Email goes to a workspace's own
+  sign-in addresses only (unverified: there is no email verification), at most 12 an hour, and a mail server that is down means no email for that audit.
 - **Integrations**: S3, PostgreSQL/Supabase and Qdrant only.
 - The claim that no competitor does exactly this is a hypothesis to validate with customers; nothing in this repository proves it.
 

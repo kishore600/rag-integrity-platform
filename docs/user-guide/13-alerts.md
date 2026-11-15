@@ -6,6 +6,7 @@ The Alerts page tells RAGGuard where to send a message when an audit finds somet
 
 - [Purpose, who needs it, how to open it](#purpose-who-needs-it-how-to-open-it)
 - [The page at a glance](#the-page-at-a-glance)
+- [Notifications and email](#notifications-and-email)
 - [The Alert webhook card](#the-alert-webhook-card)
 - [Set up a Slack incoming webhook](#set-up-a-slack-incoming-webhook)
 - [How alerts work](#how-alerts-work)
@@ -36,20 +37,42 @@ The Alerts page tells RAGGuard where to send a message when an audit finds somet
 
 From top to bottom:
 
-1. A two-column area on a wide screen (stacked on a narrow one): the **Alert webhook** card on the left and the **How alerts work** card on the right.
+1. A two-column area on a wide screen (stacked on a narrow one): the **Email and webhook** card on the left (the screenshots below still call it *Alert webhook*) and the **How alerts work** card on the right.
 2. **Recent deliveries**: a table with a **Show** filter.
-3. **More ways to be notified**: three dashed cards marked **Not available yet**.
+3. **More ways to be notified**: two dashed cards marked **Not available yet**.
+
+---
+
+## Notifications and email
+
+After every audit that finishes, RAGGuard tells you what happened and what to do next, in two places.
+
+**In the app.** The **bell** at the top right shows a red number when you have unread notifications. Click it to see the latest ten; **See all notifications** opens the **Notifications** page. Each notification says what the audit found and has buttons for the next step:
+
+| The audit... | The buttons |
+|---|---|
+| finished with no issues | See the run |
+| finished with issues | Review critical issues (or high issues, or all of them), Verify deletions (only when leftover vectors of deleted documents were found), See the run |
+| stopped part-way | Resume audit, Review the issues found so far, See the run |
+| failed | Run it again, Check connections, See the run |
+
+**Resume audit** continues the audit from where it stopped. **Run it again** starts a new audit. **Verify deletions** checks that deleted documents are really gone from the index and tells you what it found. After you press a button that does something, the notification shows it as done.
+
+**By email.** The same message is emailed to the sign-in address of everyone in your workspace. The **Email me** setting chooses when: **always** (after every audit, the default), **attention** (only when an audit failed, stopped part-way or found a new issue at or above the minimum severity) or **never**. A link in the email opens a page. A button that does something (Resume audit, Run it again, Verify deletions) opens the Notifications page, where the button is, so opening an email can never change anything by itself.
+
+**Who sets up the mail.** Email is sent from one mail account that the operator of this RAGGuard sets up. If the operator has not set it up, no email is sent, the notification in the app still appears, and the audit's record says why. At most 12 emails an hour are sent per workspace.
 
 ---
 
 ## The Alert webhook card
 
-The header reads "Alert webhook", with the line "A Slack-compatible incoming webhook. It is saved encrypted and never shown again." and a badge: **Configured** (green) or **Not configured** (grey). **Configured** means you have saved at least one value in this group. It does not prove the webhook works, and saving only **Minimum severity** also counts as configured.
+The header reads "Email and webhook", with the line "Choose when you get the email. The optional Slack-compatible webhook is saved encrypted and never shown again." and a badge: **Configured** (green) or **Not configured** (grey). **Configured** means you have saved at least one value in this group. It does not prove the webhook works, and saving only **Minimum severity** also counts as configured.
 
 The form is on the card itself (there is no dialog). Its parts, top to bottom:
 
 | Element | What it does |
 |---|---|
+| **Email me** | When the email after an audit is sent: always, attention or never |
 | **Webhook URL** | The address messages are posted to (secret) |
 | **Minimum severity** | The lowest severity that triggers a message |
 | **Saved line** | "Not saved yet." or "Saved 3 h ago." (hover for the exact time). No test history is kept for this group |
@@ -64,8 +87,14 @@ The shared form controls (required markers, the secret box and **Remove saved va
 
 | Label | Required | Secret | Default | Example |
 |---|---|---|---|---|
+| **Email me** | No | No | `always` | `attention` |
 | **Webhook URL** | No | Yes | None | `https://hooks.slack.com/services/T0000/B0000/XXXX` |
 | **Minimum severity** | No | No | `high` (shown as **Use server default**) | `high` |
+
+**Email me** (drop-down: `always`, `attention`, `never`)
+- *What it is:* when RAGGuard emails you after an audit finishes. The notification in the app is always created, whatever you choose.
+- *What it changes:* `always` emails after every audit. `attention` emails only when an audit failed, stopped part-way, or found a new, reopened or escalated issue at or above the minimum severity. `never` sends no email.
+- *Common mistakes:* expecting email when the operator has not set up a mail account (the audit's record then says why no email was sent).
 
 **Webhook URL** (secret)
 - *What it is:* the address of a Slack-compatible incoming webhook. RAGGuard sends it one JSON message per audit (when there is something to say). It is treated as a secret because the address itself acts as the password: anyone who has it can post to your channel. It is stored encrypted and never shown again.
@@ -119,7 +148,7 @@ If the message appears in the channel, the webhook works.
 
 *The How alerts work card: five points and the shape of the request body.*
 
-The card lists five points. Here they are in plain words, with the details behind each.
+The card lists six points. The first, **In the app and by email**, is explained under Notifications and email above. The other five are about the Slack webhook; here they are in plain words, with the details behind each.
 
 ### 1. When it runs
 
@@ -247,11 +276,10 @@ While loading, grey placeholder rows are shown.
 
 ## More ways to be notified: not available yet
 
-Three dashed cards at the bottom are each marked **Not available yet**. Nothing here can be configured.
+Two dashed cards at the bottom are each marked **Not available yet**. Nothing here can be configured.
 
 | Card | What it says |
 |---|---|
-| **Email alerts** | "Alerts go to a webhook only." |
 | **Per-issue-type rules** | "The only filter is the minimum severity." |
 | **Digest and quiet hours** | "An alert is sent right after each audit that finds something new." |
 
@@ -259,7 +287,7 @@ Three dashed cards at the bottom are each marked **Not available yet**. Nothing 
 
 ## Single-user mode
 
-On a server that runs for one team without accounts (live or demo mode) the card is read-only. It shows "Alert webhook" with the line "A Slack-compatible incoming webhook." and the note "Configured by the server's environment variables (RAGI_*)": "Set RAGI_ALERT_WEBHOOK_URL to turn alerts on, and RAGI_ALERT_MIN_SEVERITY to choose the minimum severity." **How alerts work**, **Recent deliveries** and the **Not available yet** cards work the same way.
+On a server that runs for one team without accounts (live or demo mode) the card is read-only. It shows "Email and webhook" with the line "Set in the server's environment." and the note "Configured by the server's environment variables (RAGI_*)": for email, RAGI_SMTP_HOST, RAGI_SMTP_FROM (and RAGI_SMTP_USER, RAGI_SMTP_PASSWORD if the server needs a login), RAGI_ALERT_EMAIL_TO for who gets it, and RAGI_ALERT_EMAIL_WHEN; for Slack, RAGI_ALERT_WEBHOOK_URL, and RAGI_ALERT_MIN_SEVERITY to choose the minimum severity. **How alerts work**, **Recent deliveries** and the **Not available yet** cards work the same way.
 
 ---
 

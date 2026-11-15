@@ -1,4 +1,8 @@
+import { CircleAlert, CircleCheck, Mail } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { errorMessage } from "@/lib/api";
+import { useSendTestEmail } from "@/hooks/queries";
 import { Mono, PageHeader } from "@/components/shared/page";
 import { NotAvailable, Skeleton } from "@/components/shared/states";
 import { CodeBlock, ConfigBadge, EnvNote, QueryGate, SettingsForm, useSystems } from "../_settings-form";
@@ -13,9 +17,49 @@ const PAYLOAD_SHAPE = `{
   ]
 }`;
 
+/** Sends one real message through the operator's mail account, so setup can be checked without waiting for an audit. */
+function TestEmailCard() {
+  const send = useSendTestEmail();
+  const r = send.data;
+  return (
+    <Card>
+      <CardHeader title="Send a test email" description="Checks that the mail account works, without waiting for an audit." />
+      <CardBody className="space-y-3">
+        <p className="text-body text-ink-2">Sends one short message to the address you sign in with. It changes nothing, and you can send at most five every ten minutes.</p>
+        <Button variant="secondary" loading={send.isPending} onClick={() => send.mutate()}>
+          <Mail className="h-4 w-4" aria-hidden /> Send test email
+        </Button>
+        <div aria-live="polite">
+          {r?.ok ? (
+            <p className="flex items-start gap-2 text-body text-ink" role="status">
+              <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
+              <span className="min-w-0 break-words">Sent to {r.to.join(", ")}. Check your inbox, and the spam folder if it is not there within a minute.</span>
+            </p>
+          ) : r ? (
+            <p className="flex items-start gap-2 text-body text-ink" role="alert">
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-critical" aria-hidden />
+              <span className="min-w-0 break-words">Not sent. {r.reason ?? "The mail server did not accept it."}</span>
+            </p>
+          ) : null}
+          {send.isError ? (
+            <p className="flex items-start gap-2 text-body text-ink" role="alert">
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-critical" aria-hidden />
+              <span className="min-w-0 break-words">Not sent. {errorMessage(send.error)}</span>
+            </p>
+          ) : null}
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
 function HowAlertsWork() {
   const items: { title: string; body: React.ReactNode }[] = [
-    { title: "When it runs", body: "After every audit that finishes, RAGGuard compares the issues it found with the previous results." },
+    {
+      title: "In the app and by email",
+      body: "After every audit that finishes (completed, stopped part-way or failed), RAGGuard adds a notification under the bell and, unless email is switched off, emails it to the people in your workspace. Each one carries the next step: Resume audit, Run it again, Review the issues, Verify deletions. In the email, a step that changes something opens the Notifications page, where its button is.",
+    },
+    { title: "When the Slack webhook runs", body: "After every audit that finishes, RAGGuard compares the issues it found with the previous results." },
     {
       title: "What triggers an alert",
       body: "Only issues that are new, reopened (they came back after being resolved) or escalated (their severity went up), and only if they are at or above the minimum severity. An issue that is still open and unchanged never alerts again.",
@@ -32,10 +76,10 @@ function HowAlertsWork() {
       title: "If delivery fails",
       body: "RAGGuard makes one attempt and waits up to 10 seconds. It does not retry. A failed delivery never fails the audit: the error is recorded on the run and listed under Recent deliveries.",
     },
-    { title: "When nothing is sent", body: "If no webhook is saved, or no issue qualifies, nothing is sent. The reason is recorded on the run." },
+    { title: "When nothing is sent", body: "If no webhook is saved, or no issue qualifies, nothing is sent to it. An email needs the operator's mail server to be set up; if it is not, or email is off, the reason is recorded on the run. At most 12 emails an hour are sent per workspace." },
   ];
   return (
-    <Card>
+    <Card className="min-w-0">
       <CardHeader title="How alerts work" />
       <CardBody className="space-y-4">
         <ol className="space-y-3">
@@ -64,14 +108,15 @@ export default function AlertsPage() {
       <PageHeader title="Alerts" description="Get told when an audit finds something new." />
       <div className="space-y-6">
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+          <div className="min-w-0 space-y-6">
           {appMode ? (
             <QueryGate query={settings} skeleton={<Skeleton className="h-80" />}>
               {() =>
                 group ? (
                   <Card>
                     <CardHeader
-                      title="Alert webhook"
-                      description="A Slack-compatible incoming webhook. It is saved encrypted and never shown again."
+                      title="Email and webhook"
+                      description="Choose when you get the email. The optional Slack-compatible webhook is saved encrypted and never shown again."
                       actions={<ConfigBadge configured={group.configured} />}
                     />
                     <CardBody>
@@ -87,12 +132,16 @@ export default function AlertsPage() {
             </QueryGate>
           ) : (
             <Card>
-              <CardHeader title="Alert webhook" description="A Slack-compatible incoming webhook." />
+              <CardHeader title="Email and webhook" description="Set in the server's environment." />
               <CardBody>
-                <EnvNote>Set RAGI_ALERT_WEBHOOK_URL to turn alerts on, and RAGI_ALERT_MIN_SEVERITY to choose the minimum severity.</EnvNote>
+                <EnvNote>
+                  For email set RAGI_SMTP_HOST, RAGI_SMTP_FROM (and RAGI_SMTP_USER, RAGI_SMTP_PASSWORD if the server needs a login), RAGI_ALERT_EMAIL_TO for who gets it, and RAGI_ALERT_EMAIL_WHEN (always, attention or never). For Slack set RAGI_ALERT_WEBHOOK_URL, and RAGI_ALERT_MIN_SEVERITY to choose the minimum severity.
+                </EnvNote>
               </CardBody>
             </Card>
           )}
+          <TestEmailCard />
+          </div>
           <HowAlertsWork />
         </div>
 
@@ -100,8 +149,7 @@ export default function AlertsPage() {
 
         <section aria-labelledby="more-alerts">
           <h2 id="more-alerts" className="mb-3 text-section text-ink">More ways to be notified</h2>
-          <div className="grid gap-4 md:grid-cols-3">
-            <NotAvailable title="Email alerts" description="Alerts go to a webhook only." />
+          <div className="grid gap-4 md:grid-cols-2">
             <NotAvailable title="Per-issue-type rules" description="The only filter is the minimum severity." />
             <NotAvailable title="Digest and quiet hours" description="An alert is sent right after each audit that finds something new." />
           </div>

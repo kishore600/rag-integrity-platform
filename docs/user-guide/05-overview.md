@@ -124,21 +124,21 @@ Almost everything on the page is a shortcut: cards, legend rows, bars and list r
 
 *The Overview of a brand-new workspace: the "Connect your data" card with its three steps.*
 
-On a hosted server, until all three systems are saved, the Overview shows only this card instead of the dashboard. It sits in the middle of the page.
+On a hosted server, until your source and your vector index are saved, the Overview shows only this card instead of the dashboard. It sits in the middle of the page.
 
 | Part | What it shows |
 |---|---|
-| Heading **Connect your data** | With a counter on the right such as "1 of 3 connected". |
-| Line | "RAGGuard compares three systems. Connect each one, then run your first audit." |
+| Heading **Connect your data** | With a counter on the right such as "1 of 2 connected" (the manifest is not counted). |
+| Line | "RAGGuard compares your documents with your vector index. Connect both, then run your first audit. A manifest is optional." |
 | Step **1. Document source (Amazon S3)** | "The documents your users should be able to search." |
-| Step **2. Manifest (PostgreSQL)** | "The table where your pipeline records what it indexed." |
-| Step **3. Vector index (Qdrant)** | "The store your application actually searches." |
+| Step **2. Vector index (Qdrant or pgvector)** | "The store your application actually searches." |
+| Step **3. Manifest (PostgreSQL, optional)** | "Optional. The table where your pipeline records what it indexed. It adds checks, but audits work without it." Its badge says **Optional** |
 | Badge on each step | **To do** (grey) or **Done** (green). A check mark replaces the empty circle when a step is done. |
 | Button on each step | **Set up** while the step is to do, **Review** once it is done. The button of the next step to do is blue and filled; the others are plain. Every button opens **Data Sources**. |
 
 "Done" means the connection is saved with its required fields. It does not mean it passed a test. Use **Test connection** on **Data Sources** for that ([Connect your data sources](04-data-sources.md)).
 
-Once all three are done the card disappears and the dashboard takes its place. Single-user servers never show this card, because their connections come from the server.
+Once the source and the index are done the card disappears and the dashboard takes its place. Single-user servers never show this card, because their connections come from the server.
 
 ---
 

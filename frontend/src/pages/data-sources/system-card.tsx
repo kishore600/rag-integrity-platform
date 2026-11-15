@@ -46,6 +46,16 @@ function settingRows(system: SystemStatus): Row[] {
         { label: "Connection string", value: flag(saved(g, "database_url"), "Saved", "Missing") },
       ];
     }
+    case "pgvector": {
+      const table = valueOf(g, "table");
+      const schema = valueOf(g, "schema");
+      return [
+        { label: "Table", value: table ? `${schema ? `${schema}.` : ""}${table}` : "Not set" },
+        { label: "Columns", value: valueOf(g, "column_map") ? "Custom mapping" : "Default names" },
+        { label: "Distance", value: valueOf(g, "distance") ?? "cosine" },
+        { label: "Connection string", value: flag(saved(g, "database_url"), "Saved", "Missing") },
+      ];
+    }
     case "qdrant":
       return [
         { label: "URL", value: valueOf(g, "url") ?? "Not set" },
@@ -59,11 +69,11 @@ function settingRows(system: SystemStatus): Row[] {
 function liveRows(system: SystemStatus): Row[] {
   const info = system.connection?.info ?? {};
   const rows: Row[] = [];
-  if (system.kind === "qdrant" && isCounts(info.counts)) {
+  if ((system.kind === "qdrant" || system.kind === "pgvector") && isCounts(info.counts)) {
     const entries = Object.entries(info.counts);
     if (entries.length > 0) {
       const shown = entries.slice(0, 4).map(([name, n]) => `${name} (${formatNumber(n)})`);
-      rows.push({ label: "Points", value: shown.join(", ") + (entries.length > 4 ? `, and ${entries.length - 4} more` : "") });
+      rows.push({ label: system.kind === "pgvector" ? "Rows" : "Points", value: shown.join(", ") + (entries.length > 4 ? `, and ${entries.length - 4} more` : "") });
     }
   }
   if (system.kind === "manifest" && isStrings(info.missing) && info.missing.length > 0) {

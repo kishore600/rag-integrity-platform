@@ -29,7 +29,7 @@ export function AuditProgressCard({ run }: { run: AuditRun | null }) {
     <Card className="p-5" role="status">
       <h2 className="text-section text-ink">Audit in progress</h2>
       <p className="mt-0.5 text-support text-ink-2">
-        Comparing your source, manifest and index{scope}.{run?.status === "running" ? ` Started ${timeAgo(run.started_at)}.` : ""} This page updates when it finishes.
+        Comparing your source with your index{scope}.{run?.status === "running" ? ` Started ${timeAgo(run.started_at)}.` : ""} This page updates when it finishes.
       </p>
       <IndeterminateBar label="Audit in progress" className="mt-4" />
     </Card>

@@ -11,18 +11,18 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from . import alerts, report
+from . import alerts, notifications, report
 from .config import Settings, get_settings
 from .connectors.base import ConnectorError, UpstreamError
 from .connectors.factory import Connectors, build_connectors
 from .demo.world import DemoWorld
-from .engine.audit import AuditOptions, inspect_document, run_reconciliation
+from .engine.audit import AuditOptions, PartialAudit, SliceResult, inspect_document, run_reconciliation
 from .engine.blast import blast_radius
 from .engine.isolation import OVERALL_TEXT
 from .engine.planning import estimate_workload, plan_items
 from .engine.reconcile import parse_ts
 from .ledger import STALE_RUN_SECONDS, Ledger, RunDiff, RunInProgress
-from .models import ConnectionStatus, DocSummary, Finding, Scope
+from .models import ConnectionStatus, DocSummary, Finding, IssueType, Scope
 from .repair import RepairManager
 from .security import scrub
 
@@ -72,6 +72,7 @@ class AuditResult:
     findings: list[Finding] = field(default_factory=list)
     summaries: list[DocSummary] = field(default_factory=list)
     alerts: dict[str, Any] = field(default_factory=dict)
+    status: str = "completed"  # completed | partial (the scan stopped part-way: see stats.scan)
 
 
 class IntegrityService:
@@ -90,6 +91,8 @@ class IntegrityService:
         self._ready = False
         self._ready_lock = threading.Lock()
         self._lock = threading.Lock()  # one audit at a time per process (the database enforces it across processes)
+        self._lock_test_mail = threading.Lock()
+        self._test_mail_times: list[float] = []
         self.repairs = RepairManager(self)
 
     # ------------------------------------------------------------------ connectors
@@ -107,8 +110,8 @@ class IntegrityService:
         return AuditOptions(
             target=s.target_fingerprint(), default_tenant=s.default_tenant, required_fields=s.required_fields,
             known_tenants=self.ledger.known_tenants(), grace_minutes=s.grace_minutes,
-            check_vectors=s.qdrant_check_vectors or s.is_demo, source_only=s.source_documents_only,
-            lookup_from_manifest=s.s3_lookup_from_manifest, names=self.id_names(),
+            check_vectors=s.qdrant_check_vectors or s.pgvector_check_vectors or s.is_demo, source_only=s.source_documents_only,
+            lookup_from_manifest=s.s3_lookup_from_manifest, names=self.id_names(), slice_size=max(1, s.audit_slice_documents),
             probe=s.probe_retrieval if probe is None else probe, probe_max=s.probe_max, probe_top_k=s.probe_top_k,
             deadline=(time.monotonic() + limit) if limit else None,
             progress=(lambda phase, **info: self.ledger.set_progress(run_id, phase, **info)) if run_id else None,
@@ -117,11 +120,13 @@ class IntegrityService:
     def id_names(self) -> dict[str, str]:
         """The setting names a message about identifiers can quote (the payload field, the manifest column, the key pattern)."""
         from .connectors.payload import build_payload_map
+        from .connectors.pgvector import build_column_map
 
         s = self.settings
         names = {"payload_document_id": "document_id", "manifest_document_id": "document_id", "key_pattern": s.s3_key_pattern}
         try:  # a setting that cannot be read is reported by the connector that needs it, not by a message about names
-            names["payload_document_id"] = build_payload_map(s.payload_map)["document_id"]
+            index_map = build_column_map(s.pgvector_columns) if s.uses_pgvector else build_payload_map(s.payload_map)
+            names["payload_document_id"] = index_map["document_id"]
             names["manifest_document_id"] = s.manifest_columns.get("document_id", "document_id")
         except (ValueError, ConnectorError):
             pass
@@ -133,53 +138,139 @@ class IntegrityService:
         return limit + 90 if limit else STALE_RUN_SECONDS
 
     # ------------------------------------------------------------------ audits
-    def _execute(self, run_id: str, kind: str, trigger: str, scope: Scope | None, probe: bool | None) -> AuditResult:
+    def _resume_info(self) -> dict[str, Any] | None:
+        """What a resumed audit continues: the interrupted full audit's last checkpoint and the counts it had reported."""
+        run = self.ledger.latest_resumable_run()
+        if run is None:
+            return None
+        stats = run.get("stats") or {}
+        return {"run_id": run["id"], "after": tuple(stats["scan"]["checkpoint"]),
+                "carry": {k: stats.get(k) or {} for k in ("documents_by_status", "findings_by_type", "findings_by_severity")}}
+
+    def _execute(self, run_id: str, kind: str, trigger: str, scope: Scope | None, probe: bool | None,
+                 resume: dict[str, Any] | None = None) -> AuditResult:
         t0 = time.perf_counter()
+        diff = RunDiff()
+        seen: set[tuple[str, str]] = set()
+        sticky: dict[str, Any] = {}  # the last checkpoint: kept in every progress note, so a run that is killed can still be resumed
         try:
             c = self.connectors
-            result = run_reconciliation(c.source, c.manifest, c.index, self.options(probe, run_id), scope)
-            diff = self.ledger.apply_run(run_id, result.findings, result.summaries, scope)
+            opts = self.options(probe, run_id)
+            sliced = opts.source_only and (scope is None or scope.keys is None)
+            if sliced and (scope is None or scope.is_full):
+                opts.prior_source_keys = self.ledger.source_present_keys()  # a document that vanished from the source is checked
+            if resume is not None:
+                opts.resume_after, opts.carry, opts.resumed_from = resume["after"], resume["carry"], resume["run_id"]
+            if opts.progress is not None:
+                opts.progress = lambda phase, **info: self.ledger.set_progress(run_id, phase, **{**sticky, **info})
+
+            def on_slice(sl: SliceResult) -> None:
+                """A slice of the scan is complete: record it now, so a later stop cannot lose it."""
+                part = self.ledger.apply_run(run_id, sl.findings, sl.summaries, sl.scope)
+                diff.opened += part.opened
+                diff.reopened += part.reopened
+                diff.escalated += part.escalated
+                diff.resolved += part.resolved
+                diff.unchanged += part.unchanged
+                if not sl.final and sl.scope.keys:
+                    seen.update(sl.scope.keys)
+                pct = round(100.0 * sl.documents_done / sl.documents_total, 1) if sl.documents_total else 100.0
+                sticky.update(checkpoint=list(sl.last_key) if sl.last_key else None, carry=sl.carry, documents_done=sl.documents_done,
+                              documents_total=sl.documents_total, slices_done=sl.index if not sl.final else sl.total, slices_total=sl.total,
+                              percent=pct, points_scanned=sl.points_scanned, resumed_from=resume["run_id"] if resume else None)
+                self.ledger.set_progress(run_id, "recorded a slice of the audit", **sticky)
+
+            opts.on_slice = on_slice if sliced else None
+            result = run_reconciliation(c.source, c.manifest, c.index, opts, scope)
+            if (result.stats.get("scan") or {}).get("mode") == "sliced":
+                diff.resolved += self.ledger.sweep_missing(run_id, seen, after=opts.resume_after).resolved
+            else:
+                diff = self.ledger.apply_run(run_id, result.findings, result.summaries, scope)
             stats = {**result.stats, "diff": diff.to_json(), "scope": scope.to_json() if scope else {},
                      "duration_seconds": round(time.perf_counter() - t0, 3)}
+            if resume is not None:
+                stats["resume"] = {"requested": True, "resumed_from": resume["run_id"]}
             alert = alerts.notify(self.settings, run_id, diff, stats)
             stats["alerts"] = alert
+            stats["notifications"] = self._announce(run_id, kind, trigger, "completed", stats, diff)
             self.ledger.finish_run(run_id, "completed", stats)
             return AuditResult(run_id, kind, stats, diff, result.findings, result.summaries, alert)
+        except PartialAudit as pa:
+            # the scan stopped part-way: the slices before it are recorded and final, nothing is claimed about the rest
+            stats = {**pa.result.stats, "diff": diff.to_json(), "scope": {}, "duration_seconds": round(time.perf_counter() - t0, 3)}
+            if resume is not None:
+                stats["resume"] = {"requested": True, "resumed_from": resume["run_id"]}
+            stats["alerts"] = alerts.notify(self.settings, run_id, diff, stats)
+            stats["notifications"] = self._announce(run_id, kind, trigger, "partial", stats, diff)
+            self.ledger.finish_run(run_id, "partial", stats,
+                                   error=f"{scrub(pa.reason, 300)}. The audit checked {pa.scan.get('documents_done')} of "
+                                         f"{pa.scan.get('documents_total')} documents; what it checked is reported, the rest is not. "
+                                         "Resume the audit to continue.")
+            return AuditResult(run_id, kind, stats, diff, pa.result.findings, pa.result.summaries, stats["alerts"], status="partial")
         except Exception as exc:
             up = as_upstream(exc)
-            self.ledger.finish_run(run_id, "failed", {"duration_seconds": round(time.perf_counter() - t0, 3)},
-                                   error=str(up) if up else f"{type(exc).__name__}: {scrub(str(exc), 500)}")
+            failed_stats: dict[str, Any] = {"duration_seconds": round(time.perf_counter() - t0, 3)}
+            snap = getattr(exc, "scan_snapshot", None)
+            if isinstance(snap, dict):
+                failed_stats["scan"] = snap
+            reason = str(up) if up else f"{type(exc).__name__}: {scrub(str(exc), 500)}"
+            failed_stats["notifications"] = self._announce(run_id, kind, trigger, "failed", failed_stats, diff, error=reason)
+            self.ledger.finish_run(run_id, "failed", failed_stats, error=reason)
             if up is not None:
                 raise up from exc
             raise
+
+    def send_test_email(self) -> dict[str, Any]:
+        """The Send test email button: one message to the people an alert would go to. Limited per process; the API adds a per-workspace limit."""
+        now = time.monotonic()
+        with self._lock_test_mail:
+            self._test_mail_times = [t for t in self._test_mail_times if now - t < notifications.TEST_WINDOW_SECONDS]
+            if len(self._test_mail_times) >= notifications.TEST_EMAILS:
+                return {"ok": False, "sent": 0, "to": [], "rate_limited": True,
+                        "reason": f"Too many test emails: at most {notifications.TEST_EMAILS} every 10 minutes. Try again in a few minutes."}
+            self._test_mail_times.append(now)
+        return notifications.send_test_email(self.settings, self.ledger)
+
+    def _announce(self, run_id: str, kind: str, trigger: str, status: str, stats: dict[str, Any], diff: RunDiff,
+                  error: str | None = None) -> dict[str, Any]:
+        """The notification in the app and the email for a finished audit. It reports what it did and can never fail the audit."""
+        try:
+            return notifications.announce(self.settings, self.ledger, run_id=run_id, kind=kind, trigger=trigger, status=status,
+                                          stats=stats, diff=diff, error=error)
+        except Exception as exc:  # announce already catches everything; this is the last line of defence
+            log.warning("notifications failed for %s: %s", run_id, type(exc).__name__)
+            return {"error": f"{type(exc).__name__}: notifications failed"}
 
     @staticmethod
     def _kind(scope: Scope | None, kind: str | None) -> str:
         return kind or ("full" if scope is None or scope.is_full else "scoped")
 
     def run_audit(self, scope: Scope | None = None, trigger: str = "manual", kind: str | None = None,
-                  probe: bool | None = None) -> AuditResult:
+                  probe: bool | None = None, resume: bool = False) -> AuditResult:
         if not self._lock.acquire(blocking=False):
             raise AuditBusy("An audit is already running.")
         try:
             kind = self._kind(scope, kind)
             _ = self.connectors  # a misconfigured or incomplete setup fails here, before a run row is created
+            info = self._resume_info() if (resume and scope is None) else None  # (before the run row: it must not hide the checkpoint)
             try:
                 run_id = self.ledger.start_run(kind, trigger, scope, stale_after=self._stale_after())
             except RunInProgress as exc:
                 raise AuditBusy(str(exc)) from exc
-            return self._execute(run_id, kind, trigger, scope, probe)
+            return self._execute(run_id, kind, trigger, scope, probe, info)
         finally:
             self._lock.release()
 
-    def start_audit_async(self, scope: Scope | None = None, trigger: str = "manual", probe: bool | None = None) -> str:
+    def start_audit_async(self, scope: Scope | None = None, trigger: str = "manual", probe: bool | None = None,
+                          resume: bool = False) -> str:
         if self.settings.run_audits_inline:  # serverless: a background thread would be frozen with the instance
-            return self.run_audit(scope=scope, trigger=trigger, probe=probe).run_id
+            return self.run_audit(scope=scope, trigger=trigger, probe=probe, resume=resume).run_id
         if not self._lock.acquire(blocking=False):
             raise AuditBusy("An audit is already running.")
         try:
             kind = self._kind(scope, None)
             _ = self.connectors  # fail early (and without a run row) when setup is incomplete
+            info = self._resume_info() if (resume and scope is None) else None
             run_id = self.ledger.start_run(kind, trigger, scope, stale_after=self._stale_after())
         except RunInProgress as exc:
             self._lock.release()
@@ -190,7 +281,7 @@ class IntegrityService:
 
         def work() -> None:
             try:
-                self._execute(run_id, kind, trigger, scope, probe)
+                self._execute(run_id, kind, trigger, scope, probe, info)
             except Exception:
                 log.exception("audit %s failed", run_id)
             finally:
@@ -259,7 +350,20 @@ class IntegrityService:
             "scheduler_interval_minutes": self.settings.audit_interval_minutes,
             "cleanup_policy": self.settings.cleanup_policy,
             "repair_webhook_configured": bool(self.settings.repair_webhook_url or self.settings.is_demo),
+            "resumable_audit": self._resumable_summary(),
+            # the manifest is optional: the screens say "not connected" instead of calling its absence a fault
+            "manifest_connected": bool(self.settings.manifest_database_url) or self.settings.is_demo,
+            "index_type": "pgvector" if self.settings.uses_pgvector else "qdrant",
         }
+
+    def _resumable_summary(self) -> dict[str, Any] | None:
+        run = self.ledger.latest_resumable_run()
+        if run is None:
+            return None
+        scan = (run.get("stats") or {}).get("scan") or {}
+        return {"run_id": run["id"], "finished_at": run.get("finished_at"), "documents_done": scan.get("documents_done"),
+                "documents_total": scan.get("documents_total"), "percent": scan.get("percent"),
+                "stopped_because": scan.get("stopped_because")}
 
     def connections(self) -> list[dict[str, Any]]:
         out: list[ConnectionStatus] = []
@@ -271,18 +375,23 @@ class IntegrityService:
             out += [c.source.health(), c.manifest.health(), c.index.health()]
         except Exception:
             # building all three failed (misconfiguration): construct them one by one to say *which* is wrong
+            from .connectors.nomanifest import NoManifest
+            from .connectors.pgvector import PgVectorIndex
             from .connectors.postgres import PostgresManifest
             from .connectors.qdrant import QdrantIndex
             from .connectors.s3 import S3Source
 
-            for name, kind, key, factory in (("S3 source", "s3", "s3", S3Source), ("Manifest (Postgres)", "postgres", "manifest", PostgresManifest),
-                                             ("Vector index (Qdrant)", "qdrant", "qdrant", QdrantIndex)):
+            index = (("Vector index (pgvector)", "pgvector", "pgvector", PgVectorIndex) if self.settings.uses_pgvector
+                     else ("Vector index (Qdrant)", "qdrant", "qdrant", QdrantIndex))
+            manifest = (("Manifest (Postgres)", "postgres", "manifest", PostgresManifest) if self.settings.manifest_database_url
+                        else ("Processing manifest", "manifest", "manifest", lambda _s: NoManifest()))
+            for name, kind, key, factory in (("S3 source", "s3", "s3", S3Source), manifest, index):
                 try:
                     if self._guard is not None:
                         self._guard(self.settings, key)  # app mode: refuse private/loopback targets before connecting
                     out.append(factory(self.settings).health())
                 except Exception as exc:
-                    out.append(ConnectionStatus(name, kind, False, f"{type(exc).__name__}: {str(exc)[:200]}"))
+                    out.append(ConnectionStatus(name, kind, False, friendly_error(exc) if as_upstream(exc) else f"{type(exc).__name__}: {str(exc)[:200]}"))
         return [asdict(s) for s in out]
 
     def inspect(self, tenant: str, document_id: str) -> dict[str, Any]:
@@ -327,6 +436,73 @@ class IntegrityService:
                                     names=self.id_names(), source_only=s.source_documents_only, lookup_mode=s.s3_lookup_from_manifest,
                                     explain=friendly_error)
         return build_setup_report(facts, time.monotonic() - t0)
+
+    def verify_deletions(self, documents: list[tuple[str, str]] | None = None, record: bool = True,
+                         max_documents: int = 200) -> dict[str, Any]:
+        """Deletion and retrieval verification: for documents deleted from the source, are their vectors really gone, and can
+        a search still return them? Read-only towards S3, the manifest and the index. With ``record`` the findings are written
+        to the issue list (our own store) as a scoped run, which also closes issues whose vectors have since been cleaned up."""
+        from .engine.deletions import verify_deletions
+        from .engine.reconcile import DELETED_STATUSES, _norm
+
+        c = self.connectors
+        candidates: dict[tuple[str, str], str] = {}
+        prior = self.ledger.source_present_keys()
+        if prior:  # in the source at an earlier audit: which of them are gone now? (names only: no hashing, no downloads)
+            if hasattr(c.source, "iter_keys"):
+                present = {parsed for _key, parsed in c.source.iter_keys() if parsed}
+            else:
+                present = {d.key for d in c.source.inventory(None)}
+            for k in sorted(prior - present):
+                candidates[k] = "it was in the source at the last audit and is gone now"
+        for r in c.manifest.documents(None):
+            if _norm(r.processing_status) in DELETED_STATUSES:
+                candidates.setdefault(r.key, "the manifest marks it deleted")
+        for typ in (IssueType.ORPHAN_VECTOR.value, IssueType.TENANT_MISMATCH.value):
+            rows, _ = self.ledger.list_issues(status="open", type=typ, limit=500)
+            for i in rows:
+                if i["document_id"] != "*":
+                    candidates.setdefault((i["tenant_id"], i["document_id"]), "an open issue says vectors remain for it")
+        for k in documents or []:
+            candidates[(k[0], k[1])] = "you asked for it"
+        truncated = max(0, len(candidates) - max_documents)
+        if truncated:
+            candidates = dict(sorted(candidates.items())[:max_documents])
+        if not candidates:
+            return {"generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    "summary": {"documents_checked": 0, "verified_deleted": 0, "deletion_mismatch": 0, "manifest_not_updated": 0,
+                                "not_deleted": 0, "vectors_remaining": 0, "retrievable": 0},
+                    "documents": [], "truncated": 0, "recorded": None,
+                    "limits": [], "note": "Nothing to verify: no document has been deleted from the source since the last audit, "
+                                          "the manifest marks none as deleted, and no open issue says vectors remain for a deleted one."}
+        try:
+            report, result, scope = verify_deletions(c.source, c.manifest, c.index, self.options(probe=False), candidates)
+        except Exception as exc:
+            up = as_upstream(exc)
+            if up is not None:
+                raise up from exc
+            raise
+        report["truncated"] = truncated
+        report["recorded"] = None
+        if record:
+            if not self._lock.acquire(blocking=False):
+                raise AuditBusy("An audit is already running; try again when it has finished, or run the check without recording.")
+            try:
+                try:
+                    run_id = self.ledger.start_run("scoped", "deletion-check", scope, stale_after=self._stale_after())
+                except RunInProgress as exc:
+                    raise AuditBusy(str(exc)) from exc
+                try:
+                    diff = self.ledger.apply_run(run_id, result.findings, result.summaries, scope)
+                    self.ledger.finish_run(run_id, "completed", {**result.stats, "deletion_check": report["summary"],
+                                                                 "diff": diff.to_json(), "scope": scope.to_json()})
+                except Exception as exc:
+                    self.ledger.finish_run(run_id, "failed", {}, error=f"{type(exc).__name__}: {scrub(str(exc), 300)}")
+                    raise
+                report["recorded"] = {"run_id": run_id, **diff.to_json()}
+            finally:
+                self._lock.release()
+        return report
 
     def isolation(self) -> dict[str, Any]:
         """Tenant isolation as of the latest full audit, with the open findings behind it."""
