@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html as html_lib
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
@@ -31,6 +32,23 @@ EMAIL_WHEN = ("always", "attention", "never")
 PRODUCT = "RAGGuard"
 # the only endpoints a "post" action may call, and what each does (the app's buttons rely on this list)
 POST_TARGETS = {"/api/audits": "start or resume an audit", "/api/deletion-check": "check that deleted documents are really gone"}
+TOO_LARGE = "too_large_for_one_go"  # a whole-index read that ran out of the host's time limit: the audit's `failure.kind`
+
+
+def too_large_steps(source_only: bool) -> list[str]:
+    """What a person does about an index too big to read within the host's time limit, in plain words and in order."""
+    index = ("Step 1: Ask whoever runs your Qdrant to add a keyword index on the field that holds the document ID "
+             "(without it, every piece of the audit reads the whole index).")
+    if source_only:
+        return [index,
+                "Step 2: If that index is already there, the pieces are too big for the time limit: ask the operator of this RAGGuard "
+                "to lower the piece size (RAGI_AUDIT_SLICE_DOCUMENTS).",
+                "Step 3: Run the audit again and keep the page open."]
+    return [index,
+            "Step 2: Open Settings, then Policy, and turn on 'Only audit documents found in the source (S3)'. The audit then runs in "
+            "small pieces and saves after each one.",
+            "Step 3: Run the audit again and keep the page open. It carries on by itself until it is done.",
+            "Or, if you run RAGGuard yourself: start `ragi worker` on a server. It has no time limit and needs neither step 1 nor step 2."]
 
 
 @dataclass
@@ -82,6 +100,20 @@ def compose(*, run_id: str, kind: str, trigger: str, status: str, stats: dict[st
     run_link = action("open_run", "See the run", "link", f"/audit-history/{run_id}")
     if status == "failed":
         reason = scrub(error or "the audit could not finish", 300)
+        failure = stats.get("failure") or {}
+        if failure.get("kind") == TOO_LARGE:  # running it again would fail the same way: say what to change instead
+            source_only, paused = bool(failure.get("source_only")), bool(failure.get("paused"))
+            read = re.search(r"after ([\d,]+) items", reason)
+            body = (f"The audit ran out of time while reading your vector index{f' (after {read.group(1)} items)' if read else ''}: "
+                    "it is too big to read in one go here. "
+                    + ("Running it again would fail the same way, so the audit is paused until you change the setup below."
+                       if paused else "Running it again will not help until the setup changes."))
+            first = (action("open_connections", "Check connections", "link", "/data-sources", primary=True) if source_only
+                     else action("open_policy", "Open audit policy settings", "link", "/settings?tab=policy", primary=True))
+            return Notification(
+                "audit_failed", "critical",
+                ("Audit paused" if paused else "Audit failed") + ": your index is too big to read in one go", body,
+                details=too_large_steps(source_only), actions=[first, run_link], attention=True)
         return Notification(
             "audit_failed", "critical", "Audit failed", f"{reason} Run it again, or check that your connections still work.",
             actions=[action("run_audit", "Run it again", "post", "/api/audits", body={}, primary=True),

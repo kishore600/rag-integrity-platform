@@ -93,6 +93,7 @@ resumable (see below). For a very large index, or for audits nobody watches, run
 |---|---|
 | Resumable audit | *Only audit documents found in the source (S3)* is on (GUIDE 3.12). An audit that reads the whole index is one pass: a worker runs it in one go with no time limit, but a crash starts it again. |
 | Qdrant | Every slice filters by document id. Without a keyword payload index on that field a filtered scroll costs about one pass over the collection (measured, GUIDE 3.12): ask whoever runs your Qdrant to create one. |
+| An index too big for the host | A whole-index read that ran out of the host's time limit fails the same way every time, so the audit is **paused** (Run audit is switched off, `POST /api/audits` answers `409`) and the alert says what to change (GUIDE 3.12). A worker on a server has no limit: **Run it anyway** (`force: true`) queues the audit for it. |
 | Queue mode | `RAGI_AUDIT_QUEUE=true`. Only whole-corpus audits are queued; a tenant or a few documents is small and runs in the request. Without it, **Run audit** works as before and only a person (or a call with `resume: true`) continues a partial audit. |
 | Each stretch | Starts by reading the source and the manifest again, then the next slice after the checkpoint. |
 | A worker that keeps failing | A stretch that made no progress three times in a row (the index stays unreachable) is not queued again: the audit stays `partial` and `resumable_audit` shows it, for a person to resume. |

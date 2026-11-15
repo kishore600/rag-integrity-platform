@@ -13,10 +13,13 @@ export function useRunAudit() {
   const start = useStartAudit();
   const connected = session ? (session.app ? !!session.ready : true) : false;
   const running = start.isPending || !!overview.data?.audit_running;
+  // the last whole audit ran out of time on an index too big for this host: a new one would fail the same way, so it waits for the fix
+  const paused = !!overview.data?.audit_pause;
 
   /** `onStarted` runs once the server has accepted the request (a notification uses it to remember that its button was pressed). */
   function run(req: AuditRequest = {}, opts: { onStarted?: () => void } = {}) {
     if (running) return;
+    if (paused && !req.force && !req.tenant && !req.documents) return; // a tenant or a few documents is small: it goes ahead
     const id = toast.loading("Running audit…", { description: "Comparing your source with your vector index" });
     start.mutate(req, {
       onSuccess: (r) => {
@@ -37,6 +40,12 @@ export function useRunAudit() {
     });
   }
 
-  const disabledReason = !connected ? "Connect your data sources first" : running ? "An audit is already running" : null;
-  return { run, running, connected, disabledReason };
+  const disabledReason = !connected
+    ? "Connect your data sources first"
+    : running
+      ? "An audit is already running"
+      : paused
+        ? "Paused: your index is too big to read in one go. The Overview page says what to change."
+        : null;
+  return { run, running, connected, paused, disabledReason };
 }

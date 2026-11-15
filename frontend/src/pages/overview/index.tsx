@@ -14,6 +14,7 @@ import { DocumentStatusCard, IssuesByTypeCard } from "./breakdowns";
 import { HealthTrendCard, SeverityCard } from "./charts";
 import { ConnectionHealthCard, LastAuditCard, TenantHealthCard, TopIssuesCard } from "./lists";
 import { OnboardingCard } from "./onboarding";
+import { PauseNotice } from "./pause-notice";
 import { Banner, RunAuditButton, capitalize } from "./ui";
 
 export default function OverviewPage() {
@@ -48,11 +49,17 @@ function Dashboard({ o }: { o: Overview }) {
 
   const progress = o.audit_progress;
   const needsHelp = progress?.state === "waiting_for_worker" || progress?.state === "silent";
-  const banner = o.audit_running ? (
+  const running = o.audit_running ? (
     <Banner tone={needsHelp ? "warning" : "info"}>
       {progress?.message ?? "An audit is running."} {needsHelp ? "" : "This page updates when it finishes."}
     </Banner>
   ) : null;
+  const banner = (
+    <>
+      {o.audit_pause && !o.audit_running ? <PauseNotice pause={o.audit_pause} /> : null}
+      {running}
+    </>
+  );
 
   if (!run) {
     return (

@@ -13,7 +13,7 @@ from typing import Any
 
 from . import alerts, notifications, plan_mail, report
 from .config import Settings, get_settings
-from .connectors.base import ConnectorError, UpstreamError
+from .connectors.base import AuditTimeout, ConnectorError, UpstreamError
 from .connectors.factory import Connectors, build_connectors
 from .demo.world import DemoWorld
 from .engine.audit import AuditOptions, PartialAudit, SliceResult, inspect_document, run_reconciliation
@@ -61,6 +61,10 @@ def as_upstream(exc: BaseException) -> UpstreamError | None:
 
 class AuditBusy(RuntimeError):
     pass
+
+
+class AuditPaused(AuditBusy):
+    """A whole audit is refused because the last one ran out of time reading an index too big for this host, and nothing has changed."""
 
 
 @dataclass
@@ -244,6 +248,10 @@ class IntegrityService:
             if isinstance(snap, dict):
                 failed_stats["scan"] = snap
             reason = str(up) if up else f"{type(exc).__name__}: {scrub(str(exc), 500)}"
+            if isinstance(exc, AuditTimeout):
+                # an index too big to read in the host's time limit: running it again fails the same way, so say what to change
+                failed_stats["failure"] = {"kind": notifications.TOO_LARGE, "source_only": bool(self.settings.source_documents_only),
+                                           "paused": kind == "full" and self._pausable()}
             failed_stats["notifications"] = self._announce(run_id, kind, trigger, "failed", failed_stats, diff, error=reason)
             self.ledger.finish_run(run_id, "failed", failed_stats, error=reason)
             if up is not None:
@@ -276,13 +284,14 @@ class IntegrityService:
         return kind or ("full" if scope is None or scope.is_full else "scoped")
 
     def run_audit(self, scope: Scope | None = None, trigger: str = "manual", kind: str | None = None,
-                  probe: bool | None = None, resume: bool = False) -> AuditResult:
+                  probe: bool | None = None, resume: bool = False, force: bool = False) -> AuditResult:
         if not self._lock.acquire(blocking=False):
             raise AuditBusy("An audit is already running.")
         try:
             kind = self._kind(scope, kind)
             _ = self.connectors  # a misconfigured or incomplete setup fails here, before a run row is created
             self._refuse_while_queued(scope)
+            self._refuse_while_paused(scope, force)
             info = self._resume_info() if (resume and scope is None) else None  # (before the run row: it must not hide the checkpoint)
             try:
                 run_id = self.ledger.start_run(kind, trigger, scope, stale_after=self._stale_after())
@@ -293,15 +302,16 @@ class IntegrityService:
             self._lock.release()
 
     def start_audit_async(self, scope: Scope | None = None, trigger: str = "manual", probe: bool | None = None,
-                          resume: bool = False) -> str:
+                          resume: bool = False, force: bool = False) -> str:
         if self.settings.run_audits_inline:  # serverless: a background thread would be frozen with the instance
-            return self.run_audit(scope=scope, trigger=trigger, probe=probe, resume=resume).run_id
+            return self.run_audit(scope=scope, trigger=trigger, probe=probe, resume=resume, force=force).run_id
         if not self._lock.acquire(blocking=False):
             raise AuditBusy("An audit is already running.")
         try:
             kind = self._kind(scope, None)
             _ = self.connectors  # fail early (and without a run row) when setup is incomplete
             self._refuse_while_queued(scope)
+            self._refuse_while_paused(scope, force)
             info = self._resume_info() if (resume and scope is None) else None
             run_id = self.ledger.start_run(kind, trigger, scope, stale_after=self._stale_after())
         except RunInProgress as exc:
@@ -340,10 +350,42 @@ class IntegrityService:
         if (scope is None or scope.keys is None) and any(r["status"] == "queued" for r in self.ledger.active_runs()):
             raise AuditBusy("An audit is already waiting for a worker to carry it out.")
 
-    def enqueue_audit(self, trigger: str = "api", probe: bool | None = None, resume: bool = False) -> str:
+    # ------------------------------------------------------------------ paused: an index too big for this host's time limit
+    def _pausable(self) -> bool:
+        """Only a host with a time limit pauses, and only while the audit cannot run in pieces (the "only audit the source" setting
+        is off): turning it on is the first thing that lifts the pause. ``ragi audit`` on a machine without a limit never pauses."""
+        return bool(self.settings.audit_seconds_limit) and not self.settings.source_documents_only
+
+    def audit_pause(self) -> dict[str, Any] | None:
+        """Set while the last whole audit failed for being too big to read in one go here and nothing has changed since: running it
+        again would read the customer's whole index for minutes and fail the same way. None when there is nothing to pause."""
+        if not self._pausable():
+            return None
+        for r in self.ledger.list_runs(limit=10, kind="full"):
+            if r["status"] in ("running", "queued"):
+                continue  # someone is already running it (a forced run): the last finished one still decides
+            if r["status"] == "failed" and ((r.get("stats") or {}).get("failure") or {}).get("kind") == notifications.TOO_LARGE:
+                steps = notifications.too_large_steps(False)
+                return {"run_id": r["id"], "since": r.get("finished_at"), "steps": steps,
+                        "message": "Audit paused: the last audit ran out of time reading your index, which is too big to read in one go "
+                                   "here. Running it again would fail the same way. " + " ".join(steps)}
+            return None  # the last finished whole audit was fine (or only stopped part-way): nothing to pause
+        return None
+
+    def _refuse_while_paused(self, scope: Scope | None, force: bool) -> None:
+        """A whole-corpus audit waits while paused. A tenant or a few documents is small and goes ahead, as does ``force``
+        (for a worker on a server, which has no time limit)."""
+        if force or not (scope is None or scope.is_full):
+            return
+        paused = self.audit_pause()
+        if paused:
+            raise AuditPaused(paused["message"])
+
+    def enqueue_audit(self, trigger: str = "api", probe: bool | None = None, resume: bool = False, force: bool = False) -> str:
         """Queue a whole-corpus audit for a worker instead of running it here (``RAGI_AUDIT_QUEUE``). A worker (``ragi worker``) or
         a call to ``POST /api/worker/step`` carries it out, and carries on after every pause until it is done."""
         _ = self.connectors  # a misconfigured or incomplete setup fails now, not an hour later in a worker
+        self._refuse_while_paused(None, force)
         self.ledger.retire_stale_runs(self._stale_after())
         if self.ledger.active_runs():
             raise AuditBusy("An audit is already running, or waiting for a worker.")
@@ -475,7 +517,7 @@ class IntegrityService:
             "mode": self.settings.mode, "demo": self.settings.is_demo, "documents": docs,
             "issues": self.ledger.issue_counts(), "latest_run": latest[0] if latest else None,
             "latest_full_run": full[0] if full else None, "trend": trend, "audit_running": self.audit_running,
-            "audit_progress": self.audit_progress(), "audit_queue": self.settings.audit_queue,
+            "audit_progress": self.audit_progress(), "audit_queue": self.settings.audit_queue, "audit_pause": self.audit_pause(),
             "query_log_size": self.ledger.query_count(),
             "target_fingerprint": (self.settings.target_fingerprint().to_dict() if self.settings.target_fingerprint() else None),
             "scheduler_interval_minutes": self.settings.audit_interval_minutes,
