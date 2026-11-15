@@ -39,6 +39,7 @@ Then deploy: `npx vercel deploy --prod` (or push to `main`: the GitHub repo is c
 | `RAGI_ALLOW_REGISTRATION` | `true` | set `false` to close sign-up once your team has accounts (there is no email verification) |
 | `RAGI_ALLOW_PRIVATE_HOSTS` | `false` | leave off on a public deployment: it is the SSRF guard |
 | `RAGI_SESSION_DAYS` | `7` | |
+| `RAGI_ADMIN_EMAILS` | empty | comma-separated sign-in emails that may open the admin dashboard (`/admin`); see below |
 | `RAGI_MAX_AUDIT_SECONDS` | 50 on Vercel | an audit that runs longer stops with a clear message |
 
 ## Serverless behaviour you should know about
@@ -79,3 +80,16 @@ ragi users delete someone@example.com --yes   # removes the user and everything 
 ```
 
 Roll back a bad deploy with `npx vercel promote <previous-deployment-url>`.
+
+### The admin dashboard
+
+`/admin` shows every account (when it signed up, when it was last active, which systems it has saved, how many audits it ran)
+and the latest 200 audits across all workspaces, plus a sign-up to first-audit funnel. It is read-only and never shows
+passwords, keys, connection details, IP addresses or browser strings.
+
+1. Sign up on the live site with the email you want to use as the admin.
+2. In Vercel, set `RAGI_ADMIN_EMAILS` to that email (several are comma-separated) and redeploy.
+3. Sign in again. **Admin** appears at the bottom of the left menu.
+
+Order matters: sign-up does not verify email addresses, so a listed email can no longer be registered through the sign-up
+form (it answers as if the address were taken). Anyone not listed, and every API key, gets a 404 from `/api/admin/*`.

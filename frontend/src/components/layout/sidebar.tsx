@@ -3,7 +3,7 @@ import { Logo } from "@/components/brand/logo";
 import { cn } from "@/lib/cn";
 import { formatNumber } from "@/lib/format";
 import { useOverview, useSession } from "@/hooks/queries";
-import { HELP_ITEM, NAV, type NavItem } from "./nav";
+import { ADMIN_ITEM, HELP_ITEM, NAV, type NavItem } from "./nav";
 
 function MenuLink({ item, open, onNavigate }: { item: NavItem; open?: number; onNavigate?: () => void }) {
   return (
@@ -52,8 +52,10 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           ))}
         </div>
         {/* help about the product, set apart from its pages */}
-        <div className="mt-3 border-t border-white/5 pt-3">
+        <div className="mt-3 space-y-0.5 border-t border-white/5 pt-3">
           <MenuLink item={HELP_ITEM} onNavigate={onNavigate} />
+          {/* the operator's dashboard, only for emails in RAGI_ADMIN_EMAILS (the server refuses everyone else too) */}
+          {session?.user?.admin ? <MenuLink item={ADMIN_ITEM} onNavigate={onNavigate} /> : null}
         </div>
       </nav>
 

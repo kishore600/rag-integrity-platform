@@ -1,4 +1,4 @@
-import { Bell, BookOpen, Database, FileText, GitCompareArrows, History, LayoutDashboard, Lock, Plug, Settings, ShieldAlert, type LucideIcon } from "lucide-react";
+import { Bell, BookOpen, Database, FileText, GitCompareArrows, History, LayoutDashboard, Lock, Plug, Settings, ShieldAlert, UserCog, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   to: string;
@@ -27,3 +27,6 @@ export const NAV: NavItem[] = [
  * its pages (the account menu has the same link). `/help` is public, so the landing page links to it too.
  */
 export const HELP_ITEM: NavItem = { to: "/help", label: "Help and user guide", icon: BookOpen };
+
+/** The operator's dashboard of every account and audit. Shown only to emails listed in RAGI_ADMIN_EMAILS. */
+export const ADMIN_ITEM: NavItem = { to: "/admin", label: "Admin", icon: UserCog };

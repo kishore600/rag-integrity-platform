@@ -75,6 +75,7 @@ If you email us, for example with **Book a free audit**, we receive your email a
 - To run the audits you start or schedule, show the results and prepare repair plans.
 - To send what you set up: alerts to your webhook, repair requests to your worker, and audit alert emails.
 - To protect the service: stop password guessing, look into abuse and fix errors.
+- To see how the service is used. Our admin dashboard shows each account's email address, when it signed up and was last active, which kinds of systems it has saved (not their details), and a summary of its audits. It never shows passwords, keys, connection details or IP addresses.
 - To answer your messages and give you the free audit you asked for.
 
 We do not sell your data, use it for advertising, or use your content to train AI models.

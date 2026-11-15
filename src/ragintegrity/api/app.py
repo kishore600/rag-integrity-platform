@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..accounts import AccountError, Accounts
+from ..admin import AdminView
 from ..config import Settings, get_settings
 from ..connectors.base import ConnectorError, SetupIncomplete, UpstreamError
 from ..engine.audit import AuditTimeout
@@ -357,6 +358,17 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
             raise HTTPException(403, "This action needs a signed-in session, not an API key.")
         return p
 
+    def admin_only(request: Request) -> AdminView:
+        """The admin dashboard: a signed-in session (never an API key) whose email is in RAGI_ADMIN_EMAILS. Anyone else
+        gets the same 404 as an unknown address, so the dashboard does not advertise itself."""
+        if state is None or not settings.admin_email_set:  # single-user modes, or nobody is an admin
+            raise HTTPException(404, "Not Found")
+        p = session_only(request)
+        if not settings.is_admin(p.email):
+            raise HTTPException(404, "Not Found")
+        assert state is not None and state.ledger is not None
+        return AdminView(state.ledger)
+
     def get_svc(request: Request) -> IntegrityService:
         if not multi:
             require_key(request)
@@ -400,7 +412,7 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
                "setup": {"required": False}, "user": None}
         if p is not None and p.via == "session":
             assert state.manager is not None and state.accounts is not None
-            out["user"] = {"email": p.email}
+            out["user"] = {"email": p.email, "admin": settings.is_admin(p.email)}
             out["workspace"] = {"name": state.accounts.workspace_name(p.workspace_id) or "Workspace"}
             out["ready"] = state.manager.is_ready(p.workspace_id)
         return out
@@ -426,6 +438,11 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
         ip = client_ip(request)
         if not st.accounts.hit(f"register:ip:{ip}", 5, 3600):
             raise HTTPException(429, "Too many sign-ups from your network. Try again later.")
+        # Sign-up does not verify email addresses, so an admin address that nobody has registered yet could otherwise be
+        # claimed by a stranger. Admin accounts are registered first and listed afterwards. The answer is the same as for a
+        # taken address, so it does not reveal which addresses are admins.
+        if settings.is_admin(body.email):
+            raise HTTPException(409, "An account with that email already exists.")
         user = st.accounts.register(body.email, body.password)
         token, _ = st.accounts.create_session(user["id"], user["workspace_id"], ip, request.headers.get("user-agent"))
         set_session_cookie(request, response, token)
@@ -504,6 +521,19 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
         return {"ok": True}
 
     # ------------------------------------------------------------------ overview / connections
+    # ------------------------------------------------------------------ admin dashboard (app mode, RAGI_ADMIN_EMAILS only)
+    @app.get("/api/admin/overview", include_in_schema=False)
+    def admin_overview(a: AdminView = Depends(admin_only)) -> dict[str, Any]:
+        return a.overview()
+
+    @app.get("/api/admin/users", include_in_schema=False)
+    def admin_users(a: AdminView = Depends(admin_only)) -> list[dict[str, Any]]:
+        return a.users()
+
+    @app.get("/api/admin/audits", include_in_schema=False)
+    def admin_audits(limit: int = Query(100, ge=1, le=500), a: AdminView = Depends(admin_only)) -> list[dict[str, Any]]:
+        return a.audits(limit)
+
     @app.get("/api/overview")
     def overview(s: IntegrityService = Depends(get_svc)) -> dict[str, Any]:
         return s.overview()

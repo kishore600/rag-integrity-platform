@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     allow_registration: bool = True  # False closes sign-up (existing users can still log in)
     allow_private_hosts: bool = False  # True lets users point connectors at private/loopback hosts (self-hosting only)
     session_days: int = 7
+    # comma-separated sign-in emails that may open the admin dashboard (/admin): every account and every audit, read-only.
+    # Sign up first, then add the address: a listed email can no longer be registered through the public sign-up form.
+    admin_emails: str = ""
     max_audit_seconds: int = 0  # abort an audit that runs longer (0 = no limit; 50 s is implied on serverless)
     database_url: str = "sqlite:///./data/ragi.db"  # control plane / issue ledger (Supabase Postgres in prod)
     api_key: str | None = None  # if set, /api/* requires it (X-API-Key or Bearer)
@@ -170,6 +173,14 @@ class Settings(BaseSettings):
     @property
     def required_fields(self) -> list[str]:
         return [c.strip() for c in self.required_payload_fields.split(",") if c.strip()]
+
+    @property
+    def admin_email_set(self) -> frozenset[str]:
+        """The admin emails, trimmed and lower-cased the way sign-up stores them."""
+        return frozenset(e.strip().lower() for e in self.admin_emails.split(",") if e.strip())
+
+    def is_admin(self, email: str | None) -> bool:
+        return bool(email) and email.strip().lower() in self.admin_email_set
 
     @staticmethod
     def _json_map(raw: str, what: str) -> dict[str, Any]:

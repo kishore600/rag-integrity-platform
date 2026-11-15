@@ -25,6 +25,9 @@ directly (reading, modifying, ignoring, resolving, resetting and hijacking a pla
 
 ## Customer credentials
 
+* The admin dashboard (`/admin`, `/api/admin/*`) is open only to a signed-in session whose email is in `RAGI_ADMIN_EMAILS`;
+  API keys never open it and everyone else gets a 404. It is read-only and returns no secrets, settings values, IP addresses or
+  browser strings. A listed email cannot be registered through the sign-up form, because sign-up does not verify addresses.
 * S3 keys, database URLs, Qdrant keys, the alert webhook URL, the repair signing secret and the SMTP password are encrypted with Fernet (AES-128-CBC + HMAC-SHA256) under
   `RAGI_SECRET_KEY` before they reach the database. The key exists only in the server environment. Rotate by setting
   `RAGI_SECRET_KEY="<new>,<old>"`: the first encrypts, all decrypt.

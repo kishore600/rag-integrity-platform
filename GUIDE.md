@@ -1324,6 +1324,7 @@ Install with `pip install -e ".[dev]"`; the command is `ragi`.
 | `RAGI_ALLOW_REGISTRATION` | `true` | `false` closes sign-up. |
 | `RAGI_ALLOW_PRIVATE_HOSTS` | `false` | `true` lets users point connectors at private addresses (self-hosting only). It is the SSRF guard. |
 | `RAGI_SESSION_DAYS` | `7` | session lifetime (sliding). |
+| `RAGI_ADMIN_EMAILS` | empty | comma-separated sign-in emails that may open the admin dashboard `/admin` (every account and audit, read-only). Sign up first, then list the email: a listed email cannot be registered through the sign-up form. |
 | `RAGI_MAX_AUDIT_SECONDS` | `0` | audit time budget; `0` is unlimited, and 270 is implied on serverless. |
 | `RAGI_SYNC_AUDITS` | `false` | run audits inside the request (implied on Vercel). |
 | `RAGI_AUDIT_QUEUE` | `false` | `true`: `POST /api/audits` only queues a whole-corpus audit; `ragi worker` or `POST /api/worker/step` runs it and carries it on after every pause (3.17). |
@@ -1426,7 +1427,9 @@ GitHub (main) ──push──> Vercel auto-deploy;   GitHub Actions: tests (3.1
 
 ### 14.4 Day-to-day
 - **Roll back**: `npx vercel promote <previous-deployment-url>`.
-- **Users**: `ragi users list`, `ragi users delete someone@example.com --yes`.
+- **Users**: `ragi users list`, `ragi users delete someone@example.com --yes`, or the **Admin** page (`/admin`) for emails listed in
+  `RAGI_ADMIN_EMAILS`: every account with its sign-up and last-active times, saved systems and audits, the latest 200 audits across all
+  workspaces, and a sign-up to first-audit funnel. API keys never open it, and it shows no secrets, IP addresses or settings values.
 - **Close sign-up**: set `RAGI_ALLOW_REGISTRATION=false`.
 - **Rotate the secret key**: set `RAGI_SECRET_KEY` to `new,old`, redeploy; stored secrets keep working and new saves use the new key.
 - **Scheduled audits**: serverless has no scheduler. Create an API key on Integrations and call `POST /api/audits` from GitHub Actions or cron.

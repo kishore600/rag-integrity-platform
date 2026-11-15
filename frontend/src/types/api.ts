@@ -26,11 +26,49 @@ export interface Session {
   authenticated: boolean;
   registration_open?: boolean;
   setup?: { required: boolean; problems?: string[] };
-  user?: { email: string } | null;
+  user?: { email: string; admin?: boolean } | null; // admin: listed in RAGI_ADMIN_EMAILS, so /admin is open
   workspace?: { name: string };
   ready?: boolean; // all three required connections are configured
   demo?: boolean; // single-user demo backend (synthetic data)
   api_key_required?: boolean;
+}
+
+/** The admin dashboard (GET /api/admin/*): every account and audit of a hosted server, read-only, no secrets. */
+export interface AdminOverview {
+  generated_at: string;
+  users: { total: number; new_7d: number; new_30d: number; active_7d: number };
+  funnel: { signed_up: number; connected: number; audited: number };
+  audits: { total: number; last_7d: number; failed_7d: number; running: number };
+  daily: { date: string; signups: number; audits: number; failed: number }[];
+}
+
+export interface AdminUser {
+  email: string;
+  workspace: string;
+  created_at: string | null;
+  last_login_at: string | null;
+  last_active_at: string | null;
+  systems: string[]; // saved settings groups, e.g. ["pgvector", "s3"]; never their values
+  connected: boolean; // a source and an index are saved, so an audit can run
+  audits: number;
+  audits_failed: number;
+  last_audit: { status: AuditRun["status"]; started_at: string | null; health_score: number | null; documents: number | null; findings: number | null } | null;
+}
+
+export interface AdminAudit {
+  id: string;
+  kind: AuditRun["kind"];
+  trigger: string;
+  status: AuditRun["status"];
+  email: string | null;
+  workspace: string;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_seconds: number | null;
+  documents: number | null;
+  findings: number | null;
+  health_score: number | null;
+  error: string | null;
 }
 
 /** An ID problem the audit noticed but could not resolve: it still ran, and its findings are valid (GUIDE.md section 3.4). */
