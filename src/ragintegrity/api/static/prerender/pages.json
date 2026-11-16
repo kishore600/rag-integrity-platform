@@ -1,0 +1,172 @@
+{
+  "/": {
+    "file": "home.html",
+    "title": "RAGGuard: know when your RAG index is wrong, before your users do",
+    "description": "RAGGuard checks that a RAG (retrieval-augmented generation) index matches its source documents. It compares the files in Amazon S3 with a Qdrant or pgvector index, and optionally the ingestion pipeline's own records, and reports missing, stale, half-indexed, duplicate, empty, deleted-but-still-searchable and wrong-tenant chunks, with the evidence and a safe fix. It only reads your systems. Free during the beta."
+  },
+  "/guides": {
+    "file": "guides.html",
+    "title": "Guides: keep your RAG index in sync with your source documents · RAGGuard",
+    "description": "Eight silent ways a RAG index drifts away from its source documents, with a copy-paste check for each: SQL for pgvector, and the same idea for Qdrant."
+  },
+  "/guides/catch-chunks-tagged-with-the-wrong-tenant": {
+    "file": "guides__catch-chunks-tagged-with-the-wrong-tenant.html",
+    "title": "Catch chunks tagged with the wrong tenant · RAGGuard",
+    "description": "In a multi-tenant RAG app, one chunk with the wrong tenant tag can show one customer's content to another. Compare every chunk's tenant with its source file's tenant."
+  },
+  "/guides/detect-stale-embeddings-after-a-document-changes": {
+    "file": "guides__detect-stale-embeddings-after-a-document-changes.html",
+    "title": "Detect stale embeddings after a document changes · RAGGuard",
+    "description": "When a source file changes but its chunks do not, your RAG app keeps answering from the old version. Store the file's hash on every chunk and compare."
+  },
+  "/guides/find-documents-missing-from-your-vector-index": {
+    "file": "guides__find-documents-missing-from-your-vector-index.html",
+    "title": "Find documents missing from your vector index · RAGGuard",
+    "description": "A file can sit in your bucket while nothing about it is searchable. Compare the documents in storage with the documents in your index to find them."
+  },
+  "/guides/find-documents-with-two-versions-in-the-index": {
+    "file": "guides__find-documents-with-two-versions-in-the-index.html",
+    "title": "Find documents with two versions in the index · RAGGuard",
+    "description": "The new version of a document was indexed, but the old chunks were never deleted, so both versions answer questions. Count the distinct versions per document."
+  },
+  "/guides/find-duplicate-chunks-from-retried-ingestion": {
+    "file": "guides__find-duplicate-chunks-from-retried-ingestion.html",
+    "title": "Find duplicate chunks from retried ingestion · RAGGuard",
+    "description": "A retried ingestion job can write the same chunk twice. Duplicates crowd other content out of the top results and skew answers. Group by document and position to find them."
+  },
+  "/guides/find-empty-or-all-zero-vectors": {
+    "file": "guides__find-empty-or-all-zero-vectors.html",
+    "title": "Find empty or all-zero vectors · RAGGuard",
+    "description": "A failed embedding call can leave a chunk with no vector or a vector of zeros. Such a chunk can never be found by search. Check the vector's length."
+  },
+  "/guides/find-half-indexed-documents": {
+    "file": "guides__find-half-indexed-documents.html",
+    "title": "Find half-indexed documents · RAGGuard",
+    "description": "An ingestion worker can die after writing only some of a document's chunks. Store the expected chunk count on every chunk and look for gaps."
+  },
+  "/guides/make-sure-deleted-documents-are-not-still-searchable": {
+    "file": "guides__make-sure-deleted-documents-are-not-still-searchable.html",
+    "title": "Make sure deleted documents are not still searchable · RAGGuard",
+    "description": "Deleting a file from storage does not delete its vectors. Find chunks whose source file no longer exists, then prove whether a search can still return them."
+  },
+  "/guides/use-ragguard-from-your-ai-assistant": {
+    "file": "guides__use-ragguard-from-your-ai-assistant.html",
+    "title": "Use RAGGuard from your AI assistant · RAGGuard",
+    "description": "Let Claude Code, Cursor, Copilot or any MCP-capable assistant check your RAG index for you: a rule to paste into your project, an MCP server, and a command your assistant can run."
+  },
+  "/help": {
+    "file": "help.html",
+    "title": "Help and user guide · RAGGuard",
+    "description": "The RAGGuard user guide: what every page, field and value means and what to do next, with a six-minute walkthrough video."
+  },
+  "/help/01-getting-started": {
+    "file": "help__01-getting-started.html",
+    "title": "Getting started · Help · RAGGuard",
+    "description": "What the product does, what you need, a 10-minute quick start, the landing page"
+  },
+  "/help/02-concepts": {
+    "file": "help__02-concepts.html",
+    "title": "Concepts you need · Help · RAGGuard",
+    "description": "Source, manifest, index, tenant, chunk, audit, issue, severity, health score, and the rest"
+  },
+  "/help/03-interface-and-sign-in": {
+    "file": "help__03-interface-and-sign-in.html",
+    "title": "Sign in and find your way around · Help · RAGGuard",
+    "description": "Sign-up and sign-in, the sidebar, the top bar, search, notifications, the account menu, phones"
+  },
+  "/help/04-data-sources": {
+    "file": "help__04-data-sources.html",
+    "title": "Connect your data sources · Help · RAGGuard",
+    "description": "Every field for Amazon S3, the PostgreSQL manifest and Qdrant, and what each connection test checks"
+  },
+  "/help/05-overview": {
+    "file": "help__05-overview.html",
+    "title": "Overview · Help · RAGGuard",
+    "description": "The health score, the cards, the charts and the lists"
+  },
+  "/help/06-reconciliation": {
+    "file": "help__06-reconciliation.html",
+    "title": "Reconciliation · Help · RAGGuard",
+    "description": "The three-way comparison, scoped audits, exports, the documents table"
+  },
+  "/help/07-integrity-issues": {
+    "file": "help__07-integrity-issues.html",
+    "title": "Integrity issues · Help · RAGGuard",
+    "description": "Filtering and reading issues, the issue panel, ignoring, and all 11 issue types"
+  },
+  "/help/08-repair-plans": {
+    "file": "help__08-repair-plans.html",
+    "title": "Repair plans · Help · RAGGuard",
+    "description": "Recommended work, plans, the repair webhook flow, verification and cleanup"
+  },
+  "/help/09-impact-analysis": {
+    "file": "help__09-impact-analysis.html",
+    "title": "Impact analysis · Help · RAGGuard",
+    "description": "What-if analysis for open issues, pipeline changes and ingestion failures"
+  },
+  "/help/10-documents": {
+    "file": "help__10-documents.html",
+    "title": "Documents · Help · RAGGuard",
+    "description": "Every document, its embedding status, live inspection of its chunks"
+  },
+  "/help/11-audit-history": {
+    "file": "help__11-audit-history.html",
+    "title": "Audit history · Help · RAGGuard",
+    "description": "Every audit, run detail pages, the activity log"
+  },
+  "/help/12-integrations": {
+    "file": "help__12-integrations.html",
+    "title": "Integrations · Help · RAGGuard",
+    "description": "The repair webhook and API keys"
+  },
+  "/help/13-alerts": {
+    "file": "help__13-alerts.html",
+    "title": "Alerts · Help · RAGGuard",
+    "description": "Webhook alerts, when they fire, and delivery history"
+  },
+  "/help/14-settings": {
+    "file": "help__14-settings.html",
+    "title": "Settings · Help · RAGGuard",
+    "description": "Account, target pipeline, audit policy, security, team and billing"
+  },
+  "/help/15-end-to-end-journey": {
+    "file": "help__15-end-to-end-journey.html",
+    "title": "End-to-end journey · Help · RAGGuard",
+    "description": "One continuous walkthrough from nothing to a verified fix"
+  },
+  "/help/16-use-cases": {
+    "file": "help__16-use-cases.html",
+    "title": "Practical use cases · Help · RAGGuard",
+    "description": "Nightly audits, model changes, outages, user reports, cost control and more"
+  },
+  "/help/17-reference": {
+    "file": "help__17-reference.html",
+    "title": "Reference: every value · Help · RAGGuard",
+    "description": "Lookup tables for every status, badge, severity, event, limit and term"
+  },
+  "/help/18-troubleshooting": {
+    "file": "help__18-troubleshooting.html",
+    "title": "Troubleshooting · Help · RAGGuard",
+    "description": "Symptoms, causes and fixes"
+  },
+  "/help/19-video-walkthrough": {
+    "file": "help__19-video-walkthrough.html",
+    "title": "The video walkthrough · Help · RAGGuard",
+    "description": "A six-minute narrated demo of the Documents and Isolation pages, with timestamps and captions"
+  },
+  "/help/20-isolation": {
+    "file": "help__20-isolation.html",
+    "title": "Isolation · Help · RAGGuard",
+    "description": "Whether one tenant's content can reach another: banner, checks, tenants, the drill and the evidence report (this page sits right after Integrity Issues in the menu)"
+  },
+  "/privacy": {
+    "file": "privacy.html",
+    "title": "Privacy Policy · RAGGuard",
+    "description": "What the hosted RAGGuard service collects, why, who else handles it, how long it is kept and your rights."
+  },
+  "/terms": {
+    "file": "terms.html",
+    "title": "Terms of Service · RAGGuard",
+    "description": "The terms for using the hosted RAGGuard service during its free beta."
+  }
+}

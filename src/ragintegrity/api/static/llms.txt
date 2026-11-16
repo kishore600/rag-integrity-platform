@@ -1,0 +1,52 @@
+# RAGGuard
+
+> RAGGuard checks that a RAG (retrieval-augmented generation) index matches its source documents. It compares the files in Amazon S3 with a Qdrant or pgvector index, and optionally the ingestion pipeline's own records, and reports missing, stale, half-indexed, duplicate, empty, deleted-but-still-searchable and wrong-tenant chunks, with the evidence and a safe fix. It only reads your systems. Free during the beta.
+
+RAGGuard is a hosted web app with an HTTP API, a command-line tool (`ragguard`) and an MCP server, so AI coding assistants can run its checks. It never writes to your storage or index: fixes go to your own worker as signed requests, and old vectors are removed only after you approve, unless you switch on automatic clean-up.
+
+## Guides
+
+- [Guides: keep your RAG index in sync with your source documents]({BASE}/guides): Eight silent ways a RAG index drifts away from its source documents, with a copy-paste check for each: SQL for pgvector, and the same idea for Qdrant.
+- [Find documents missing from your vector index]({BASE}/guides/find-documents-missing-from-your-vector-index): A file can sit in your bucket while nothing about it is searchable. Compare the documents in storage with the documents in your index to find them.
+- [Detect stale embeddings after a document changes]({BASE}/guides/detect-stale-embeddings-after-a-document-changes): When a source file changes but its chunks do not, your RAG app keeps answering from the old version. Store the file's hash on every chunk and compare.
+- [Find documents with two versions in the index]({BASE}/guides/find-documents-with-two-versions-in-the-index): The new version of a document was indexed, but the old chunks were never deleted, so both versions answer questions. Count the distinct versions per document.
+- [Make sure deleted documents are not still searchable]({BASE}/guides/make-sure-deleted-documents-are-not-still-searchable): Deleting a file from storage does not delete its vectors. Find chunks whose source file no longer exists, then prove whether a search can still return them.
+- [Find half-indexed documents]({BASE}/guides/find-half-indexed-documents): An ingestion worker can die after writing only some of a document's chunks. Store the expected chunk count on every chunk and look for gaps.
+- [Find duplicate chunks from retried ingestion]({BASE}/guides/find-duplicate-chunks-from-retried-ingestion): A retried ingestion job can write the same chunk twice. Duplicates crowd other content out of the top results and skew answers. Group by document and position to find them.
+- [Find empty or all-zero vectors]({BASE}/guides/find-empty-or-all-zero-vectors): A failed embedding call can leave a chunk with no vector or a vector of zeros. Such a chunk can never be found by search. Check the vector's length.
+- [Catch chunks tagged with the wrong tenant]({BASE}/guides/catch-chunks-tagged-with-the-wrong-tenant): In a multi-tenant RAG app, one chunk with the wrong tenant tag can show one customer's content to another. Compare every chunk's tenant with its source file's tenant.
+- [Use RAGGuard from your AI assistant]({BASE}/guides/use-ragguard-from-your-ai-assistant): Let Claude Code, Cursor, Copilot or any MCP-capable assistant check your RAG index for you: a rule to paste into your project, an MCP server, and a command your assistant can run.
+
+## Product
+
+- [Home]({BASE}/): what RAGGuard checks, how it works, what it costs, and how it keeps your systems safe
+- [Help and user guide]({BASE}/help): every page of the app explained
+
+## User guide
+
+- [1. Getting started]({BASE}/help/01-getting-started): What the product does, what you need, a 10-minute quick start, the landing page
+- [2. Concepts you need]({BASE}/help/02-concepts): Source, manifest, index, tenant, chunk, audit, issue, severity, health score, and the rest
+- [3. Sign in and find your way around]({BASE}/help/03-interface-and-sign-in): Sign-up and sign-in, the sidebar, the top bar, search, notifications, the account menu, phones
+- [4. Connect your data sources]({BASE}/help/04-data-sources): Every field for Amazon S3, the PostgreSQL manifest and Qdrant, and what each connection test checks
+- [5. Overview]({BASE}/help/05-overview): The health score, the cards, the charts and the lists
+- [6. Reconciliation]({BASE}/help/06-reconciliation): The three-way comparison, scoped audits, exports, the documents table
+- [7. Integrity issues]({BASE}/help/07-integrity-issues): Filtering and reading issues, the issue panel, ignoring, and all 11 issue types
+- [20. Isolation]({BASE}/help/20-isolation): Whether one tenant's content can reach another: banner, checks, tenants, the drill and the evidence report (this page sits right after Integrity Issues in the menu)
+- [8. Repair plans]({BASE}/help/08-repair-plans): Recommended work, plans, the repair webhook flow, verification and cleanup
+- [9. Impact analysis]({BASE}/help/09-impact-analysis): What-if analysis for open issues, pipeline changes and ingestion failures
+- [10. Documents]({BASE}/help/10-documents): Every document, its embedding status, live inspection of its chunks
+- [11. Audit history]({BASE}/help/11-audit-history): Every audit, run detail pages, the activity log
+- [12. Integrations]({BASE}/help/12-integrations): The repair webhook and API keys
+- [13. Alerts]({BASE}/help/13-alerts): Webhook alerts, when they fire, and delivery history
+- [14. Settings]({BASE}/help/14-settings): Account, target pipeline, audit policy, security, team and billing
+- [15. End-to-end journey]({BASE}/help/15-end-to-end-journey): One continuous walkthrough from nothing to a verified fix
+- [16. Practical use cases]({BASE}/help/16-use-cases): Nightly audits, model changes, outages, user reports, cost control and more
+- [17. Reference: every value]({BASE}/help/17-reference): Lookup tables for every status, badge, severity, event, limit and term
+- [18. Troubleshooting]({BASE}/help/18-troubleshooting): Symptoms, causes and fixes
+- [19. The video walkthrough]({BASE}/help/19-video-walkthrough): A six-minute narrated demo of the Documents and Isolation pages, with timestamps and captions
+
+## Optional
+
+- [Full text of the guides and the key chapters]({BASE}/llms-full.txt)
+- [Privacy Policy]({BASE}/privacy): Privacy Policy
+- [Terms of Service]({BASE}/terms): Terms of Service

@@ -1,0 +1,1666 @@
+# RAGGuard
+
+---
+
+
+
+---
+
+> RAGGuard checks that a RAG (retrieval-augmented generation) index matches its source documents. It compares the files in Amazon S3 with a Qdrant or pgvector index, and optionally the ingestion pipeline's own records, and reports missing, stale, half-indexed, duplicate, empty, deleted-but-still-searchable and wrong-tenant chunks, with the evidence and a safe fix. It only reads your systems. Free during the beta.
+
+---
+
+
+
+---
+
+This file holds the full text of the RAGGuard guides and the key chapters of its user guide. Links between files are relative to {BASE}/guides or {BASE}/help.
+
+---
+
+
+
+---
+
+# Guides: keep your RAG index in sync with your source documents
+
+> Eight silent ways a RAG index drifts away from its source documents, with a copy-paste check for each: SQL for pgvector, and the same idea for Qdrant.
+
+A RAG system answers from its index, not from your documents. When the two disagree, nothing crashes: ingestion jobs report success, dashboards stay green, and users get answers that are incomplete, out of date, or about content that was deleted. These guides show how to find each kind of drift yourself.
+
+## The examples assume this layout
+
+Every SQL example uses two tables. Rename the columns to match yours; if your metadata lives in a JSON column (LangChain and LlamaIndex do this), write `metadata->>'document_id'` instead of `document_id`.
+
+```sql
+-- your vector table (pgvector): one row per chunk
+CREATE TABLE chunks (
+  id          bigserial PRIMARY KEY,
+  document_id text NOT NULL,   -- which source file the chunk came from
+  chunk_index int  NOT NULL,   -- 0, 1, 2 ... within the document
+  chunk_total int,             -- how many chunks the document should have
+  source_hash text,            -- SHA-256 of the source file when it was embedded
+  tenant_id   text,            -- which customer it belongs to (multi-tenant apps)
+  embedding   vector(1536)
+);
+
+-- the files that exist right now, from a listing of your bucket
+CREATE TABLE source_files (
+  document_id text PRIMARY KEY,
+  sha256      text NOT NULL,   -- SHA-256 of the current file
+  tenant_id   text
+);
+```
+
+Fill `source_files` from your storage: list the bucket, and take each file's SHA-256 from its object metadata (store it there at upload time) or compute it. An S3 ETag is not a reliable hash: for multipart uploads it is not the MD5 of the file.
+
+## The guides
+
+1. [Find documents missing from your vector index](01-find-documents-missing-from-your-vector-index.md)
+2. [Detect stale embeddings after a document changes](02-detect-stale-embeddings-after-a-document-changes.md)
+3. [Find documents with two versions in the index](03-find-documents-with-two-versions-in-the-index.md)
+4. [Make sure deleted documents are not still searchable](04-make-sure-deleted-documents-are-not-still-searchable.md)
+5. [Find half-indexed documents](05-find-half-indexed-documents.md)
+6. [Find duplicate chunks from retried ingestion](06-find-duplicate-chunks-from-retried-ingestion.md)
+7. [Find empty or all-zero vectors](07-find-empty-or-all-zero-vectors.md)
+8. [Catch chunks tagged with the wrong tenant](08-catch-chunks-tagged-with-the-wrong-tenant.md)
+
+Using an AI coding assistant? See [Use RAGGuard from your AI assistant](09-use-ragguard-from-your-ai-assistant.md).
+
+## Which check first
+
+Start with [two versions in the index](03-find-documents-with-two-versions-in-the-index.md) and [deleted documents](04-make-sure-deleted-documents-are-not-still-searchable.md). They are the hardest to notice: the answers sound confident and cite a real document, but come from content that should no longer be there.
+
+RAGGuard runs all eight checks for you, read-only, against S3 and Qdrant or pgvector: [rag-integrity-platform.vercel.app](https://rag-integrity-platform.vercel.app).
+
+---
+
+# Find documents missing from your vector index
+
+> A file can sit in your bucket while nothing about it is searchable. Compare the documents in storage with the documents in your index to find them.
+
+## What goes wrong
+
+A user asks about a document that you know exists. The RAG app answers "I don't know" or answers from something else, and no error is shown anywhere. The file is in storage, but the index has no chunks for it.
+
+## Why it happens
+
+- The ingestion job never picked the file up (a missed event, a filter, a crash before it started).
+- The pipeline recorded "success" before the vectors were written, and the write then failed.
+- The file was uploaded under a name or prefix your pipeline does not watch.
+
+## How to check (pgvector)
+
+List every document in storage that has no chunk in the index:
+
+```sql
+SELECT s.document_id
+FROM source_files s
+LEFT JOIN (SELECT DISTINCT document_id FROM chunks) c USING (document_id)
+WHERE c.document_id IS NULL
+ORDER BY s.document_id;
+```
+
+Every row is a document your users cannot find. The examples use the tables described in the [guides introduction](README.md).
+
+**In Qdrant:** for each document ID in your bucket, count its points with a filter on the payload field that holds the document ID (for example `document_id`). A count of 0 means it is missing. Create a keyword payload index on that field first, or every count scans the whole collection.
+
+## How to fix it
+
+Re-run those documents through your ingestion pipeline. Then run the check again to confirm the count is now above zero.
+
+## How to stop it happening again
+
+- Mark a document as indexed only after reading the index back: count its chunks and compare with what you wrote.
+- Run this check after every ingestion run and alert when it returns anything.
+
+RAGGuard runs this check, and seven others, read-only against S3 and Qdrant or pgvector: [rag-integrity-platform.vercel.app](https://rag-integrity-platform.vercel.app).
+
+---
+
+# Detect stale embeddings after a document changes
+
+> When a source file changes but its chunks do not, your RAG app keeps answering from the old version. Store the file's hash on every chunk and compare.
+
+## What goes wrong
+
+You update a policy, a price list or a manual. Days later, users still get answers from the old text. The answer looks right and cites the right document, so nobody suspects the index.
+
+## Why it happens
+
+- The pipeline only processes new files, not changed ones.
+- The change event was missed, or the re-embedding job failed halfway.
+- The file was replaced in storage under the same name, and nothing noticed.
+
+## How to check (pgvector)
+
+Store the SHA-256 of the source file on every chunk when you embed it (`source_hash` here). Then find documents whose chunks were built from a different version than the file in storage today:
+
+```sql
+SELECT DISTINCT c.document_id
+FROM chunks c
+JOIN source_files s USING (document_id)
+WHERE c.source_hash IS DISTINCT FROM s.sha256
+ORDER BY c.document_id;
+```
+
+Every row is a document that is being answered from an older version. The examples use the tables described in the [guides introduction](README.md).
+
+If your chunks carry no hash at all, add one now: without it, a changed file and an unchanged file look the same to any check.
+
+**In Qdrant:** store the hash in each point's payload, scroll the collection with payloads only (no vectors, so it is fast) and compare each point's hash with the current file's hash.
+
+## How to fix it
+
+Re-embed the changed documents. Write the new chunks first, then delete the old ones by filter: `document_id` equal to the document and `source_hash` not equal to the new hash. Deleting first leaves a window where the document is missing.
+
+## How to stop it happening again
+
+- Trigger re-embedding on file changes, not only on new files.
+- Run this check on a schedule; it is cheap because it reads hashes, not vectors.
+
+RAGGuard runs this check, and seven others, read-only against S3 and Qdrant or pgvector: [rag-integrity-platform.vercel.app](https://rag-integrity-platform.vercel.app).
+
+---
+
+# Find documents with two versions in the index
+
+> The new version of a document was indexed, but the old chunks were never deleted, so both versions answer questions. Count the distinct versions per document.
+
+## What goes wrong
+
+Users get contradictory answers about the same document, or a confident answer from last quarter's version. The new chunks are in the index, so a quick spot check looks fine. The old chunks are there too, and they still rank.
+
+## Why it happens
+
+- The pipeline writes the new chunks and then deletes the old ones, and the delete failed or timed out.
+- The old chunks had different IDs, so writing the new ones did not overwrite them.
+- A re-index ran with a new chunker and kept the previous run's chunks.
+
+## How to check (pgvector)
+
+List documents whose chunks come from more than one version of the source file:
+
+```sql
+SELECT document_id, count(DISTINCT source_hash) AS versions
+FROM chunks
+GROUP BY document_id
+HAVING count(DISTINCT source_hash) > 1
+ORDER BY document_id;
+```
+
+Every row is a document where old and new content both answer. The examples use the tables described in the [guides introduction](README.md).
+
+**In Qdrant:** scroll with payloads only and group the points by document ID; any document with more than one distinct hash has two versions live.
+
+## How to fix it
+
+Keep only the chunks whose hash matches the current file, and delete the rest:
+
+```sql
+DELETE FROM chunks c
+USING source_files s
+WHERE c.document_id = s.document_id
+  AND c.source_hash IS DISTINCT FROM s.sha256;
+```
+
+Run the check again: it should return nothing.
+
+## How to stop it happening again
+
+- Build chunk IDs from the document ID, the content hash and the chunk index, so a retry overwrites instead of adding.
+- After each re-index, delete by filter (same document, different hash) and verify the old chunks are gone.
+
+This is the most dangerous kind of drift, because the wrong answer comes with a real citation. RAGGuard checks for it on every audit: [rag-integrity-platform.vercel.app](https://rag-integrity-platform.vercel.app).
+
+---
+
+# Make sure deleted documents are not still searchable
+
+> Deleting a file from storage does not delete its vectors. Find chunks whose source file no longer exists, then prove whether a search can still return them.
+
+## What goes wrong
+
+A document is withdrawn: an outdated contract, a recalled manual, a file a user asked you to erase. It is gone from storage, but the RAG app keeps quoting it. If the deletion was a legal request, the data is not actually deleted.
+
+## Why it happens
+
+- Deleting the file does not trigger anything in the index.
+- The cleanup job only handles new and changed files.
+- The delete ran against the wrong collection or tenant.
+
+## How to check (pgvector)
+
+List documents that still have chunks but no longer exist in storage:
+
+```sql
+SELECT c.document_id, count(*) AS chunks
+FROM chunks c
+LEFT JOIN source_files s USING (document_id)
+WHERE s.document_id IS NULL
+GROUP BY c.document_id
+ORDER BY c.document_id;
+```
+
+Then prove the content can really be returned: search with one of the document's own stored vectors and see whether it comes back near the top.
+
+```sql
+SELECT id, document_id
+FROM chunks
+ORDER BY embedding <=> (SELECT embedding FROM chunks WHERE document_id = 'deleted-doc.pdf' LIMIT 1)
+LIMIT 5;
+```
+
+Replace `deleted-doc.pdf` with a document ID from the first query. The examples use the tables described in the [guides introduction](README.md).
+
+**In Qdrant:** compare the document IDs in your payloads with your bucket listing, then run a query using one of the leftover points as the query (Qdrant's query API accepts a point ID).
+
+## How to fix it
+
+Delete the chunks by document ID, then run both queries again: the first should return nothing, and the second should no longer return the deleted document.
+
+## How to stop it happening again
+
+- Treat a deletion in storage as an event your pipeline must handle, like an upload.
+- For erasure requests, keep a record of the check showing the content can no longer be retrieved.
+
+RAGGuard checks deletions on every audit and can prove a removed document no longer comes back in search: [rag-integrity-platform.vercel.app](https://rag-integrity-platform.vercel.app).
+
+---
+
+# Find half-indexed documents
+
+> An ingestion worker can die after writing only some of a document's chunks. Store the expected chunk count on every chunk and look for gaps.
+
+## What goes wrong
+
+Questions about the first part of a long document work. Questions about the rest get "I don't know" or a vague answer. The document is in the index, so a check that only asks "is this document indexed?" says yes.
+
+## Why it happens
+
+- The worker was killed, timed out or ran out of memory partway through a document.
+- A batch write was partly rejected (a rate limit, a payload too large) and the error was swallowed.
+- A retry wrote the first chunks again but never reached the end.
+
+## How to check (pgvector)
+
+When you write chunks, store each one's position (`chunk_index`) and the number of chunks the document should have (`chunk_total`). Then list documents with fewer chunks than expected:
+
+```sql
+SELECT document_id,
+       max(chunk_total)            AS expected,
+       count(DISTINCT chunk_index) AS present
+FROM chunks
+GROUP BY document_id
+HAVING count(DISTINCT chunk_index) < max(chunk_total)
+ORDER BY document_id;
+```
+
+Every row is a document that is only partly searchable. The examples use the tables described in the [guides introduction](README.md).
+
+Without a stored total you can still spot some gaps: a document whose highest `chunk_index` is larger than its number of chunks minus one is missing chunks in the middle. A missing tail cannot be seen that way, which is why the total matters.
+
+**In Qdrant:** store `chunk_index` and `chunk_total` in the payload, scroll with payloads only, and count the distinct indexes per document.
+
+## How to fix it
+
+Re-index the affected documents. If your chunking is deterministic, you can write only the missing chunks.
+
+## How to stop it happening again
+
+- Mark a document done only after counting its chunks in the index and comparing with the total.
+- Alert when this check returns anything after an ingestion run.
+
+RAGGuard finds partly indexed documents on every audit, from the chunk total or from gaps in the numbering: [rag-integrity-platform.vercel.app](https://rag-integrity-platform.vercel.app).
+
+---
+
+# Find duplicate chunks from retried ingestion
+
+> A retried ingestion job can write the same chunk twice. Duplicates crowd other content out of the top results and skew answers. Group by document and position to find them.
+
+## What goes wrong
+
+The same passage fills several of the top results, so the answer is built from one repeated piece instead of several different ones. Index size and cost also grow for no reason.
+
+## Why it happens
+
+- The chunk ID was random (a fresh UUID each time), so a retry inserted new rows instead of overwriting.
+- Two workers processed the same document at the same time.
+- A re-index ran without first removing the previous run.
+
+## How to check (pgvector)
+
+List every position that holds more than one chunk:
+
+```sql
+SELECT document_id, chunk_index, count(*) AS copies
+FROM chunks
+GROUP BY document_id, chunk_index
+HAVING count(*) > 1
+ORDER BY document_id, chunk_index;
+```
+
+If a document also has [two versions in the index](03-find-documents-with-two-versions-in-the-index.md), its chunks show up here too. Fix the versions first. The examples use the tables described in the [guides introduction](README.md).
+
+**In Qdrant:** scroll with payloads only and group points by document ID and chunk index; any group with more than one point is a duplicate.
+
+## How to fix it
+
+Keep one row per position and delete the others:
+
+```sql
+DELETE FROM chunks a
+USING chunks b
+WHERE a.document_id = b.document_id
+  AND a.chunk_index = b.chunk_index
+  AND a.source_hash IS NOT DISTINCT FROM b.source_hash
+  AND a.id > b.id;
+```
+
+## How to stop it happening again
+
+Make chunk IDs deterministic: build them from the document ID, the content hash and the chunk index (for example a UUID v5 of those values). A retry then overwrites the same rows instead of adding new ones.
+
+RAGGuard finds duplicate chunks on every audit: [rag-integrity-platform.vercel.app](https://rag-integrity-platform.vercel.app).
+
+---
+
+# Find empty or all-zero vectors
+
+> A failed embedding call can leave a chunk with no vector or a vector of zeros. Such a chunk can never be found by search. Check the vector's length.
+
+## What goes wrong
+
+Part of a document is never returned, however closely a question matches it. The chunk exists and its text is right, so it looks fine when you inspect it, but its vector carries no meaning.
+
+## Why it happens
+
+- The embedding API returned an error or an empty result, and the code wrote a placeholder instead of failing.
+- A default value (a zero vector) was used for chunks whose text was empty after cleaning.
+- A migration or copy lost the vectors but kept the rows.
+
+## How to check (pgvector)
+
+List chunks with no vector or a vector whose length (norm) is zero:
+
+```sql
+SELECT id, document_id, chunk_index
+FROM chunks
+WHERE embedding IS NULL
+   OR vector_norm(embedding) = 0
+ORDER BY document_id, chunk_index;
+```
+
+`vector_norm` is part of pgvector. Every row is a chunk that search cannot reach. The examples use the tables described in the [guides introduction](README.md).
+
+**In Qdrant:** scroll with vectors included and check each vector's norm in your code. This reads every vector, so run it in batches or on a schedule rather than on every request.
+
+## How to fix it
+
+Re-embed the affected chunks, or the whole document if many are affected. Check that the text of each chunk is not empty first: an empty chunk should be dropped, not embedded.
+
+## How to stop it happening again
+
+- Fail the ingestion job when an embedding call fails; never write a placeholder vector.
+- Reject vectors whose norm is zero before writing them.
+
+RAGGuard can check for empty and all-zero vectors on every audit: [rag-integrity-platform.vercel.app](https://rag-integrity-platform.vercel.app).
+
+---
+
+# Catch chunks tagged with the wrong tenant
+
+> In a multi-tenant RAG app, one chunk with the wrong tenant tag can show one customer's content to another. Compare every chunk's tenant with its source file's tenant.
+
+## What goes wrong
+
+Your app filters search results by tenant, so each customer only sees their own documents. If a chunk carries the wrong tenant tag, the filter lets it through to the wrong customer. Nothing errors, and the leak is only found when someone notices content that is not theirs.
+
+## Why it happens
+
+- The tenant was taken from the wrong field, or from a default, during ingestion.
+- A document was moved between tenants in storage, and the index kept the old tag.
+- A bulk re-index ran with the wrong tenant context.
+
+## How to check (pgvector)
+
+Give `source_files` the tenant each file belongs to (often the first folder of its path), then list chunks whose tag disagrees:
+
+```sql
+SELECT c.id, c.document_id, c.tenant_id AS chunk_tenant, s.tenant_id AS source_tenant
+FROM chunks c
+JOIN source_files s USING (document_id)
+WHERE c.tenant_id IS DISTINCT FROM s.tenant_id
+ORDER BY c.document_id, c.id;
+```
+
+Every row is a chunk that can be shown to the wrong customer. Chunks with no tenant at all appear too, because a missing tag is just as unsafe. The examples use the tables described in the [guides introduction](README.md).
+
+**In Qdrant:** scroll with payloads only and compare each point's tenant field with the tenant of its source file.
+
+## How to fix it
+
+Correct the tenant tag on those chunks, or delete and re-index them. Treat it as a security incident: check your logs for whether the chunks were returned to another tenant.
+
+## How to stop it happening again
+
+- Derive the tenant from the file's location in one place in your pipeline, never from a default.
+- Run this check after every ingestion run, and alert on any result.
+
+RAGGuard checks tenant tags on every audit and shows an isolation report per customer: [rag-integrity-platform.vercel.app](https://rag-integrity-platform.vercel.app).
+
+---
+
+# Use RAGGuard from your AI assistant
+
+> Let Claude Code, Cursor, Copilot or any MCP-capable assistant check your RAG index for you: a rule to paste into your project, an MCP server, and a command your assistant can run.
+
+If an AI assistant writes or changes your ingestion code, it should also check that the index is still right afterwards. RAGGuard gives it three ways to do that.
+
+## 1. Add a rule to your project
+
+Paste this into your assistant's rules file: `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `.github/copilot-instructions.md` or similar.
+
+```markdown
+## RAG index integrity (RAGGuard)
+- After changing ingestion, chunking or embedding code, or after a bulk re-index, run
+  `ragguard check --fail-on high` (or the MCP tool `ragguard_run_audit`) and fix every open
+  issue it reports before saying the work is done.
+- Do not call an ingestion change finished while RAGGuard reports missing, stale, duplicate,
+  half-indexed or wrong-tenant chunks.
+- When a user reports a wrong or outdated answer, run `ragguard document <document-id>`
+  before changing prompts or models: the index is often the cause.
+```
+
+## 2. Install the command and get an API key
+
+```bash
+pip install "ragguard-cli[mcp] @ git+https://github.com/kishore600/rag-integrity-platform#subdirectory=clients/python"
+```
+
+Create an API key in RAGGuard on the **Integrations** page, then set it where your assistant runs:
+
+```bash
+export RAGGUARD_API_KEY=ragi_your_key_here
+```
+
+The key can run audits and read results. It cannot read your connection settings or create other keys.
+
+## 3. Connect the MCP server
+
+**Claude Code:**
+
+```bash
+claude mcp add ragguard -e RAGGUARD_API_KEY=ragi_your_key_here -- ragguard mcp
+```
+
+**Cursor** (`.cursor/mcp.json`), **Claude Desktop** and other MCP clients:
+
+```json
+{
+  "mcpServers": {
+    "ragguard": {
+      "command": "ragguard",
+      "args": ["mcp"],
+      "env": { "RAGGUARD_API_KEY": "ragi_your_key_here" }
+    }
+  }
+}
+```
+
+Your assistant then has these tools:
+
+| Tool | What it does |
+|---|---|
+| `ragguard_status` | The health score, document and issue counts, and the latest audit |
+| `ragguard_run_audit` | Runs an audit, waits for it to finish and returns the summary |
+| `ragguard_list_issues` | The open issues, most severe first, optionally by severity |
+| `ragguard_get_issue` | One issue with its evidence and the recommended fix |
+| `ragguard_check_document` | Everything RAGGuard knows about one document |
+| `ragguard_report` | The full audit report as Markdown |
+
+Then ask: "Is my RAG index in sync?" or "Why does the bot still quote the old refund policy?"
+
+## 4. Or use the command directly
+
+```bash
+ragguard check --fail-on high   # run an audit; exit code 1 if open issues are high or critical
+ragguard status                 # the latest results, without running an audit
+ragguard issues --severity high # open issues
+ragguard document refund-policy.pdf
+```
+
+`ragguard check` works in CI too: add it after your ingestion job, and the job fails when the index drifts.
+
+Not using RAGGuard yet? [Create a workspace](https://rag-integrity-platform.vercel.app/signup), connect your bucket and your Qdrant or pgvector index, and create the API key. It is free during the beta.
+
+---
+
+# Getting started
+
+RAGGuard tells you when your RAG index is wrong, before your users do. It compares the documents you meant to index, the record your pipeline keeps of what it indexed, and the vectors that are really searchable, and it shows you exactly what drifted, how serious it is and how to fix it safely. This chapter explains what problem RAGGuard solves, who it is for, what you need before you start, and how to get from a new account to your first audit result. It also tours the public landing page and explains how to read the rest of this guide.
+
+**On this page**
+
+- [What RAGGuard is](#what-ragguard-is)
+- [The problem it solves: silent RAG failures](#the-problem-it-solves-silent-rag-failures)
+- [What RAGGuard does and does not do](#what-ragguard-does-and-does-not-do)
+- [Who it is for](#who-it-is-for)
+- [Before you start](#before-you-start)
+- [Three ways RAGGuard can run](#three-ways-ragguard-can-run)
+- [What demo data means](#what-demo-data-means)
+- [Ten-minute quick start](#ten-minute-quick-start)
+- [The landing page](#the-landing-page)
+- [How to read this guide](#how-to-read-this-guide)
+- [Tips and common mistakes](#tips-and-common-mistakes)
+- [Related chapters](#related-chapters)
+
+---
+
+## What RAGGuard is
+
+RAGGuard is an independent checker for a **RAG** system. RAG stands for retrieval-augmented generation: an application answers questions by first searching an index of your documents, then giving the best matches to a language model. The index is only useful if it is correct.
+
+RAGGuard reads three places and compares them. It always reads. It never writes to them.
+
+| Word in RAGGuard | System | What it represents |
+|---|---|---|
+| **Source** | Amazon S3 (or an S3-compatible store) | What exists right now: your documents |
+| **Manifest** | A table in PostgreSQL | What your pipeline believes it did: one row per document |
+| **Index** | Qdrant | What is actually searchable: your vectors |
+
+Comparing them is called an **audit**. An audit produces:
+
+- **Issues**: each disagreement it found, with evidence. There are 11 types.
+- A **status** for every document, and one **health score** for the whole index.
+- **Repair plans**: a list of what to fix, with estimated cost.
+
+When you ask for a repair, RAGGuard does not change your systems. It sends a signed request to **your own worker** and then checks the real index again to see whether the fix worked. Removing old vectors needs your explicit approval.
+
+Every term in bold is explained in [Concepts you need](02-concepts.md).
+
+---
+
+## The problem it solves: silent RAG failures
+
+A RAG system can go wrong while every background job reports success. The application keeps running and nobody sees an error, but users get incomplete, outdated or wrong answers. The landing page lists six ways this happens:
+
+| What goes wrong | What it looks like |
+|---|---|
+| Documents that were never embedded | The file sits in storage, but nothing about it is searchable. |
+| Updated documents with old vectors | The source changed. The index keeps serving the previous version with full confidence. |
+| Deleted documents that stay searchable | Withdrawn or deleted content can still be returned to your users. |
+| Half-indexed documents | Only some chunks made it in, so answers are quietly incomplete. |
+| Duplicates and empty vectors | Retries double-count chunks. Zero vectors can never be retrieved. |
+| Drift nobody planned | The embedding model, the chunking or the permissions changed. Old documents did not. |
+
+**An example.** Your ingestion job processes a new HR policy and records the status `success`. A crash halfway through means no vectors reached Qdrant. The job is green, the dashboard is green, and the assistant never mentions the policy. RAGGuard sees a document in S3, a manifest row that claims success, and zero vectors in the index. It reports **Missing embeddings** as **Critical**, because the pipeline said it worked.
+
+---
+
+## What RAGGuard does and does not do
+
+| RAGGuard does | RAGGuard does not |
+|---|---|
+| Read your S3 bucket, manifest table and Qdrant index, read-only | Write to, change or delete anything in those systems |
+| Find 11 kinds of disagreement, each with evidence | Parse documents, create embeddings or host a vector database |
+| Show how serious each issue is and whether bad content can really be retrieved | Run a chatbot |
+| Plan repairs and estimate their cost | Carry out repairs itself: your worker does that |
+| Send signed repair requests to your worker and verify the result against the real index | Remove vectors without your approval |
+| Notify you in the app and by email after every audit, alert you through a Slack-compatible webhook, and run audits from scripts through API keys | Connect to Slack, Jira or PagerDuty directly (marked **Not available yet** in the interface) |
+
+---
+
+## Who it is for
+
+RAGGuard is for teams who run a production RAG pipeline over Amazon S3, PostgreSQL and Qdrant and need to know three things: whether the index is trustworthy, which exact documents are wrong and why, and what it will cost to fix them.
+
+| If you are... | You will mostly use... |
+|---|---|
+| An engineer connecting RAGGuard | [Connect your data sources](04-data-sources.md), [Settings](14-settings.md), [Integrations](12-integrations.md) |
+| An on-call engineer investigating an alert | [Overview](05-overview.md), [Integrity issues](07-integrity-issues.md), [Documents](10-documents.md) |
+| An owner of the data pipeline | [Repair plans](08-repair-plans.md), [Impact analysis](09-impact-analysis.md), [Audit history](11-audit-history.md) |
+| A security or compliance owner of a multi-tenant product | [Isolation](20-isolation.md), [Integrity issues](07-integrity-issues.md) |
+| Someone automating checks in CI | [Integrations](12-integrations.md) (API keys), [Alerts](13-alerts.md) |
+
+RAGGuard works with S3-compatible stores such as MinIO, Cloudflare R2 and Supabase Storage, with PostgreSQL including Supabase, and with Qdrant self-hosted or on Qdrant Cloud.
+
+---
+
+## Before you start
+
+You need two things that already exist in your own environment, plus an account. A third, the manifest, is optional.
+
+### 1. An S3 bucket with your documents
+
+- A bucket (or a folder inside one, set with **Key prefix**) that holds the documents your users should be able to search.
+- A read-only access key for it. On AWS, the key needs `s3:ListBucket` on the bucket and `s3:GetObject` on its objects.
+- Object keys that RAGGuard can split into a tenant and a document id. The default **Key pattern** expects `tenant/path/to/document.pdf`, for example `customer-a/policies/leave-policy.md`. For a bucket with no tenants, set the pattern to `^(?P<document_id>.+)$`.
+- A way to know when a file changes. The simplest is a SHA-256 stored with each object under the metadata key `sha256`. Alternatives are **Content hash** `compute` (RAGGuard downloads and hashes) or `etag` (quick start, less reliable).
+
+### 2. A PostgreSQL manifest table (optional)
+
+**Skip this if your pipeline records nothing.** Audits work without a manifest: RAGGuard compares your files with the vector index directly (see [The manifest is optional](04-data-sources.md#the-manifest-is-optional-and-your-vectors-can-live-in-pgvector)). This is the table your ingestion pipeline writes after it processes each document. By default RAGGuard looks for `rag_document_manifest` in the `public` schema, and you can change both. You can also map your own column names.
+
+- **Minimum:** a `document_id` column. It is the only mandatory column, and any other column your table lacks is simply skipped.
+- **Recommended:** `tenant_id`, `source_uri`, `source_hash`, `source_version`, `processing_status`, `expected_chunk_count`, `indexed_chunk_count`, `indexed_version` and `updated_at`. Add the pipeline columns (`parser_version`, `chunking_version`, `chunk_size`, `chunk_overlap`, `embedding_model`, `embedding_model_version`, `embedding_dim`, `preprocessing`) and `acl_hash` if you have them.
+- Optional: a second table with one row per chunk (`tenant_id`, `document_id`, `chunk_id`, `chunk_index`, `chunk_hash`), which lets RAGGuard name exactly which chunks are missing.
+- A database role that can only `SELECT`. RAGGuard also opens every transaction read-only.
+
+### 3. A vector index: a Qdrant collection, or a pgvector table
+
+Vectors in PostgreSQL with pgvector (Supabase, Neon, AWS RDS) work too: choose **pgvector** on Data Sources and give it the table.
+
+- A Qdrant URL that RAGGuard can reach. For Qdrant Cloud it looks like `https://your-cluster.cloud.qdrant.io:6333`. Add an API key if the cluster requires one.
+- **Minimum payload on every vector:** `document_id` and `source_hash` (the same value your pipeline stored in the manifest), plus `tenant_id` if you have more than one tenant.
+- **Recommended:** `chunk_id` and `chunk_index` (so partial indexes can be found), and the pipeline fields `embedding_model`, `embedding_dim`, `chunking_version` and the like (so drift can be found).
+- If your payload uses other names, a **Payload field map** translates them.
+
+### What the three must agree on
+
+RAGGuard can only compare what lines up. For each document:
+
+- The **tenant** and the **document id** must be the same in S3, the manifest and the index.
+- The **hash** your pipeline records must be the same value RAGGuard reads from S3, in the manifest and in each vector's payload.
+
+If they do not match, every document looks stale, missing or orphaned. The **Test connection** button on [Data Sources](04-data-sources.md) checks this for you with a sample.
+
+### What each kind of check needs
+
+| To detect... | RAGGuard needs... |
+|---|---|
+| Missing embeddings | The S3 file and no vectors for it. The manifest only decides the severity: **Critical** if it claims success. |
+| Stale versions | A hash or version on the vectors (or a hash in the manifest) to compare with S3. |
+| Partial indexes | A chunk table, or `expected_chunk_count` in the manifest, or `chunk_index` values on the vectors. |
+| Orphan vectors | Vectors whose document is gone from S3. |
+| Wrong-tenant vectors | A `tenant_id` on the vectors and a tenant in the S3 key. |
+| Pipeline drift | A **Target pipeline** in [Settings](14-settings.md), and fingerprint fields on the vectors or in the manifest. |
+| Empty embeddings | **Detect empty embeddings** switched on in the Qdrant settings. |
+| Documents still being processed | `updated_at` and `processing_status` in the manifest, or a recent S3 modified time. |
+
+### Network and account
+
+- In hosted mode RAGGuard only connects to **public** addresses. Hosts on a private network or on localhost are refused. Your S3 endpoint, Qdrant URL and database must be reachable from the internet.
+- You need an email address and a password of 10 to 128 characters to create an account. See [Sign in and find your way around](03-interface-and-sign-in.md).
+- A current web browser.
+
+---
+
+## Three ways RAGGuard can run
+
+The person who runs the server chooses a mode. You can tell which one you are using from what you see first.
+
+| Mode | What you see first | Sign-in | Connections |
+|---|---|---|---|
+| **Hosted** | The landing page, then the sign-in and Create account screens | Email and password. Each account gets a private workspace. | You enter them yourself in **Data Sources** |
+| **Live** (single-user) | The app straight away, or an **API key required** screen if the server is protected | None | The server's environment variables. **Data Sources** is read-only. |
+| **Demo** (single-user) | The app straight away, with an amber **Demo data** banner | None | A built-in synthetic knowledge base |
+
+Everything in this guide applies to all three, except sign-in, the account menu's **Sign out** and the connection forms, which only exist in hosted mode.
+
+---
+
+## What demo data means
+
+**Demo data** is a synthetic knowledge base that RAGGuard can run on its own: invented documents in several tenants, with faults put in on purpose. It lets you explore every screen without connecting anything. On a demo server:
+
+- An amber banner on every page says **Demo data.** This server is running a synthetic knowledge base so you can explore the product. Nothing here comes from your own systems.
+- The environment card at the bottom of the sidebar shows **DEMO**, with an amber dot.
+- **Settings > General** has a **Reset demo data** button that regenerates the data and clears the results.
+
+The screenshots and the video that go with this guide come from a hosted test workspace connected to test systems that hold synthetic documents with deliberately injected faults. They are examples of what the screens look like. The numbers you see on your own data will be different, and wherever this guide quotes a number it says "for example".
+
+---
+
+## Ten-minute quick start
+
+If your systems are ready, you can reach your first result in about ten minutes. The audit itself takes as long as your corpus needs. Each step names the chapter that explains it in detail.
+
+1. **Open RAGGuard and create your account.** Press **Create your workspace** on the landing page, type your email and a password of at least 10 characters, and press **Create account**. You land on the Overview, which asks you to connect your data. See [Sign in and find your way around](03-interface-and-sign-in.md).
+2. **Connect your source and your index.** Open **Data Sources**. For Amazon S3 and for your vector index (Qdrant, or pgvector: choose it under **Where are your vectors stored?**) press **Configure**, fill in the form, press **Test connection**, read the result lines, then press **Save**. A manifest is optional. See [Connect your data sources](04-data-sources.md). The **Run audit** button stays disabled, with the tooltip "Connect your data sources first", until the source and the index are saved.
+3. **Run your first audit.** Press **Run audit** in the top bar, or **Run first audit** on the Overview. A notice appears when the audit starts and another when it finishes. See [Sign in and find your way around](03-interface-and-sign-in.md#the-run-audit-button) and [Reconciliation](06-reconciliation.md).
+4. **Read the results.** Start on the [Overview](05-overview.md): the health score, the number of open issues and the worst problems. Then open **Integrity Issues** to read each issue's evidence ([Integrity issues](07-integrity-issues.md)), **Isolation** to check that no customer's documents are indexed under another customer ([Isolation](20-isolation.md)), and **Documents** to see every document's state ([Documents](10-documents.md)).
+5. **Fix what you found.** Create a repair plan from the issues you want fixed, send it to your worker, verify it and approve cleanup ([Repair plans](08-repair-plans.md)). Your worker must be set up first ([Integrations](12-integrations.md)). To see what a pipeline change would affect before you make it, use [Impact analysis](09-impact-analysis.md).
+6. **Keep watching.** Set up [Alerts](13-alerts.md), create an API key to run audits from CI or a scheduler ([Integrations](12-integrations.md)), and tune the grace period and target pipeline in [Settings](14-settings.md). Every audit is recorded in [Audit history](11-audit-history.md).
+
+For one continuous worked example, read [End-to-end journey](15-end-to-end-journey.md). For common tasks, see [Practical use cases](16-use-cases.md).
+
+---
+
+## The landing page
+
+If you open a hosted RAGGuard server without being signed in, the page at the root address (`/`) is a public landing page. It says only things that are true of the product: there are no customer logos and no statistics. Single-user servers have no landing page; they open the app directly. A signed-in user who opens the root address goes to the Overview.
+
+![The RAGGuard landing page: the headline, the Create your workspace and Sign in buttons, the three-rail illustration and the Example finding card](images/landing-hero.png)
+
+*The top of the landing page: headline, the two buttons, the three-rail illustration and the "Example finding" card.*
+
+### The top bar and the hero
+
+| Element | What it says | Where it goes |
+|---|---|---|
+| Logo | The RAGGuard mark | The top of the landing page |
+| Menu links **The problem**, **How it works**, **What it finds**, **Security**, **FAQ** | Section names. Hidden on narrow screens. | Scroll to that section of the same page |
+| Menu link **Guides** | Hidden on narrow screens. | The how-to guides (`/guides`): eight ways a RAG index drifts from its documents, each with a check you can run yourself, and how to use RAGGuard from an AI assistant. Public. |
+| Menu link **User guide** | Hidden on narrow screens. | The Help pages (`/help`): the video walkthrough and every chapter of this guide. You can read them without an account. |
+| **Sign in** | | The Sign in screen (`/login`) |
+| **Get started** | | The Create account screen (`/signup`). Shown only when sign-ups are open. |
+| Tag line | "Independent verification for RAG", next to a green **Free during beta** label | |
+| Headline | "Know when your RAG index is wrong, before your users do." | |
+| Sub-heading | RAGGuard compares your source documents with your vector index, in Qdrant or pgvector, then shows exactly what drifted, how serious it is and how to fix it safely. No processing manifest needed; connect one for extra checks. | |
+| **Create your workspace** | | The Create account screen. Shown only when sign-ups are open. |
+| **Book a free audit** | | Opens your email program with a message to kishore.knaresh07@gmail.com, already titled "Free RAGGuard audit", that asks where your documents and vectors are and roughly how many documents you have |
+| **Sign in** (hero) | Shown only when sign-ups are closed (the top bar always has one). | The Sign in screen |
+| Promise line | "Read-only access to your systems. Credentials are encrypted and never shown again." | |
+| Illustration | Three rails labelled SOURCE (Amazon S3), MANIFEST (PostgreSQL (optional)) and INDEX (Qdrant or pgvector), with documents traced across them. One has "no vectors", one has "old version", one is "still searchable" after being "deleted". It is an illustration, not real data. | |
+| **Example finding** card | A **Critical** badge, "Document has no embeddings in the index", "The pipeline reported success, but nothing about this document is searchable.", **Expected** "All chunks indexed", **Actual** "0 vectors found". An example of what an issue looks like. | |
+
+### The sections
+
+![The landing page sections How it works and What it finds](images/landing-sections.png)
+
+*The "How it works" and "What it finds" sections of the landing page.*
+
+| Section | Heading | What it says |
+|---|---|---|
+| The problem | "Your pipeline says success. Your users get the wrong answer." | The six silent failures in the table earlier in this chapter. |
+| How it works | "Your documents and your index, one version of the truth" | Three numbered steps: **1 Connect, read-only** (point RAGGuard at S3 and your vector index in Qdrant or pgvector, plus the manifest table if you have one; it only lists, reads and queries), **2 Reconcile** (every document is compared across the systems you connected, chunk by chunk, and retrieval probes check whether bad content can really be returned), **3 Repair and verify** (plans go to your own worker as signed requests, then RAGGuard checks the real index again; old vectors are removed only after you approve). Below the steps, **See it working** plays the six-minute walkthrough from the [video chapter](19-video-walkthrough.md); it loads only when you press play. |
+| What it finds | "11 kinds of silent failure, each with evidence" | One card per issue type with a one-line meaning and the systems it involves: Missing embeddings, Partial index, Stale document version, Superseded vectors active, Orphan vectors, Duplicate chunks, Metadata mismatch, Pipeline drift, Empty embeddings, Tenant mismatch, Orphan manifest row. |
+| What you get | "Everything you need to act on it" | Six benefits: a health score, evidence for every finding, cost estimates before you fix, blast radius, safe and verified repairs, and alerts and automation. |
+| Security | "Safe to point at production" | Six promises: read-only by design, credentials stay secret, workspaces are isolated, private networks are blocked, repairs are signed and removals approved, and hardened sessions. |
+| Works with | "The tools you already run" | Two connections are enough to start: Amazon S3 (and S3-compatible stores) and the vector index, Qdrant (self-hosted or Cloud) or pgvector (any PostgreSQL, including LangChain and LlamaIndex tables). The PostgreSQL manifest is marked optional. |
+| FAQ | "Questions, answered" | Seven questions, each of which expands when you click it: does RAGGuard change my data, what do I need to connect, how does it know what my index should contain, how much does it cost (nothing during the beta), what is a free audit, can I run audits from CI or on a schedule, and how are my credentials protected. |
+| Closing call to action | "See what your index is really serving." | "Free during beta", the two buttons again, and the line "Questions first? Read the FAQ or email kishore.knaresh07@gmail.com." |
+| Footer | The RAGGuard mark and a one-line description | **Sign in**, **Create account** (only when sign-ups are open), **FAQ**, **Guides**, **User guide**, **Book a free audit**, **Contact**, **Privacy** and **Terms**. |
+
+### Where the buttons and links go
+
+| Button or link | Destination |
+|---|---|
+| Every **Sign in** | The Sign in screen, address `/login` |
+| **Get started**, **Create your workspace**, **Create account** | The Create account screen, address `/signup` |
+| **Read the FAQ**, footer **FAQ**, menu **FAQ** | The FAQ section of the landing page |
+| Menu **User guide**, footer **User guide**, **More in the user guide** under the video | The Help pages, address `/help` |
+| Every **Book a free audit** | A pre-filled email to kishore.knaresh07@gmail.com titled "Free RAGGuard audit" |
+| Footer **Contact**, the email address in the closing section | An email to kishore.knaresh07@gmail.com |
+| Footer **Privacy**, footer **Terms** | The Privacy Policy (`/privacy`) and the Terms of Service (`/terms`). Both are public and are also reachable while you are signed in. |
+
+If the server has closed sign-ups, the hero and the closing section show **Sign in** next to **Book a free audit**, and the Create account choices disappear everywhere. See [Sign in and find your way around](03-interface-and-sign-in.md#create-account).
+
+---
+
+## How to read this guide
+
+- **Bold text** is a label exactly as it appears on screen: a button, a menu item, a field, a column heading or a status. Where the menu and the page title differ in capitals (for example the menu item **Data Sources** and the page title "Data sources"), this guide uses whichever you are looking at.
+- `Code style` is a value you type, a column name, an address or a status code.
+- **Menu paths** such as **Settings > General** mean: open **Settings**, then the **General** tab.
+- Numbers that come from an audit are **examples**. Your numbers depend on your data.
+- Anything the interface marks **Not available yet** is described as exactly that. This guide never promises it.
+- The screenshots show structure. They are not a record of your data.
+
+**The chapters in order**
+
+| Chapter | Read it to learn... |
+|---|---|
+| [1. Getting started](01-getting-started.md) | What RAGGuard is and how to start (this chapter) |
+| [2. Concepts you need](02-concepts.md) | Every term, with an example |
+| [3. Sign in and find your way around](03-interface-and-sign-in.md) | The sign-in screens, the sidebar, the top bar, search and the three states of every page |
+| [4. Connect your data sources](04-data-sources.md) | Connecting S3, PostgreSQL and Qdrant |
+| [5. Overview](05-overview.md) | The dashboard: every card and chart |
+| [6. Reconciliation](06-reconciliation.md) | Running audits and the three-way comparison |
+| [7. Integrity issues](07-integrity-issues.md) | Reading, filtering and ignoring issues |
+| [8. Repair plans](08-repair-plans.md) | Planning, triggering, verifying and cleaning up |
+| [9. Impact analysis](09-impact-analysis.md) | What a change or a failure would touch |
+| [10. Documents](10-documents.md) | Every document and its state |
+| [11. Audit history](11-audit-history.md) | Every audit, and the activity log |
+| [12. Integrations](12-integrations.md) | The repair webhook and API keys |
+| [13. Alerts](13-alerts.md) | Getting told about new problems |
+| [14. Settings](14-settings.md) | Pipeline target, audit policy, security and account |
+| [15. End-to-end journey](15-end-to-end-journey.md) | One continuous worked example |
+| [16. Practical use cases](16-use-cases.md) | Recipes for common situations |
+| [17. Reference: every value](17-reference.md) | Every label, status and setting in one place |
+| [18. Troubleshooting](18-troubleshooting.md) | What to do when something looks wrong |
+| [19. The video walkthrough](19-video-walkthrough.md) | The narrated demo, scene by scene |
+| [20. Isolation](20-isolation.md) | Whether your index keeps customers apart: the checks, the drill and the evidence report |
+
+**Suggested reading orders**
+
+- **First look (15 minutes):** this chapter, the ten-minute quick start, then [Overview](05-overview.md).
+- **Setting up:** chapters 1 to 4, then 6 and 14.
+- **Fixing a problem:** chapters 7, 8 and 10, with [Concepts you need](02-concepts.md) open beside them.
+- **Automating:** chapters 12 and 13.
+
+---
+
+## Tips and common mistakes
+
+- **Connect your source and your index before you expect results.** **Run audit** stays disabled until both are saved. The manifest is optional.
+- **Make the hash match.** The most common reason every document looks stale is that the hash your pipeline stores is not the one RAGGuard reads from S3. Use the same value in all three places.
+- **Check the key pattern.** If most documents show as missing or orphaned, the tenant and document id RAGGuard derives from S3 keys probably differ from the ones in your manifest and index. **Test connection** shows an example key and what RAGGuard made of it.
+- **Do not judge a fresh upload.** A document changed in the last few minutes shows as **Pending**, not broken. That is the grace period working.
+- **Use a read-only database role** and a read-only S3 key. RAGGuard does not need more, and the connection test warns you about a role that can write.
+- **Expect empty screens before the first audit.** Most pages say "No audit has run yet" and offer a **Run audit** button.
+
+---
+
+## Related chapters
+
+- [Concepts you need](02-concepts.md): the words used throughout
+- [Sign in and find your way around](03-interface-and-sign-in.md): create your account and learn the frame
+- [Connect your data sources](04-data-sources.md): step by step connection of the three systems
+- [End-to-end journey](15-end-to-end-journey.md): the whole workflow in one story
+- [Contents](README.md): the full list of chapters
+
+---
+
+# Practical use cases
+
+This chapter gives ten situations you are likely to meet, each as a short recipe: the goal, the exact steps in the product, and how to read the result. Use it when you know what you want to achieve but not which pages to open. Where a step depends on something the product marks **Not available yet**, the step says so and gives a workaround. The full walk from sign-up to a verified fix is in [End-to-end journey](15-end-to-end-journey.md), and every value you will see is explained in [Reference: every value](17-reference.md).
+
+New words in this chapter (audit, issue, manifest, tenant, probe) are explained in [Concepts you need](02-concepts.md).
+
+**On this page**
+
+- [Which use case do I need?](#which-use-case-do-i-need)
+- [Use case 1: A first-time baseline of an existing RAG system](#use-case-1-a-first-time-baseline-of-an-existing-rag-system)
+- [Use case 2: A nightly or CI audit through the API](#use-case-2-a-nightly-or-ci-audit-through-the-api)
+- [Use case 3: After changing the embedding model](#use-case-3-after-changing-the-embedding-model)
+- [Use case 4: After an ingestion outage](#use-case-4-after-an-ingestion-outage)
+- [Use case 5: Investigating a user report of a wrong answer](#use-case-5-investigating-a-user-report-of-a-wrong-answer)
+- [Use case 6: Responding to a tenant mismatch](#use-case-6-responding-to-a-tenant-mismatch)
+- [Use case 7: Cleaning up after documents were deleted](#use-case-7-cleaning-up-after-documents-were-deleted)
+- [Use case 8: Proving to a manager that the index is healthy](#use-case-8-proving-to-a-manager-that-the-index-is-healthy)
+- [Use case 9: Onboarding a second tenant or collection](#use-case-9-onboarding-a-second-tenant-or-collection)
+- [Use case 10: Reducing re-embedding cost](#use-case-10-reducing-re-embedding-cost)
+- [Related chapters](#related-chapters)
+
+## Which use case do I need?
+
+| You want to | Use case | Main pages |
+|---|---|---|
+| Find out where an index that is already running really stands | 1 | Data sources, Reconciliation, Overview |
+| Check the index every night, or on every deployment, and fail a job when something serious is open | 2 | Integrations (API keys), the API |
+| Move to a new embedding model, chunk size or parser | 3 | Integrity issues (Impact analysis, Repair plans), Settings |
+| Recover from a period when ingestion was failing | 4 | Integrity issues (Impact analysis, Issues, Repair plans) |
+| Find out why a user got a wrong or missing answer | 5 | Documents |
+| React to vectors tagged with the wrong tenant | 6 | Integrity issues, Isolation, Documents |
+| Remove vectors of documents that were deleted | 7 | Integrity issues, Repair plans |
+| Show someone that the index is healthy | 8 | Overview, Reconciliation (Export report), Audit history |
+| Add another customer or another collection | 9 | Data sources, Settings, Reconciliation |
+| Keep the cost of fixing the index down | 10 | Integrity issues (Repair plans, Impact analysis), Settings (Policy) |
+
+## Use case 1: A first-time baseline of an existing RAG system
+
+**Goal:** learn where an index that has been running for a while really stands, separate real problems from set-up noise, and keep a record of the starting point.
+
+**Before you start:** have your S3 read-only key, the manifest connection string and the Qdrant URL ready. Remember the hash rule: the SHA-256 that RAGGuard reads from S3 must be the same value your pipeline records as `source_hash`.
+
+**Steps**
+
+1. Sign up and connect the three systems exactly as in Steps 1 and 2 of the [End-to-end journey](15-end-to-end-journey.md). On **Data sources**, use **Test connection** in every dialog and read the amber lines before you save. They predict weak spots:
+   - **Content hashes** amber (S3): objects carry no SHA-256, so stale documents will be hard to detect.
+   - **Columns used for checks** amber (manifest): some of `source_hash`, `processing_status`, `expected_chunk_count`, `indexed_chunk_count` are not mapped.
+   - **Payload of NAME** amber (Qdrant): sampled vectors lack `source_hash`.
+2. Leave **Settings**, **Pipeline** empty for the first audit. A wrong target would make every document look drifted. If your manifest or index holds more than your bucket covers (for example one Qdrant collection shared with other products), switch on **Only audit documents found in the source (S3)** on the **Policy** tab.
+3. Open **Reconciliation** and click **Run full audit**.
+4. Open **Overview**. Note the **Health score**, **Open issues**, **Issues by type**, **Document status** and **Tenant health**.
+5. Open **Reconciliation** and compare **Source documents**, **Manifest rows** and **Index vectors**.
+6. Sort noise from real problems (see the table below). To check one document in detail, open **Documents**, click the document, open the **Chunks** tab and click **Inspect live**.
+7. Fix any set-up problem you found, then run another full audit. Repeat until the remaining issues look like real problems.
+8. Optional: now fill in **Settings**, **Pipeline** with the pipeline you expect, and audit again to see real drift.
+9. Record the baseline: on **Reconciliation** click **Export report** and choose **Markdown**. Write down the health score and the open issue counts.
+
+**How to read the result**
+
+| What you see | What it usually means | What to do |
+|---|---|---|
+| Almost every document has the same issue, such as **Stale document version** | A set-up mismatch, not a thousand real problems. The hash RAGGuard reads from S3 is not the one your pipeline records. | Open one document, **Inspect live**, and compare the source hash with the manifest and payload hashes. Align them, then re-audit. |
+| Many **Missing embeddings** and, with similar names, many **Orphan vectors** | The document id is written differently in different systems (for example `leave.pdf` in Qdrant but `policies/leave.pdf` in S3) | Check **Key prefix** and **Key pattern**, and what your pipeline writes as `document_id`. See [Troubleshooting](18-troubleshooting.md), "Documents shown as Failed, Missing or orphaned unexpectedly". |
+| Many **Pipeline drift** | You filled in the target pipeline and it does not match what your pipeline records | Correct the target, or the pipeline |
+| A few critical issues titled "(pipeline claims success)" | Real. The pipeline said it succeeded but the index disagrees. | Triage them first (Use case 5 shows how to inspect one) |
+| No issues at all | Either a healthy index, or a configuration that hides problems | Read "Zero issues when you expect some" in [Troubleshooting](18-troubleshooting.md) |
+
+**If something does not work:** see [Troubleshooting](18-troubleshooting.md).
+
+## Use case 2: A nightly or CI audit through the API
+
+**Goal:** audit automatically on a schedule or on every deployment, and fail a job when open critical issues exist.
+
+**What you need:** an API key (**Integrations**, **API keys**, **Create API key**, see Step 16 of the [End-to-end journey](15-end-to-end-journey.md)) and the address of your RAGGuard site. A key works only inside your workspace.
+
+**The endpoints used** (all real, all accept `Authorization: Bearer <key>`):
+
+| Call | Purpose |
+|---|---|
+| `POST /api/audits` with body `{"wait": true}` | Start a full audit and wait for it to finish. The answer is `{"run_id": "...", "status": "completed", "stats": {...}}`. Add `"tenant": "acme"` to audit only one tenant. |
+| `GET /api/issues?status=open&severity=critical&limit=1` | The answer's `total` is the number of open critical issues. |
+| `GET /api/overview` | Health, counts by severity, and the latest runs, if you want more numbers. |
+
+Some points to know:
+
+- Send the header `Content-Type: application/json` with the `POST`.
+- On a hosted server one audit has a time budget of 270 seconds, and the server function itself stops at 300 seconds. Allow your job to wait about five and a half minutes (the examples use `--max-time 330`).
+- Only one audit can run at a time per workspace. If someone clicks **Run audit** while your job runs, the job gets a `409` ("An audit is already running."). Run it again later.
+- There is no scheduler inside the hosted app and no scheduling screen. The scheduler is yours: GitHub Actions, cron, or any CI system.
+
+**A GitHub Actions workflow** (store the key as a repository secret named `RAGGUARD_API_KEY`):
+
+```yaml
+name: RAG integrity audit
+on:
+  schedule:
+    - cron: "0 2 * * *"      # every night at 02:00 UTC
+  workflow_dispatch:         # also lets you run it by hand
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RAGGUARD_URL: https://your-ragguard-address
+      RAGGUARD_KEY: ${{ secrets.RAGGUARD_API_KEY }}
+    steps:
+      - name: Run a full audit and wait for it
+        run: |
+          curl -sS --fail-with-body --max-time 330 -X POST "$RAGGUARD_URL/api/audits" \
+            -H "Authorization: Bearer $RAGGUARD_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"wait": true}' -o audit.json || { cat audit.json; exit 1; }
+          echo "Health score: $(jq '.stats.health_score' audit.json)%"
+      - name: Fail when critical issues are open
+        run: |
+          curl -sS --fail-with-body --max-time 60 \
+            "$RAGGUARD_URL/api/issues?status=open&severity=critical&limit=1" \
+            -H "Authorization: Bearer $RAGGUARD_KEY" -o critical.json || { cat critical.json; exit 1; }
+          critical=$(jq '.total' critical.json)
+          echo "Open critical issues: $critical"
+          if [ "$critical" -gt 0 ]; then exit 1; fi
+```
+
+The answers are saved to files first, and the step stops if the call itself fails, so a failed call can never be mistaken for "no critical issues". `--fail-with-body` needs curl 7.76 or newer, and `jq` is a small tool for reading JSON; both are present on GitHub's standard Ubuntu runners.
+
+**A cron example** (a small script plus one crontab line; keep the key in a file only you can read):
+
+```bash
+#!/usr/bin/env bash
+# /opt/ragguard/nightly-audit.sh
+set -euo pipefail
+source /etc/ragguard.env      # contains: RAGGUARD_URL=...  and  RAGGUARD_KEY=ragi_...
+
+curl -sS --fail-with-body --max-time 330 -X POST "$RAGGUARD_URL/api/audits" \
+  -H "Authorization: Bearer $RAGGUARD_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"wait": true}' -o /tmp/ragguard-audit.json || { cat /tmp/ragguard-audit.json >&2; exit 1; }
+
+curl -sS --fail-with-body --max-time 60 \
+  "$RAGGUARD_URL/api/issues?status=open&severity=critical&limit=1" \
+  -H "Authorization: Bearer $RAGGUARD_KEY" -o /tmp/ragguard-critical.json || { cat /tmp/ragguard-critical.json >&2; exit 1; }
+
+critical=$(jq '.total' /tmp/ragguard-critical.json)
+if [ "$critical" -gt 0 ]; then
+  echo "RAGGuard: $critical open critical issue(s)" >&2
+  exit 1
+fi
+echo "RAGGuard: no open critical issues"
+```
+
+```text
+# crontab -e   (every night at 02:15; cron mails or logs the output of a failing run)
+15 2 * * * /opt/ragguard/nightly-audit.sh >> /var/log/ragguard-audit.log 2>&1
+```
+
+To fail on "critical or high" instead, replace the second call with `GET /api/overview` and compute `jq '.issues.by_severity.critical + .issues.by_severity.high'`.
+
+**How to read the result**
+
+- The job turns red when the audit itself fails (the job prints the server's message: a `502` explains which of your systems refused, a `504` means the time budget ran out, a `401` means the key is wrong), or when critical issues are open.
+- Ignored issues do not count, because `status=open` excludes them.
+- The audit appears in **Audit history** with the trigger **Api**.
+
+**Not available yet:** quiet hours. After every audit started through the API you also get a notification in the app and, when the operator has set up email, an email (see the **Alerts** page). To have new issues reach Slack as well, add an alert webhook there (Step 15 of the journey), or make your CI system send the failure message. The Slack, Jira and PagerDuty integrations are marked **Not available yet** on **Integrations**.
+
+**If something does not work:** see "API key problems" in [Troubleshooting](18-troubleshooting.md).
+
+## Use case 3: After changing the embedding model
+
+**Goal:** find out, before you roll out a new embedding model (or a new chunk size or parser), how many documents must be re-processed and what that costs. Afterwards, confirm that the index matches the new model.
+
+**Steps, before the rollout**
+
+1. Open **Integrity issues** and click the **Impact analysis** tab.
+2. Under **Scenario** choose **Pipeline change**.
+3. Fill in the pipeline you are moving to. The fields are **Parser version**, **Chunking version**, **Embedding model**, **Embedding model version**, **Chunk size (tokens)** and **Chunk overlap (tokens)**. Each shows "Current target: ..." if your **Settings**, **Pipeline** has a value. You must fill in at least one, or the page says "Enter at least one setting of the pipeline you want to analyze."
+4. Click **Analyze impact**. RAGGuard reads your latest audit results and changes nothing.
+
+**How to read the result**
+
+| Part | Meaning |
+|---|---|
+| **Documents affected** ("N of M", with a percentage) | Documents that exist in the source and either record a different value for a field you entered, or record no value for it |
+| **Confirmed** ("Index known to differ from the proposed pipeline") | Documents whose recorded setup differs for sure |
+| Rows marked **Possible** in the **Affected documents** list | Documents where RAGGuard has no recorded value to compare, so it cannot be sure. Make your pipeline record its settings to remove the doubt. |
+| **Chunks to regenerate**, **Estimated cost**, and the hint "Full reindex: ..." | The work and cost of re-embedding the affected documents, and of re-embedding everything. The small text under the cards states the assumptions (tokens per chunk and price). |
+| **Savings vs full reindex** | Shown when it can be computed |
+| **Tenants affected** | Which customers are touched, as affected out of total |
+| **Issues by type** and **Collections affected** | Open issues on those documents, and which Qdrant collections hold them |
+| **Query impact** | How many recent searches returned an affected document. It needs a retrieval log: until you send one it says "No query log has been ingested yet". See Use case 4 for how to send one. |
+
+**Steps, during and after the rollout**
+
+5. When your pipeline is ready to write with the new model, set the same values in **Settings**, **Pipeline** (**Embedding model**, **Embedding model version**, **Embedding dimensions**, and so on) and click **Save**. From the next audit, every document whose vectors were built with the old model is reported as **Pipeline drift**, severity high when the embedding model, its version or the dimensions differ. Set the target when you are ready to repair, not earlier, or the whole corpus appears as drifted at once.
+6. If the new model produces vectors of a different size, a collection cannot hold both. If you set **Embedding dimensions** and a collection's vector size differs, RAGGuard raises a **Critical** collection-level finding, "Collection vector size does not match the target embedding model". Create a new collection for the new model, and add its name under **Collections** on the Qdrant card (**Edit**, then **Save**).
+7. Run a full audit, then go to **Repair plans**, **Create plan from recommendations**, **Trigger repair**, **Verify now**, and **Approve cleanup** (Steps 9 to 13 of the [End-to-end journey](15-end-to-end-journey.md)). Your worker must embed with the new model.
+8. While old and new vectors of one document exist together, expect **Superseded vectors active** (medium). It disappears after cleanup.
+
+**If something does not work:** see "Too many issues" in [Troubleshooting](18-troubleshooting.md).
+
+## Use case 4: After an ingestion outage
+
+**Goal:** find every document that your pipeline touched while it was failing, check which are really broken, and repair them.
+
+**Steps**
+
+1. Note when the outage started and ended.
+2. Run a full audit so the results are current (**Reconciliation**, **Run full audit**). Documents changed within the grace period (default 10 minutes) are shown as **Pending**, not broken, so wait for ingestion to settle first.
+3. Open **Integrity issues**, **Impact analysis**, choose **Ingestion failure**.
+4. Fill in **Started at** (required, your local time) and **Ended at** (leave it empty for "until now"). Click **Analyze impact**.
+5. Read the result. The affected documents are those whose manifest **updated at** time falls inside the window, so the manifest's `updated_at` column must exist and be mapped. **Confirmed** means the document already has an open issue; the rest are marked **Possible** (touched during the window, no issue found, probably fine).
+6. Go to the **Issues** tab and look at **Missing embeddings**, **Partial index** and **Stale document version**. Titles that end "(pipeline claims success)" are the dangerous ones: the pipeline said it worked. For a job that was stuck, the issue text says the pipeline has had the document in a status such as "processing" since a given time.
+7. Go to **Repair plans**, click **Create plan from recommendations**, and carry it out (Steps 9 to 13 of the journey).
+8. Optional: measure the effect on real searches. Retrieval logs are sent through the API, because there is no upload screen. Send one call with your API key:
+
+```bash
+curl -X POST "https://your-ragguard-address/api/query-log" \
+  -H "Authorization: Bearer ragi_xxxxxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{"queries": [
+        {"tenant_id": "acme", "query_text": "how many leave days", "retrieved_doc_ids": ["policies/leave.md"], "ts": "2026-11-08T10:15:00Z"}
+      ]}'
+```
+
+   The answer is `{"ingested": N}`. Only the document ids and a hash of the query are kept, never the text of the query. A call takes up to 5,000 rows. The **Query impact** card counts searches from the last 14 days.
+
+**How to read the result:** **Documents affected** versus **Confirmed** tells you how much of the window did real damage. **Query impact** tells you how many real searches returned an affected document, and **Most requested affected documents** tells you which to fix first.
+
+**If something does not work:** if the analysis shows no documents, the manifest `updated_at` is probably not mapped, or the window is wrong. See [Troubleshooting](18-troubleshooting.md).
+
+## Use case 5: Investigating a user report of a wrong answer
+
+**Goal:** a user got a wrong, outdated or missing answer. Find out whether the index is at fault, and why.
+
+RAGGuard never stores the contents of your documents or the text of user questions, so you search by the document's name or id, not by the words of the answer.
+
+**Steps**
+
+1. Work out which document should have answered, or which one did.
+2. Press `/` (or click the search box at the top), type the name, and choose **Search Documents for "..."**. The **Documents** page opens filtered to that text. You can also open **Documents** and type in **Search by document id**.
+3. Click the document's row. A panel opens on the **Overview** tab.
+4. Read it:
+   - **Status**: the embedding status (**Healthy**, **Stale**, **Missing embeddings**, **Processing**, **Failed**), the audit result, and the open issues.
+   - **Where this document exists**: three boxes, **Source** (Amazon S3), **Manifest** (PostgreSQL) and **Index** (Qdrant), each **Present** or **Missing**.
+   - **Details**: source hash, **Source version** and **Indexed version** (an amber triangle means the index was built from a different version), **Chunks (indexed / expected)**, **Collections**, **Manifest status** and **Last verified**.
+5. The Overview shows what the last audit saw. To see the truth right now, open the **Chunks** tab and click **Inspect live**. RAGGuard reads S3, the manifest row and the Qdrant vectors at that moment, which can take a few seconds. Or click **Re-audit document** at the top of the panel to audit just this document.
+6. Read the live view: **Source**, **Manifest**, **Index** (the number of vectors, and badges such as "Fresh: 5" per class), the **Chunks** table (**Chunk**, **Index**, **Class**, **Copies**, **Collection**) and **Findings from this check**.
+7. Open the **Issues** tab, click an issue, and read **Evidence**, including the **Retrieval probe**, which shows whether the bad content can really be returned by a search.
+8. Decide: **Create repair plan** (Steps 9 to 13 of the journey), **Ignore** with a reason, or fix the cause in your pipeline.
+
+**How to read the result**
+
+| What you see | Meaning for the user's wrong answer |
+|---|---|
+| **Index** box is **Missing** | The document is not searchable at all. The user could never get an answer from it. |
+| **Source** is **Missing** but **Index** is **Present** | The document was deleted but is still searchable. The user may have been given deleted content. |
+| An amber triangle between **Source version** and **Indexed version** | The index describes an older version. The answer was outdated. |
+| Chunk **Class** `stale` next to `fresh` chunks | Old chunks still compete with the current ones and can outrank them |
+| **Copies** above 1 | The same chunk is indexed more than once, which skews ranking |
+| **Class** `unknown` | The payload carries no hash or version, so RAGGuard cannot tell if the chunk is current |
+| **Chunks** fewer than expected | Only part of the document is searchable. The missing part is what the user asked about. |
+| **Manifest** is **Missing** | The pipeline has no record of the document (it was never picked up, or the id differs) |
+| "Document not found" | RAGGuard has no record of the document in this workspace. Check your **Key prefix** and **Key pattern**, or run an audit. |
+
+The retrieval probe replays one affected chunk's own vector. It proves the content is searchable and at what rank, but it does not replay the user's actual question.
+
+**If something does not work:** see [Troubleshooting](18-troubleshooting.md). More on the page itself in [Documents](10-documents.md).
+
+## Use case 6: Responding to a tenant mismatch
+
+**Goal:** vectors are tagged with the wrong tenant, which can leak one customer's content to another. Contain it and confirm it is gone.
+
+A tenant is a customer or business unit whose documents must stay separate. The issue **Tenant mismatch** is always **Critical**. The **Isolation** page shows all tenants at once and which ones are affected ([Isolation](20-isolation.md)).
+
+**Steps**
+
+1. Open **Integrity issues**, set **Type** to **Tenant mismatch** (or click the **Critical** chip).
+2. Click an issue and read the panel:
+   - **What's wrong**: how many vectors are indexed under one tenant while the source document exists only under another.
+   - **Expected vs actual**: for example "Vectors tagged with tenant B" against "N vectors tagged with another tenant".
+   - **Evidence**: the vector count, the collections, the expected tenants, and the **Retrieval probe**, which queries the index filtered to the tenant the vectors are wrongly tagged with.
+   - **Why it matters** tells you to treat it as a security incident.
+3. Contain it in your own systems. RAGGuard never changes your data. Decide whether the wrongly tagged vectors should be deleted or retagged. The evidence lists the collection and a sample of point ids; **Raw evidence (JSON)** holds the full list of vectors to remove (up to 5,000 per collection).
+4. If you want RAGGuard to hand the removal to your worker, use **Create repair plan**. See the limit in Use case 7 below: a plan that contains only removal work cannot be triggered in this version. Removing the vectors yourself and re-auditing always works.
+5. Confirm: open the document in **Documents** and click **Re-audit document**, or run a **Scoped audit** (**Reconciliation**) for the affected tenant. The issue becomes **Resolved**, and its Timeline says "Resolved: the index now matches the source."
+6. Check the other tenant too. The document may now show **Missing embeddings** there, which means its own tenant's copy was never written.
+7. Prevent a repeat: look at the step in your pipeline that writes `tenant_id` to the payload. On **Alerts**, set **Minimum severity** to **critical** if you want alerts for critical issues only (a tenant mismatch is always critical).
+
+**How to read the result:** a **Retrieval probe** with **Reachable** "Yes" means a search scoped to that tenant really returns the misplaced vectors. A document that is gone from the source and not found under any other tenant is not a tenant mismatch; it is an orphan (Use case 7).
+
+**If something does not work:** see [Troubleshooting](18-troubleshooting.md).
+
+## Use case 7: Cleaning up after documents were deleted
+
+**Goal:** a document was deleted from S3, but its vectors are still searchable. Find them, remove them, and confirm.
+
+**Steps**
+
+1. Run a full audit. On **Overview**, **Document status** shows a count under **Orphaned** ("Deleted at the source, vectors remain").
+2. Open **Integrity issues** and set **Type** to **Orphan vectors**. Each issue says "Vectors remain for a document that no longer exists".
+3. Open one. Check that the deletion was intended. **Evidence** shows how many vectors remain, in which collections, and the **Retrieval probe**. If the probe shows the content is returned for a matching query, the severity is raised from **High** to **Critical**.
+4. Remove the vectors. Choose one path:
+   - **Path A, in your own tools:** delete the listed vectors (the evidence has the collection and point ids; **Raw evidence (JSON)** has the full list), and have your pipeline retire the manifest rows of the deleted documents. Then re-audit.
+   - **Path B, through RAGGuard:** click **Create repair plan** (or tick several orphan issues and click **Create repair plan**, or use **Create plan from recommendations**). Then follow Steps 10 to 13 of the [End-to-end journey](15-end-to-end-journey.md): the plan goes **Triggered**, **Verify now**, **Cleanup pending**, **Approve cleanup**, **Cleanup triggered**, **Verify now**, **Completed**.
+5. Confirm: run **Run full audit** again. The orphan issues are **Resolved** and the **Orphaned** count falls to zero.
+
+**Know the limit of Path B in this version.** A plan reaches **Cleanup pending** only after a **Trigger repair** and a **Verify now**, and **Trigger repair** sends only documents that need re-processing. A plan made *only* of removal work (all orphan, duplicate, superseded or tenant-mismatch vectors, and no document to re-process) therefore answers "This plan has nothing to reprocess (cleanup only). Use approve-cleanup." and **Approve cleanup** is not offered while the plan is **Draft**. Two ways around it: use Path A, or create the plan from **Create plan from recommendations** at a time when it also contains at least one document that needs re-processing; the removal-only documents then show **Waiting for cleanup** after **Verify now** and are removed together with the rest on **Approve cleanup**. See "Cleanup not offered" in [Troubleshooting](18-troubleshooting.md).
+
+**After the vectors are gone:** if the manifest still lists the deleted document, the next audit reports **Orphan manifest row** (low). Have your worker retire those rows as part of the cleanup.
+
+**How to read the result:** an orphan that is **Critical** is being returned to users right now, so do it first. **Orphan vectors** versus **Tenant mismatch**: an orphan's document id exists in no tenant; a tenant mismatch's id exists in a different tenant.
+
+**If something does not work:** see [Troubleshooting](18-troubleshooting.md).
+
+## Use case 8: Proving to a manager that the index is healthy
+
+**Goal:** show, with evidence, that the index agrees with the source, and that it keeps doing so.
+
+**Steps**
+
+1. Run a full audit now, and ideally schedule one (Use case 2) so there is a history.
+2. On **Overview** show the **Health score** (green at 90% and above), **Open issues** ("None critical or high"), and **Health over time**, which needs two full audits to draw a line. **Tenant health** shows the score per customer.
+3. On **Reconciliation** show the three counts side by side and the line "The manifest lists as many rows as the source has documents."
+4. Click **Export report** and choose a format:
+   - **Markdown**, "Readable report": a summary (documents checked, health score, open issues by severity) and a section per inconsistent document.
+   - **CSV**, "One row per issue": for spreadsheets.
+   - **JSON**, "Everything, for tools".
+   The file is named `rag-integrity-report` with the matching extension. It lists only documents that have open issues, so a clean index gives a short report that says "None. The index agrees with the source." To include healthy documents too, call the API: `GET /api/report?format=md&include_healthy=true`.
+5. For an audit trail, open **Audit history**, **Audit runs**, click a run, and use **Copy run id**. The **Activity log** shows every issue found and resolved, every repair and every audit in order.
+
+**How to read the result honestly:** a green score with zero open issues is the goal, but two things deserve a mention. **Pending** documents count as healthy (they are still being processed), and **Ignored** issues are not counted as open. Check **Integrity issues** with **Status** set to **Ignored** so you can say what has been accepted and why.
+
+**Not available yet:** **Team** on **Settings** ("Invite teammates and set roles"). Each account owns one workspace, so you cannot give your manager read access to yours. **Workaround:** send the exported report and screenshots of Overview. Scheduled email digests are also **Not available yet**.
+
+**If something does not work:** see [Troubleshooting](18-troubleshooting.md).
+
+## Use case 9: Onboarding a second tenant or collection
+
+**Goal:** add another customer (tenant) or another Qdrant collection to what RAGGuard audits.
+
+RAGGuard has no "add tenant" button. Tenants are discovered from your data: from the tenant part of the S3 key, from the manifest `tenant_id` column, and from the vector payload `tenant_id`.
+
+**Steps for a second tenant**
+
+1. Make sure the new customer's documents sit under their own first-level folder (for example `globex/...`) so the default **Key pattern** (`^(?P<tenant_id>[^/]+)/(?P<document_id>.+)$`) sees them. If your bucket has no tenant folders, every document belongs to the **Default tenant** (`default` unless you changed it).
+2. Make your pipeline write the same `tenant_id` in the manifest rows and in the vector payloads.
+3. Check **Settings**, **Policy**, **Required payload fields**. If it is empty, RAGGuard requires `tenant_id` in every vector payload as soon as there is more than one tenant. Vectors without it raise **Metadata mismatch**. That is intended: with several tenants an untagged vector is a leak risk.
+4. Run a full audit.
+5. Check that the tenant appears: on **Overview**, **Tenant health**; on **Isolation**, the **Tenants** table (which also shows whether the new tenant is kept apart from the others); on **Reconciliation**, the **Tenant** filter and **Scoped audit** (the dialog lists each tenant with its document count).
+6. From now on you can audit one tenant at a time with **Scoped audit** (with **Probe retrieval for the worst findings** on or off), which is faster than a full audit and leaves other tenants untouched.
+
+**Steps for a second collection**
+
+1. Open **Data sources**, click **Edit** on the Qdrant card.
+2. In **Collections**, list the names separated by commas (for example `kb_main,kb_new`). Empty means every collection.
+3. Click **Test connection**. The result shows one **Collection NAME** line and one **Payload of NAME** line per collection (for up to the first five). Fix anything red, then **Save**.
+4. Run a full audit. A document is expected in at least one of the listed collections, and findings name the collection.
+
+**If the second tenant belongs to another team:** a workspace is private to one account, and there are no shared workspaces (**Team** is **Not available yet**). Another team's systems need their own account and workspace.
+
+**How to read the result:** per-tenant scores let you compare customers. A tenant with a low score, or many **Pending** documents, usually means its pipeline was only just switched on.
+
+**If something does not work:** see "Zero issues when you expect some" and "Too many issues" in [Troubleshooting](18-troubleshooting.md).
+
+## Use case 10: Reducing re-embedding cost
+
+**Goal:** fix what is broken without re-embedding the whole corpus.
+
+**Steps**
+
+1. Open **Integrity issues**, **Repair plans**. The **Recommended work** card already shows the smallest safe set of repairs for your open issues: **Documents to reprocess**, **Chunks to regenerate**, **Estimated tokens**, **Estimated cost**, **Savings vs full reindex** (shown when it can be computed) and **Vectors to remove**. The small text below states the assumptions, such as the tokens per chunk and the price.
+2. Make the estimate match reality: on **Settings**, **Policy** set **Embedding price (USD per 1M tokens)** and **Tokens per chunk (for estimates)**, then **Save**. They are used only for estimates.
+3. Narrow the work. Use **Minimum severity** (for example **High and above**) to leave out minor issues, and watch the figures change.
+4. Narrow it further. In the **Issues** tab, tick only the rows you want and click **Create repair plan**. Issues you have **Ignored** are left out.
+5. Create the plan and compare. The plan's **Summary** repeats the figures. To compare with the alternative, run **Impact analysis** with **Pipeline change** and look at "Full reindex: ..." under **Estimated cost**.
+
+**Why a plan can be cheaper than a full reindex**
+
+| Issue | The smallest action | What it costs in embedding |
+|---|---|---|
+| Missing chunks (**Partial index**) | **Re-embed missing chunks**, only the missing ones | A few chunks |
+| Wrong metadata (**Metadata mismatch**) | **Fix metadata**, no re-embedding | Nothing |
+| Duplicates, superseded vectors, orphans, tenant mismatch | **Remove old vectors**, no re-embedding | Nothing |
+| Missing, stale, drifted or empty embeddings | **Full reindex** of that document only | The chunks of that document |
+
+A document with several issues gets the smallest set of actions. A full reindex already rewrites chunks and the manifest, so a document that gets **Full reindex** does not also get **Fix metadata**.
+
+**How to read the result:** **Savings vs full reindex** compares your plan with re-embedding every document. For example, a plan for 3 documents out of 1,000 costs a small fraction of a full re-embed. The chunk counts come from the manifest's expected chunk counts and fall back to roughly 4 bytes of source per token when the manifest has none, so an unmapped `expected_chunk_count` makes the estimate rougher.
+
+**If something does not work:** see [Troubleshooting](18-troubleshooting.md).
+
+## Related chapters
+
+- [End-to-end journey](15-end-to-end-journey.md)
+- [Integrity issues](07-integrity-issues.md), [Repair plans](08-repair-plans.md) and [Impact analysis](09-impact-analysis.md)
+- [Isolation](20-isolation.md)
+- [Documents](10-documents.md) and [Audit history](11-audit-history.md)
+- [Integrations](12-integrations.md), [Alerts](13-alerts.md) and [Settings](14-settings.md)
+- [Reference: every value](17-reference.md) and [Troubleshooting](18-troubleshooting.md)
+
+---
+
+# Troubleshooting
+
+This chapter is organised by what you see. Find the symptom, read the cause, apply the fix. The messages are quoted exactly as RAGGuard shows them, so you can search this page for the text on your screen. If nothing matches, go to the last section, which tells you what to collect for a bug report.
+
+Most problems fall into three groups: a connection does not work (sections on connection tests and data source cards), the numbers are not what you expect (zero issues, too many issues, documents shown wrongly), or a repair does not progress. New words are explained in [Concepts you need](02-concepts.md), and every status and message value is listed in [Reference: every value](17-reference.md).
+
+**On this page**
+
+- [Sign-up and sign-in problems](#sign-up-and-sign-in-problems)
+- ["Run audit" is disabled](#run-audit-is-disabled)
+- ["Connect your data sources first"](#connect-your-data-sources-first)
+- [Connection test messages](#connection-test-messages)
+- [A data source card says Error or Status unavailable](#a-data-source-card-says-error-or-status-unavailable)
+- [An audit stays running or fails](#an-audit-stays-running-or-fails)
+- [Everything looks missing, or an audit warns about document IDs](#everything-looks-missing-or-an-audit-warns-about-document-ids)
+- [Zero issues when you expect some](#zero-issues-when-you-expect-some)
+- [Too many issues](#too-many-issues)
+- [Documents shown as Failed, Missing or orphaned unexpectedly](#documents-shown-as-failed-missing-or-orphaned-unexpectedly)
+- [Numbers differ between pages](#numbers-differ-between-pages)
+- [Repair problems](#repair-problems)
+- [API key problems](#api-key-problems)
+- [Alerts not arriving](#alerts-not-arriving)
+- [The page is not updating](#the-page-is-not-updating)
+- [Browser tips](#browser-tips)
+- [How to collect information for a bug report](#how-to-collect-information-for-a-bug-report)
+- [Related chapters](#related-chapters)
+
+## Sign-up and sign-in problems
+
+| What you see | Cause | Fix |
+|---|---|---|
+| "Enter a valid email address." | The email is not in the form name@domain.tld | Correct the email |
+| "Enter your password." | The password box is empty | Type it |
+| "Use at least 10 characters." (sign-up form) or "Password must be at least 10 characters." | Passwords need 10 to 128 characters | Choose a longer one |
+| "Password must be at most 128 characters." | The password is longer than 128 characters | Shorten it |
+| "That password is too easy to guess." | It is on a short list of very common passwords, or it uses fewer than 4 different characters | Choose a less guessable one |
+| "Password must not contain your email name." | The part of your email before the `@` (when it is 4 or more characters) appears in the password | Remove it from the password |
+| "An account with that email already exists." | You (or someone) signed up with this email before | Use the **Sign in** tab instead |
+| "Invalid email or password." | Wrong email or password. The message is the same whether or not the email exists. | Retype carefully. If you forgot your password, see below. |
+| "Too many sign-in attempts. Wait a few minutes and try again." | More than 8 attempts for one account, or 30 from one network, in 15 minutes | Stop trying and wait. Repeated attempts only extend the wait. |
+| "Too many sign-ups from your network. Try again later." | More than 5 sign-ups from one network in an hour | Wait, or ask someone on a different network |
+| "New sign-ups are closed on this server." (or "Registration is closed on this server.") | The operator closed sign-up | Ask the operator for an account. Existing users can still sign in, and only the **Sign in** tab is shown. |
+| "Cross-site request blocked." | A request that changes data arrived with your session cookie but without a matching origin | Use the app from the same address you signed in on, and see [Browser tips](#browser-tips) |
+| The screen "This server isn't fully set up yet" with a list | The operator has not finished the server set-up. The list says what is missing, for example that the secret key or the database is not configured, or that the database schema is out of date. | Tell the operator. Click **Check again** after they fix it. |
+| You were signed out | Your session ended (it lasts 7 days and is renewed as you use the app), you signed out, or you changed your password on another device, which ends the other sessions | Sign in again. You land on the page you were trying to open. |
+
+**I forgot my password.** There is no "Forgot password" button and no email verification in this version. Ask your operator: they can set a new password for your account with `ragi users set-password your@email`. Your connections, issues, history and plans stay as they are, and you are signed out on every device, so sign in again with the new password.
+
+**Changing your password.** **Settings**, **General**, **Change password**. You need your current password, the new one (10 to 128 characters) and a confirmation. Other signed-in sessions are signed out. The messages are "Enter your current password.", "Use at least 10 characters.", "Choose a password that is different from the current one.", "The two passwords do not match." and "Your current password is incorrect."
+
+## "Run audit" is disabled
+
+Hover over the dimmed button (or focus it with the keyboard). The tooltip gives the reason.
+
+| Tooltip or label | Cause | Fix |
+|---|---|---|
+| "Connect your data sources first" | Not all three systems are configured. A system counts as configured when its required fields are saved: the S3 Bucket, Access key ID and Secret access key; the manifest Connection string; the Qdrant URL. | Open **Data sources** and finish the cards marked **Not connected** (see [Connect your data sources](04-data-sources.md)). A saved connection counts even if you have not tested it. If you saved all three and the button is still dimmed, reload the page. |
+| "An audit is already running" | Another audit is in progress. It may have been started by another browser tab, by a script, or by a repair plan's **Verify now**. | Wait. **Overview** and the run page refresh every 3 seconds while an audit runs. Check **Audit history** for a run with the status **Running**. |
+| The button shows "Audit running" with a spinner | An audit that you started is in progress | Wait for the toast "Audit complete" or "Audit failed" |
+| "Audit running" never goes away | The run was cut off before it could save a result, for example because the hosting function was stopped | RAGGuard marks a run that has been "running" too long as Failed, with "abandoned: the process running it stopped" and the last step it reached. On a hosted server this happens about 360 seconds after the start (the 270-second time budget plus 90 seconds). Reload the page; the button is enabled again. See [An audit stays running or fails](#an-audit-stays-running-or-fails). |
+
+## "Connect your data sources first"
+
+You see this text in several places: the title of an empty state on **Integrity issues** and **Documents**, an error card ("Connect your data sources first, RAGGuard needs your S3 source, manifest database and Qdrant index before it can compare them"), and the button tooltip. On **Reconciliation** the title reads "Connect your data first". It means your workspace is not ready, or a request was refused with the message "Finish setup first: connect S3 source documents, the processing manifest, the Qdrant index in Settings." (the list names only what is missing).
+
+**Fix:** open **Data sources** (the button **Go to Data Sources** takes you there) and connect whatever is missing. On **Overview** the card "Connect your data" shows which of the three steps are **Done** and which are **To do**.
+
+## Connection test messages
+
+**Test connection** in a data source dialog checks what you typed without saving it. **Test** on a card checks what is saved and remembers the result. Each check line is green (ok), amber (warning) or red (failed). A message that begins with the name of a field and a colon (for example "URL: ...") is a problem with that field's value, shown in a red box above the buttons.
+
+### Amazon S3
+
+| Message | What it means | What to change |
+|---|---|---|
+| Configuration: "Fill in the required fields first: Bucket, ..." | A required field is empty | Fill in the fields listed |
+| Bucket reachable: "The bucket does not exist (check the name and region/endpoint)." | No bucket with that name was found | Check the **Bucket** spelling, **Region** and **Custom endpoint** |
+| Bucket reachable: "Access denied: the key needs s3:ListBucket on the bucket and s3:GetObject on its objects (AWS requires GetObject for the HEAD requests that read content hashes). Both are read-only." | The access key is valid but its permissions are too small | Give its user `s3:ListBucket` on the bucket and `s3:GetObject` on `bucket/*` |
+| "The access key ID is not recognised by this endpoint." | The key id is wrong, deleted, or belongs to another provider or endpoint | Re-enter the **Access key ID**; for an S3-compatible store set its **Custom endpoint** |
+| "The secret access key is wrong, or the region does not match the bucket." | The signature failed | Re-enter the **Secret access key**, and set **Region** to the bucket's own region |
+| "No usable credentials: fill in both the access key ID and the secret access key." | One of the two keys is missing | Fill in both |
+| "Could not connect to the S3 endpoint. Check the endpoint URL (leave it empty for AWS S3) and that it is reachable from the internet." | The address did not answer in time | Leave **Custom endpoint** empty for AWS. For another provider, check the address and that it is public. |
+| "Not found: check the bucket name." or "Access denied: check the access key permissions." | The store answered with a bare 404 or 403 | Same as above |
+| A message that starts with an error name such as "ClientError: ..." followed by the store's text | An error RAGGuard has no plain-language text for. A text about a region or a redirect means **Region** does not match the bucket's region. | Fix the field the text points to |
+| Documents found (amber): "No objects under this bucket/prefix yet. The audit will report an empty source." | The bucket or the **Key prefix** holds no files | Check **Key prefix**; add documents |
+| Key pattern (red): "None of the sampled keys (e.g. ...) match the key pattern. Adjust 'Key pattern' so it captures document_id (and optionally tenant_id)." | Your keys do not fit the pattern, so every document would be ignored | Change **Key pattern**. The default expects `tenant/path/to/document.pdf`. For a flat bucket use `^(?P<document_id>.+)$`. |
+| Key pattern (amber): "N of M sampled keys match; e.g. ..." | Some keys do not fit and will be ignored | Fine if intended (for example other folders). Otherwise adjust the pattern or **Key prefix**. |
+| Content hashes (amber): "N of 5 sampled objects carry a SHA-256 ...; the others fall back to the ETag, which is flagged unreliable for multipart uploads" | Some objects have no SHA-256 in user metadata (or as an S3 checksum) | Store the SHA-256 when you upload, or use **Content hash** `compute` (downloads each object; costs time and transfer) |
+| Content hashes (amber): "hash mode 'etag': ETags are not content hashes for multipart uploads" | You chose `etag` | Acceptable for a quick start. Stale-document findings become medium for multipart objects. |
+| Object metadata (red) with an access message | Reading the details of an object failed, usually because `s3:GetObject` is missing | Add `s3:GetObject` |
+| Field message: "Key pattern (regex): must contain a `(?P<document_id>...)` group" or "is not a valid regular expression" | The pattern is wrong | Add the `document_id` group, or fix the expression |
+
+### PostgreSQL manifest
+
+| Message | What it means | What to change |
+|---|---|---|
+| Database reachable: "Authentication failed: check the user name and password in the connection string." | Wrong user or password | Fix the **Connection string** |
+| "Connection timed out: the host is unreachable from the internet or a firewall blocks this server." | The database did not answer | Check the host and port, and allow this server through your firewall |
+| "The host name could not be resolved." | The host name in the string does not exist | Fix the host |
+| "SSL negotiation failed: try adding ?sslmode=require to the connection string." | The server needs (or refuses) SSL | Add `?sslmode=require` |
+| "Permission denied: the role cannot read this table." | The database user cannot `SELECT` the table | Grant `SELECT` on the table to the role |
+| Manifest table: "table public.rag_document_manifest was not found or has no mapped columns." (the schema and table shown are yours) | **Schema** or **Document table** is wrong, or none of the table's columns match RAGGuard's names | Fix the names, or map your columns with **Column map (JSON)** |
+| Manifest table: "no column for document_id (looked for 'document_id'). Map it with the column map." | The table has no `document_id` column | Map it, for example `{"document_id": "doc_ref"}` |
+| Manifest table: "could not inspect ...: ... Check schema/table names and that the role can read them." | The table could not be examined | Check names and permission |
+| Columns used for checks (amber): "missing source_hash, ...: the related checks (stale / partial / false-success detection) are reduced." Also shown as "Unmapped columns" on the card | The table lacks, or you have not mapped, columns RAGGuard uses for its best checks | Map them with **Column map (JSON)** (RAGGuard's name on the left, yours on the right). Not fatal, but those checks get weaker. |
+| Rows (amber): "the manifest table is empty" | The table has no rows | Check you pointed at the right table |
+| Role is read-only (amber): "this database role CAN write to the manifest table. RAG Integrity only reads (every query is READ ONLY), but a SELECT-only role is safer." | Your role has write rights | Optional: create a `SELECT`-only role. The test still passes. |
+| Chunk manifest (red): "... needs document_id and chunk_id columns" | The **Chunk table** lacks required columns | Map them with **Chunk column map (JSON)**, or clear the field |
+| Chunk manifest (amber): "not configured: partial indexes are detected from chunk counts and index gaps instead of exact chunk ids." | You gave no **Chunk table** | Fine. A chunk table lets RAGGuard name exactly which chunks are missing. |
+| Configuration (red): "Unknown manifest column 'x'; valid: ..." | A key in the column map is not a RAGGuard column name | The left side of each map entry must be one of the listed names |
+| Field message under **Connection string**: "That is not a valid database URL.", "Only postgresql:// connection strings are supported.", "The database URL needs a network host (unix sockets are not allowed).", "Unsupported connection option(s): x. Allowed: application_name, connect_timeout, sslmode.", "Invalid database port." | The string breaks a rule that keeps the connection safe | Use `postgresql://user:password@host:5432/dbname?sslmode=require` with only the allowed options |
+| Field message: "Schema: Invalid Schema '...': only letters, digits and underscores are allowed" (same for **Document table** and **Chunk table (optional)**) | The name has a character that is not allowed | Use letters, digits and underscores only |
+
+### Qdrant
+
+| Message | What it means | What to change |
+|---|---|---|
+| Qdrant reachable: "Qdrant rejected the API key (a read-capable key is required)." | A 401 or 403 from Qdrant | Enter a valid read-capable **API key** |
+| "Connection refused: check the URL and port." | Nothing is listening there | Fix the **URL** and port. A URL without a port uses 6333. If Qdrant is behind a TLS proxy, add `:443`. |
+| "The host name could not be resolved." | The host name is wrong | Fix the **URL** |
+| "Qdrant timed out. Check the URL and port (Qdrant Cloud uses `https://CLUSTER:6333`). On a very large collection, filtering by a field that has no payload index is slow: ask the cluster owner to create a keyword index on the document id field (for example source_id)." | No answer in time | Check the address. For large collections create a payload index on the document id field. |
+| Collections (red): "not found: x. Existing: a, b." | A name in **Collections** does not exist | Correct the name, or empty the field to audit every collection |
+| Collections (amber): "this Qdrant has no collections yet." | An empty cluster | Check you are on the right cluster |
+| Collection `name` (amber): "the collection is empty" | The collection holds no points | Check the name |
+| Payload of `name` (red): "sampled points carry no document_id. Map the payload field names with the payload map." | RAGGuard cannot tell which document a vector belongs to | Map the field with **Payload field map (JSON)**, for example `{"document_id": "doc_id"}` |
+| Payload of `name` (amber): "sampled points lack source_hash: freshness checks will be limited." | Vectors carry no content hash | Make your pipeline write `source_hash` into every payload |
+| "Qdrant needs a payload index on the field used to filter by document (strict mode). Ask the cluster owner to create a keyword index on it, or turn off 'Only audit documents found in the source (S3)'." | Qdrant's strict mode refuses to filter on a field without an index | Create a keyword index on the document id field, or turn that switch off |
+| "Not found: check the collection name." | A collection could not be found | Check **Collections** |
+| Connection (red): "ValueError: Unknown payload field 'x'; valid fields: ..." | A key in the payload map is not a RAGGuard field name | The left side of each entry must be one of the listed names |
+
+### Addresses that are refused (all systems)
+
+In hosted mode every address you enter must be public. The refusal appears as a red message that starts with the field's label (for example "URL: localhost is not a public host name."), or as a **Configuration** check.
+
+| Message | Cause | Fix |
+|---|---|---|
+| "HOST is a private or reserved address; only public hosts are allowed." | An IP address on a private network, loopback, link-local, or another reserved range | Use a public address |
+| "HOST is not a public host name." | `localhost`, or a name ending in `.local`, `.internal`, `.lan`, `.home.arpa` | Use a public name |
+| "Could not resolve HOST." | The name does not resolve in DNS | Fix the name |
+| "HOST resolves to a private or reserved address; only public hosts are allowed." | A public-looking name that points to a private address | Point it at a public address |
+| "A host name is required." | The address has no host | Complete it |
+| "URL must start with https:// or http://." | Wrong scheme | Add `https://` |
+| "Do not put credentials inside the URL." | A user name or password is in an address | Remove them. For Qdrant use the **API key** field. |
+| "Invalid port in URL." | The port is not a valid number | Fix it |
+
+If your systems are on a private network, expose a public endpoint to them (for example through a tunnel or a proxy), or ask your operator whether the server was set up to allow private addresses. A user cannot change this setting.
+
+### Other messages while connecting
+
+| Message | Meaning |
+|---|---|
+| "Too many connection tests. Try again in a few minutes." | The limit is 30 tests per workspace in 10 minutes. This stops the server being used to scan networks. |
+| "Nothing to check yet. Fill in a field first." | You pressed **Test connection** on an empty form |
+| **Save** is dimmed | Nothing has changed since the last save |
+| Inline under a field: "X is required.", "The address must start with https:// or http://.", "The connection string must start with postgresql://.", "The pattern must contain a `(?P<document_id>...)` group.", "Use letters, digits, _, - and . only, separated by commas.", "Enter a JSON object with text values, for example {"document_id": "doc_ref"}.", "Not valid JSON (...).", "Enter a whole number.", "Enter a number.", "Choose one of: ..." | The value breaks the field's format. The server may add a range message such as "Chunk size: must be between 1 and 1000000". |
+
+## A data source card says Error or Status unavailable
+
+**Error (red).** The card is configured, but the live check failed. The line under the title is the error. On a card that line can be the raw error text, for example one that starts with "ClientError:", because the card shows the technical message. Click **Test** on the card for the plain-language explanation. Usual causes: a key was rotated or deleted, the bucket was renamed, a database password changed, a host moved, a firewall changed, or the Qdrant key changed.
+
+| Card line | Meaning |
+|---|---|
+| "table X not found or has no mapped columns" | The manifest table name is wrong, or none of its columns match |
+| "X has no document_id column" | The manifest table has no `document_id` (or a mapped equivalent) |
+| "collection(s) not found: x" | A name in **Collections** does not exist in Qdrant |
+| "bucket 'x' reachable, hash mode 'metadata'; N sample key(s) don't match RAGI_S3_KEY_PATTERN" | Works, but some sampled keys do not fit your **Key pattern** |
+
+**Status unavailable (amber).** "Live status is unavailable right now" means the server could not run the check (it may have been briefly unreachable). Click **Refresh status** at the top of the page.
+
+**Checking (blue)** is shown while the live check runs and should pass within seconds.
+
+After you save a new configuration, an earlier test result on the card is cleared, because it no longer applies.
+
+## An audit stays running or fails
+
+Where to read the reason: the red message on **Overview** under **Last audit**, the "This audit failed" panel on the run's page in **Audit history**, the toast "Couldn't start the audit" or "Audit failed", and the **Error** shown in the Activity log.
+
+| What you see | Cause | Fix |
+|---|---|---|
+| "The audit ran out of time while reading the source bucket (listed N objects so far). This corpus is too large to audit in one go here: audit one tenant at a time, narrow the source (for example the S3 key prefix), or run `ragi audit` on a machine without a request time limit." The thing being read can also be "the processing manifest", "the chunk manifest" or "the vector index". In Audit history the message starts with "AuditTimeout:". | On a hosted server an audit has 270 seconds (the hosting function stops at 300). Your corpus is too big to finish within that. | Audit one tenant at a time with **Scoped audit**. Set a **Key prefix**. For a very large bucket switch on **Look up files from the manifest (skip listing the bucket)**, which needs one request per listed file instead of listing everything and requires the manifest's `source_uri` to be mapped. Use **Content hash** `metadata` rather than `compute`. For a collection shared with other products switch on **Only audit documents found in the source (S3)**. Or ask your operator to run `ragi audit` on a machine without a time limit. |
+| "Qdrant timed out. ..." | One Qdrant request took more than about 60 seconds, usually a filter on a field without an index | Ask the cluster owner to create a keyword index on the document id field |
+| "abandoned: the process running it stopped (last step: reading the vector index (Qdrant), N s in)" | The process that was running the audit stopped before it could record a result, for example because the host stopped it | The text after "last step" says where it got to; apply the matching fix from the first row. Start the audit again. |
+| "An audit is already running." / "An audit is already running for this workspace." | Only one audit can run at a time per workspace | Wait for the other one |
+| "Finish setup first: connect ..." | A required connection is missing | See [Connect your data sources first](#connect-your-data-sources-first) |
+| The message names one of your systems, for example an access denied text, "Qdrant rejected the API key ..." or "Authentication failed ..." | A connection stopped working since you last tested it | See [Connection test messages](#connection-test-messages) |
+
+## Everything looks missing, or an audit warns about document IDs
+
+An audit can only match documents whose ID is the same in S3, the manifest and Qdrant. When the IDs differ, most documents look missing or orphaned and the numbers are noise. Start with the **Setup check** on **Data sources**: it compares the IDs in plain words ([The Setup check](04-data-sources.md#the-setup-check)).
+
+| What you see | Likely cause | Fix |
+|---|---|---|
+| **Files in S3** needs fixing: none of the file names match the key pattern | The **Key pattern** does not fit your file names (for example it expects `.pdf` and the bucket holds `.md`) | Change the **Key pattern** in the S3 dialog so it captures the document ID from the real file names the check shows, save, and check again |
+| **S3 against the manifest** is red or amber, and the IDs at a glance look alike but are not the same (`2329961` and `bill-2329961`) | S3 and the manifest write the ID differently | Make both sides write the ID the same way, or change the key pattern. RAGGuard compares IDs exactly: an ID clean-up rule is not available yet |
+| **Tenant names agree** needs fixing | The systems use different tenant names, or one side has none | Make the tenant names match, or set the **Default tenant** for data without tenants |
+| **S3 against Qdrant** is low | The IDs in the Qdrant payload differ from the file IDs, or those documents are not indexed yet | Compare the IDs at a glance; map the Qdrant payload field that holds the document ID |
+| **Qdrant against S3** says most of the index belongs to other documents | The collection is shared with other sources | Turn on **Only audit documents found in the source (S3)** under **Settings**, **Policy**. The row then passes: it was information, not a problem |
+| An amber notice on **Overview** and a warning on the audit's page: more than one file in S3 shares an ID | A key pattern that captures only the file name, while the same name exists in two folders | Change the key pattern so every file gets its own ID (for example include the folder), or remove the extra copies |
+| The warning says more than one manifest row shares an ID | Old rows were left behind when a document was processed again, or the mapped ID column is not unique | Remove the old rows, or map a column that is unique per document as the document ID |
+| The warning says some manifest rows have no document ID | The column map points at the wrong column | Check the column map for the manifest on **Data sources** |
+
+These warnings do not make an audit's findings wrong: the audit followed one item per ID, and the warning tells you what it could not see. Fix the cause, run a full audit, and the warning goes away.
+
+## Zero issues when you expect some
+
+Work through these in order. Each is a way the audit can legitimately see less than you expect.
+
+| Check | How to tell | Fix |
+|---|---|---|
+| You are looking at a filter | The **Issues** tab shows **Open** issues only by default. Ignored and resolved issues are hidden. A severity chip or other filter may be on. | Click **Clear filters**, or set **Status** to **All statuses** |
+| No audit has run, or the last one failed | **Overview** says "No audit has run yet", or **Last audit** is red | Run an audit and read any error |
+| You only ran a scoped audit | The run's **Scope** is a tenant or "N documents" | Run a full audit. The results on **Reconciliation** come from the latest full audit. |
+| Your documents are not being found | **Source documents** on **Reconciliation** is 0 or too low | Run the **Setup check** on **Data sources**: it shows real file names next to your pattern. Check **Key prefix** and **Key pattern**. Keys that do not match the pattern are ignored (the Setup check counts them), and so are keys that end in `/`. |
+| Documents are still inside the grace period | They are listed as **Pending** under **Document status** | Wait, or reduce **Grace period (minutes)** on **Settings**, **Policy** |
+| **Only audit documents found in the source (S3)** is on | The switch on the **Policy** tab | With it on, orphan vectors, orphan manifest rows and tenant mismatches are not reported, by design |
+| **Look up files from the manifest (skip listing the bucket)** is on | The switch in the S3 dialog | A file that is in S3 but not in the manifest is not discovered, so "never ingested" documents are not reported |
+| Wrong or narrow **Collections** | Only the collections listed are audited | Correct the names, or empty the field for every collection |
+| Vectors have no document id | One issue "Vectors without a document id" instead of document issues | Map the field with **Payload field map (JSON)** |
+| Vectors carry no hash or version | In a document's **Chunks** tab (**Inspect live**) the class is `unknown` | Make your pipeline write `source_hash` (and ideally a version) into every payload. Without it RAGGuard cannot tell whether a vector is current. |
+| Manifest columns are not mapped | The manifest card shows "Unmapped columns" | Map `source_hash`, `processing_status`, `expected_chunk_count` and `indexed_chunk_count` so the stale, partial and false-success checks are complete |
+| No target pipeline set | **Settings**, **Pipeline** is empty | Drift is only reported for vectors of one document that disagree with each other. Set the target to detect drift against it. |
+| **Detect empty embeddings** is off | The switch on the Qdrant card | Empty or all-zero vectors are only checked when it is on |
+| Every issue was ignored | **Status** set to **Ignored** shows them | Reopen what no longer applies |
+| The index really is healthy | A green **Health score** with no open issues | To be sure, pick a document you know is wrong, open it on **Documents** and click **Inspect live**. If live shows a problem the audit does not, use the rows above. |
+
+## Too many issues
+
+| What you see | Cause | Fix |
+|---|---|---|
+| Almost every document has **Stale document version** | The hash RAGGuard reads from S3 is not the value your pipeline stored as `source_hash`. Common reasons: the pipeline hashes something else, the objects carry no SHA-256 so RAGGuard fell back to the ETag, the **SHA-256 metadata key** name differs, or the uploads were multipart. | Open one document, **Chunks** tab, **Inspect live**. Compare the source hash, the manifest's source hash and the vector classes. Make them the same value, or use **Content hash** `compute` as a reference. Then audit again. |
+| Almost every document has **Pipeline drift** | The target pipeline on **Settings**, **Pipeline** does not match what your pipeline records. Values are compared as text, so `recursive-v2` and `recursive_v2` differ. An empty target does not cause this; a wrong one does. | Correct the target, or clear the fields you are unsure of |
+| A **Critical** "Collection vector size does not match the target embedding model" | **Embedding dimensions** differs from a collection's vector size | Fix the number, or point the audit at the collection built with the new model |
+| Many **Missing embeddings** and many **Orphan vectors** with similar names | The same document is named differently in different systems | See [Documents shown as Failed, Missing or orphaned unexpectedly](#documents-shown-as-failed-missing-or-orphaned-unexpectedly) |
+| Many **Metadata mismatch** that mention missing payload fields | The vectors lack a field you require. With more than one tenant, `tenant_id` is required by default. | Make the pipeline write the field, or set **Required payload fields** to what your vectors really carry |
+| Many **Metadata mismatch**: "Manifest says N chunks indexed, the index holds M." | The manifest's `indexed_chunk_count` is counted differently from the chunks in the index, or is out of date | Check how the pipeline fills that column, or map the right column |
+| **Superseded vectors active** after a re-index | Old and new vectors of a document exist together until cleanup | Normal. Approve the cleanup of the repair plan. |
+| Orphan vectors for documents you never had | The index or manifest is shared with other products | Switch on **Only audit documents found in the source (S3)**, set a **Key prefix**, or limit **Collections** |
+| Many **Pending** documents | Ingestion is running right now, or the grace period is short | Wait, or raise **Grace period (minutes)** |
+| The first audit of an old system looks bad | It reflects real history | Triage by severity (critical first), ignore what you accept with a reason, and repair the rest in plans |
+
+## Documents shown as Failed, Missing or orphaned unexpectedly
+
+**What "Failed" means.** On **Documents** the **Embedding status** "Failed" does not mean a job failed. It is the label for a document whose audit status is **Broken** or **Orphaned** (and that has no missing or stale issue). Open the document to see why.
+
+**The id must be the same in all three systems.** RAGGuard matches a document across S3, the manifest and Qdrant by its **tenant** and its **document id**.
+
+- In S3 the id comes from the key. The **Key prefix** is removed first, then the **Key pattern** is applied. With the default pattern, `acme/policies/leave.pdf` is tenant `acme` and document `policies/leave.pdf`.
+- In the manifest it is the `tenant_id` and `document_id` columns.
+- In Qdrant it is the `tenant_id` and `document_id` payload fields.
+
+If one system writes `leave.pdf` where another writes `policies/leave.pdf`, RAGGuard sees two different documents: one that exists in S3 with no vectors (**Missing embeddings**), and one that has vectors but no source (**Orphan vectors**). On **Documents**, search for part of the name and look for the pair.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Documents with a red cross in **Source** but a tick in **Index** | The source key is not what the vectors say, or the file really was deleted | Compare the ids shown. Fix the **Key prefix**, **Key pattern**, **Payload field map (JSON)** or **Column map (JSON)**, or fix the pipeline's ids |
+| Documents with a tick in **Source** and a red cross in **Index** and **Manifest** | The pipeline never processed them, or wrote them under a different id | Same as above, then repair |
+| Everything is under one tenant, or tenants look wrong | The key pattern has no `tenant_id` group, so every document gets the **Default tenant**, while the manifest or vectors name real tenants | Add a tenant group to **Key pattern**, or write the tenant consistently |
+| Documents are missing from the source side | The **Key prefix** is too narrow, or the keys do not fit the pattern | Test the S3 card and read **Key pattern** |
+| A document shows as **Processing** for a long time | It was changed, or its manifest status is in flight, within the grace period | Wait. A document stuck in flight for longer than the grace period is reported with the time it has been stuck. |
+| "Document not found" when opening a document | RAGGuard has no record of it in this workspace | Run an audit; check the key pattern |
+
+## Numbers differ between pages
+
+| You notice | Reason |
+|---|---|
+| The **Health score** on Overview differs from the score of the last audit | Overview shows the score of all documents as of now. A scoped or verification audit refreshes only its documents, so it can move the score; a run's own score covers only its scope. |
+| **Health over time** has fewer points than there are audits | It draws one point per completed **full** audit, and needs two to draw a line |
+| The health score did not change after you ignored issues | Ignoring changes the issue list, not how documents are judged |
+| **Open issues** is lower than **Findings** in the last audit | Findings counts what that audit found. Open issues counts issues that are open now, which excludes Ignored ones. |
+| **Resolved** is 0 on a full audit that followed a verification | The verification audit already resolved the issues in the plan's documents |
+| **Unchanged** and **Escalated** overlap | An issue whose severity went up is counted under both |
+| The runs table shows "Api" as the trigger for runs you started in the browser | The web interface uses the same API as scripts. Both show **Api**. |
+| The exported report omits healthy documents | It lists only documents with open issues. The API's `include_healthy=true` adds the rest. |
+
+## Repair problems
+
+### The webhook
+
+| Message or symptom | Cause | Fix |
+|---|---|---|
+| "No repair webhook configured. Set RAGI_REPAIR_WEBHOOK_URL (and RAGI_REPAIR_WEBHOOK_SECRET) to hand repairs to your ingestion worker, or export the plan from GET /api/repairs/{id}/payload." and the amber note "No repair webhook is set up yet, so triggering will fail." | No webhook address is saved. (The message names server settings; in the hosted app you set them on the **Integrations** card.) | **Integrations**, **Repair webhook**, **Configure**: set **Webhook URL** and **Signing secret**, **Check settings**, **Save**. Or use **View payload** to copy the request and give it to your worker by hand. |
+| "RAGI_REPAIR_WEBHOOK_SECRET must be set before payloads are sent to a real webhook." | The **Signing secret** is empty. The card shows "A signing secret is required before anything is sent." | Open **Edit** and enter a **Signing secret** |
+| "Repair webhook delivery failed: ..." followed by an error type and status, with your worker address replaced by `<webhook>` (for example `HTTPStatusError: Server error '500 Internal Server Error' for url '<webhook>'`) | Your worker did not accept the request: it was unreachable or too slow (RAGGuard waits 30 seconds, once), or it answered with an error status such as 401 (invalid signature), 404 (wrong path) or 500 | The plan stays **Draft**. Fix the worker (check its log, that it verifies with the same secret over the raw body, and that its clock is within 5 minutes of the real time), then click **Trigger repair** again |
+| "HOST is not a public host name." when saving the webhook | The worker address must be public in hosted mode | Use a public address |
+| "Plan is 'triggered'; only draft, partial or failed plans can be (re)triggered." | The plan was already sent | Wait for your worker, then **Verify now** |
+
+### Verification
+
+| Message or symptom | Cause | Fix |
+|---|---|---|
+| "Trigger the plan before verifying it." | A Draft plan cannot be verified | **Trigger repair** first |
+| The plan stays **Triggered** | Your worker has not finished, or it does not call back | Click **Verify now** when it has finished. A callback must be signed with the same secret, or RAGGuard answers "Invalid callback signature." |
+| Documents are **Not fixed yet** with "Still found: ..." | The new data in your index does not match the source. Verification re-audits the real index, and does not trust the worker. | See the table below, then **Send repair again** (only failed documents are sent) and **Verify now** |
+
+What "Still found" tells you:
+
+| Still found | What to check in your worker |
+|---|---|
+| missing embedding, partial index | It did not write all chunks, wrote to a different collection, or used a different document id or tenant than the source |
+| stale embedding | It did not re-read the latest source, or wrote an old `source_hash`. It must store the source's hash in every payload and in the manifest. |
+| metadata inconsistent, pipeline drift | It did not update the manifest (`source_hash`, `indexed_chunk_count`, `indexed_version`, pipeline fields), or it used a model or chunking that is not your target pipeline |
+| superseded, duplicate, orphan or tenant mismatch (the "Old vectors removed" check) | Expected until cleanup; this is not a failure of the first four checks |
+
+### Cleanup not offered
+
+**Approve cleanup** appears only when the plan is **Cleanup pending**.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| No **Approve cleanup** button | The plan is not **Cleanup pending**. Removal comes only after documents are verified. | Trigger, wait, **Verify now**. Documents that failed verification keep their old vectors, and removal covers only verified documents. |
+| "Cleanup can only be approved once replacements are verified (plan is 'draft')." | Same | Same |
+| "Nothing is eligible for cleanup yet: documents must first pass verification." | No document is in **Replacements verified** or **Waiting for cleanup** | Fix the failing documents first |
+| "No superseded vectors found any more - run verify again." | Nothing is left to remove (someone already removed them) | **Verify now**, and then **Run full audit** |
+| A **Draft** plan whose documents are all "Remove old vectors", and **Trigger repair** answers "This plan has nothing to reprocess (cleanup only). Use approve-cleanup." | A known limit in this version. **Trigger repair** sends only documents that need re-processing, and **Approve cleanup** is offered only after a trigger and a verify, so a plan made only of removal work (orphan, duplicate, superseded or tenant-mismatch vectors) cannot progress. | Remove the vectors in your own tools (the evidence lists them; **Raw evidence (JSON)** has the point ids) and run another audit. Or create the plan with **Create plan from recommendations** when it also contains at least one document that needs re-processing; after **Verify now** the removal-only documents show **Waiting for cleanup** and are removed on **Approve cleanup**. |
+| You chose **Automatic** under **Vector removal** | Removal is requested right after a successful verification, so you never see **Cleanup pending** | Expected. The plan goes to **Cleanup triggered**. |
+| The confirmation says "Remove 0 old vectors?" although a cleanup will remove vectors | The number is the plan's estimate from when it was created. The exact list is read again from your index when you confirm. For documents that were stale when the plan was made, the old vectors only count as removable after the repair, so the plan's estimate can be 0. | Go ahead if the plan is right. The plan's **History** entry "Cleanup sent to your worker" shows the number actually sent. |
+| After **Approve cleanup**, old vectors are still there | Your worker has not deleted them yet, or did not delete the exact point ids in the request | After it runs, click **Verify now**. If "Old vectors removed" still fails, the plan returns to **Cleanup pending** and you can approve again. |
+
+### Plan creation
+
+| Message or symptom | Cause | Fix |
+|---|---|---|
+| "No open document-level issues match that selection." | There is nothing to repair for that selection. Plans use open issues on specific documents only: Ignored and Resolved issues, and "Whole collection" issues, are not included. | Pick other issues, or lower **Minimum severity** |
+| The **Create repair plan** button is dimmed with the tooltip "Only open issues on a specific document can be repaired" | Your selection holds only collection-wide or non-open issues | Select open document issues |
+| "Nothing to repair" in **Recommended work** | No open document issue at or above the chosen **Minimum severity** | Choose a lower minimum |
+
+## API key problems
+
+| What you see | Cause | Fix |
+|---|---|---|
+| `401` with "Sign in required." | The key is missing, mistyped, revoked, or sent in the wrong form. In hosted mode a key that is not recognised looks the same as no sign-in. | Send `Authorization: Bearer ragi_...` (with the word `Bearer` and a space). Check there is no extra space or line break. If you lost the token, revoke the key and create a new one: the token cannot be shown again. |
+| `401` with "Missing or invalid API key" | A single-user server protected by its shared key | Send it as `X-API-Key` or as a Bearer token |
+| `403` with "This action needs a signed-in session, not an API key." | You called a session-only action: settings, connection tests, API keys, or changing a password | Do it in the browser |
+| `403` with "Cross-site request blocked." | A browser cookie was sent with the request but no matching origin | Call the API with the key only, and no cookies |
+| `409` with "An audit is already running." | Another audit is in progress | Try again later |
+| `409` with "Finish setup first: connect ..." | A connection is missing | Finish **Data sources** |
+| `422` | A required value is missing, or the body is not sent as JSON | Send `Content-Type: application/json` and a valid body |
+| `429` | A rate limit was hit | Wait and retry less often |
+| `502` | One of your systems refused or failed; the message says which | See [Connection test messages](#connection-test-messages) |
+| `503` | "This deployment is not set up yet.", or a connection could not be built | Tell your operator, or check **Data sources** |
+| `504` | The audit used up its time budget | See [An audit stays running or fails](#an-audit-stays-running-or-fails) |
+| "You can have at most 20 API keys. Revoke one first." | The limit is 20 keys | Revoke one you no longer use |
+| **Last used** says "Never" | The key has never been used successfully | Test it with `curl -H "Authorization: Bearer ..." https://your-address/api/overview` |
+
+## Alerts not arriving
+
+| Check | What to look at | Fix |
+|---|---|---|
+| Is a webhook saved? | The badge on the **Alert webhook** card says **Configured**. The address is never shown again after saving; the form says "A value is saved". | Save a **Webhook URL**. It must be a public address. |
+| What did the last audits do? | **Recent deliveries**, with **Show** set to **Every audit**. Each row has an outcome and a reason. | See the next rows |
+| "No alert webhook was configured." | No address saved | Save one |
+| "No new issues at or above the minimum severity." | An alert is due only for issues that are **new**, **reopened** or **escalated**, and at or above **Minimum severity** (default `high`). An issue that stays open and unchanged never alerts again, so a steady state is silent. | Check the **Opened**, **Reopened** and **Escalated** counts of the run. If they are 0, nothing was due. Lower **Minimum severity** if you want more. |
+| **Failed** with an error text such as `HTTPStatusError: Client error '404 Not Found' for url '<webhook>'` (the address is always replaced, so it is safe to copy) | The webhook did not accept the message. RAGGuard tries once and waits 10 seconds; it does not retry, and it does not resend later. | Fix the address (a Slack webhook that was deleted or regenerated is the usual cause). Missed alerts are not resent, so check **Integrity issues** for what you missed. |
+| "Check settings" showed no message in Slack | **Check settings** only validates the values and sends nothing | To test the webhook itself, send a test message to it yourself, for example `curl -X POST -H "Content-Type: application/json" -d '{"text":"test"}' YOUR_WEBHOOK_URL` |
+| The message went to the wrong channel | The webhook decides the channel | Create a webhook for the right channel |
+| You wanted email, per-type rules, or a digest | **Not available yet** | Use the webhook (for example into a channel that forwards to email). The only filter is **Minimum severity**. |
+
+## The page is not updating
+
+| What you see | Reason | Fix |
+|---|---|---|
+| A list does not show the audit you started from a script or another tab | Lists load when you open a page and refresh after your own actions. Only **Overview** (and a run's page) refresh by themselves, every 3 seconds, while they know an audit is running. | Reload the page |
+| **Data sources** shows an old status | The live status is checked when you open the page and kept for 30 seconds | Click **Refresh status** |
+| A filter hides rows you expect | Filters and tabs are kept in the page address, so a shared or bookmarked link carries them | Click **Clear filters** |
+| "Showing the first 500 of N. Narrow the filters." | The page loads at most 500 rows of a list | Narrow the filters |
+| The new settings have no effect | Settings apply from the next audit onwards, not to earlier results | Run a new audit |
+| The open-issue count in the left menu is old | It refreshes after audits and actions | Reload |
+| After an update of the product the page looks odd | Your browser kept old files | Hard reload: **Ctrl+F5** (Windows, Linux) or **Cmd+Shift+R** (Mac) |
+
+## Browser tips
+
+- Use a current version of a mainstream browser, with JavaScript and cookies enabled. Signing in uses a cookie named `ragi_session` for the site. If cookies are blocked, you keep returning to the sign-in screen.
+- Always use the same address for the site. Do not mix `http` and `https` or different host names: the cookie belongs to one site, and every change you make is checked to come from the same site.
+- Extensions that block requests or remove browser headers can cause "Cross-site request blocked." or empty pages. Try a private window with extensions off.
+- Press `/` anywhere (outside a text box) to jump to the search box. Press `Escape` to close a menu.
+- On a phone, the left menu is behind the button **Open navigation**.
+- **Export report** downloads a file named `rag-integrity-report` with the extension of the format you chose. If nothing downloads, check whether your browser blocked the download.
+- The one-time API token dialog cannot be closed by clicking outside it or pressing `Escape`. Click **I've copied it**.
+- A private window works but you must sign in each time.
+
+## How to collect information for a bug report
+
+Gather these before you ask for help. They let someone reproduce the problem without guessing.
+
+1. **What you did and what you expected.** The page, the button, and what you saw instead. Copy the exact text of the message or toast.
+2. **The version and mode.** The small card at the bottom of the left menu shows `LIVE` or `DEMO` and the version. **Settings**, **General** shows **Server mode** and **Version**.
+3. **The time.** The date, the time and your time zone. Run details use your local time.
+4. **The ids.**
+   - For an audit: the run id. On the run's page in **Audit history**, click **Copy run id**.
+   - For an issue: its address ends with `/issues/` and the issue id.
+   - For a repair plan: the short id in its title; the full id is in the address (`plan=`).
+   - For a document: its tenant and document id as shown on **Documents**.
+5. **The test result.** For a connection problem, the whole result list of **Test connection** (copy the lines). Remove secrets first.
+6. **The server's own answer.** `https://your-address/healthz` is public and shows whether the server is up, its version, its mode, whether the ledger is reachable and whether set-up is still required. For a failed action, the browser's developer tools (the **Network** tab) show the response; its `detail` field holds the message.
+7. **Your browser and its version**, and a screenshot of the page.
+8. **Whether it happens every time**, and whether a reload or a different browser changes it.
+
+**Never include secrets.** Do not paste access keys, secret access keys, connection strings with passwords, Qdrant or API keys, signing secrets, webhook addresses, session cookies or API tokens. RAGGuard scrubs passwords out of its own messages, but check before you paste. An exported report lists document ids, so check that they are safe to share too.
+
+## Related chapters
+
+- [End-to-end journey](15-end-to-end-journey.md) and [Practical use cases](16-use-cases.md)
+- [Reference: every value](17-reference.md)
+- [Connect your data sources](04-data-sources.md), [Repair plans](08-repair-plans.md) and [Integrations](12-integrations.md)
+- [Audit history](11-audit-history.md), [Alerts](13-alerts.md) and [Settings](14-settings.md)
+
+---
+

@@ -203,6 +203,7 @@ If you open a hosted RAGGuard server without being signed in, the page at the ro
 |---|---|---|
 | Logo | The RAGGuard mark | The top of the landing page |
 | Menu links **The problem**, **How it works**, **What it finds**, **Security**, **FAQ** | Section names. Hidden on narrow screens. | Scroll to that section of the same page |
+| Menu link **Guides** | Hidden on narrow screens. | The how-to guides (`/guides`): eight ways a RAG index drifts from its documents, each with a check you can run yourself, and how to use RAGGuard from an AI assistant. Public. |
 | Menu link **User guide** | Hidden on narrow screens. | The Help pages (`/help`): the video walkthrough and every chapter of this guide. You can read them without an account. |
 | **Sign in** | | The Sign in screen (`/login`) |
 | **Get started** | | The Create account screen (`/signup`). Shown only when sign-ups are open. |
@@ -232,7 +233,7 @@ If you open a hosted RAGGuard server without being signed in, the page at the ro
 | Works with | "The tools you already run" | Two connections are enough to start: Amazon S3 (and S3-compatible stores) and the vector index, Qdrant (self-hosted or Cloud) or pgvector (any PostgreSQL, including LangChain and LlamaIndex tables). The PostgreSQL manifest is marked optional. |
 | FAQ | "Questions, answered" | Seven questions, each of which expands when you click it: does RAGGuard change my data, what do I need to connect, how does it know what my index should contain, how much does it cost (nothing during the beta), what is a free audit, can I run audits from CI or on a schedule, and how are my credentials protected. |
 | Closing call to action | "See what your index is really serving." | "Free during beta", the two buttons again, and the line "Questions first? Read the FAQ or email kishore.knaresh07@gmail.com." |
-| Footer | The RAGGuard mark and a one-line description | **Sign in**, **Create account** (only when sign-ups are open), **FAQ**, **User guide**, **Book a free audit**, **Contact**, **Privacy** and **Terms**. |
+| Footer | The RAGGuard mark and a one-line description | **Sign in**, **Create account** (only when sign-ups are open), **FAQ**, **Guides**, **User guide**, **Book a free audit**, **Contact**, **Privacy** and **Terms**. |
 
 ### Where the buttons and links go
 

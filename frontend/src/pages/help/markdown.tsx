@@ -1,4 +1,4 @@
-import { isValidElement, type ReactNode } from "react";
+import { isValidElement, useMemo, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { Link } from "react-router-dom";
 import rehypeSlug from "rehype-slug";
@@ -17,8 +17,16 @@ const textOf = (node: ReactNode): string => {
   return "";
 };
 
+/** Where a link in the Markdown goes: an app route, an outside address, an anchor on the page, or nowhere (a repository file). */
+export interface ResolvedHref {
+  to?: string;
+  external?: string;
+  native?: string;
+  unavailable?: boolean;
+}
+
 /** `20-isolation.md#the-limited-state` -> /help/20-isolation#the-limited-state. Files outside the guide are not part of the app. */
-function resolve(href: string): { to?: string; external?: string; native?: string; unavailable?: boolean } {
+function resolve(href: string): ResolvedHref {
   if (href.startsWith("#")) return { native: href };
   if (/^(https?:|mailto:)/i.test(href)) return { external: href };
   const [path, fragment] = href.split("#");
@@ -31,10 +39,10 @@ function resolve(href: string): { to?: string; external?: string; native?: strin
   return { unavailable: true }; // GUIDE.md, README.md in the repository root, other docs: they live in the repository
 }
 
-const components: Components = {
+const makeComponents = (resolveHref: (href: string) => ResolvedHref): Components => ({
   a({ href, children }) {
     if (!href) return <span>{children}</span>;
-    const r = resolve(href);
+    const r = resolveHref(href);
     if (r.to) return <Link to={r.to}>{children}</Link>;
     if (r.external) return <a href={r.external} target="_blank" rel="noopener noreferrer">{children}</a>;
     if (r.native) return <a href={r.native}>{children}</a>;
@@ -74,13 +82,19 @@ const components: Components = {
       </div>
     );
   },
-};
+});
 
-/** One chapter of the guide, styled with the product's own tokens. Raw HTML is never rendered. */
-export function GuideMarkdown({ text }: { text: string }) {
+const components = makeComponents(resolve);
+
+/**
+ * One chapter of the guide, styled with the product's own tokens. Raw HTML is never rendered. `resolveHref` replaces the user guide's
+ * own link rules, for other Markdown shown the same way (the how-to guides).
+ */
+export function GuideMarkdown({ text, resolveHref }: { text: string; resolveHref?: (href: string) => ResolvedHref }) {
+  const custom = useMemo(() => (resolveHref ? makeComponents(resolveHref) : null), [resolveHref]);
   return (
     <div className="help-prose">
-      <ReactMarkdown remarkPlugins={PLUGINS} rehypePlugins={REHYPE} components={components}>
+      <ReactMarkdown remarkPlugins={PLUGINS} rehypePlugins={REHYPE} components={custom ?? components}>
         {text}
       </ReactMarkdown>
     </div>

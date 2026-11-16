@@ -1,19 +1,37 @@
 <p align="center"><img src="docs/assets/logo.svg" alt="RAGGuard logo" width="88"></p>
 
-# RAG Integrity
+# RAGGuard
 
-**Know when your RAG index is wrong - before your users do.**
+**Know when your RAG index is wrong, before your users do.**
 
-RAG Integrity is an independent control plane that audits a production RAG pipeline. It continuously answers one
-question:
+RAGGuard checks that a RAG (retrieval-augmented generation) index still matches its source documents. It compares the files in
+Amazon S3 with your vector index in **Qdrant** or **pgvector** (and your ingestion pipeline's records, if you keep them), and finds
+what drifted silently while every job reported success:
 
-> *Is the information in my vector database exactly consistent with the latest source data?*
+- documents that were never embedded
+- stale embeddings: the file changed, the vectors did not
+- two versions of a document answering at once
+- deleted documents that are still searchable
+- half-indexed documents, duplicate chunks from retried ingestion, empty or all-zero vectors
+- chunks tagged with the wrong tenant, so one customer's content can reach another
 
-It does **not** replace your ingestion pipeline. It reads your source documents (S3) and your vector index (Qdrant, or a
-pgvector table in PostgreSQL / Supabase), plus your processing manifest if you have one (it is optional), through
-**read-only** connectors, reconciles them, records
-every inconsistency with evidence in an issue ledger, and - when you ask it to - hands a repair plan to **your own**
-worker and independently verifies the result.
+Every finding comes with its evidence and a safe repair plan that **your own** worker carries out. RAGGuard only ever reads your
+systems. It does not replace your ingestion pipeline, and it does not grade LLM answers (tools like Ragas and DeepEval do that): it
+checks the index underneath them.
+
+**Ways to use it**
+
+- **Hosted:** [rag-integrity-platform.vercel.app](https://rag-integrity-platform.vercel.app), free during the beta.
+- **Guides:** [eight ways a RAG index drifts](docs/guides/README.md), each with a SQL check you can run yourself.
+- **From CI and AI assistants:** the [`ragguard` command and MCP server](clients/python/README.md), so Claude Code, Cursor and other
+  assistants can run the checks ([how to connect them](docs/guides/09-use-ragguard-from-your-ai-assistant.md)).
+- **Self-hosted:** run it yourself, below.
+
+```bash
+pip install "ragguard-cli[mcp] @ git+https://github.com/kishore600/rag-integrity-platform#subdirectory=clients/python"
+export RAGGUARD_API_KEY=ragi_...        # create one on the Integrations page
+ragguard check --fail-on high           # run an audit; exit code 1 if high or critical issues are open
+```
 
 > **Want the complete picture?** [GUIDE.md](GUIDE.md) explains everything that was built: every page of the web interface, every
 > Settings group and field, every issue type, the repair workflow, the API, the CLI, the data model, security,

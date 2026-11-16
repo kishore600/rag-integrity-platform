@@ -8,7 +8,7 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "prebuild": "node scripts/sync-help-media.mjs",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/prerender.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -1,0 +1,123 @@
+<div class="min-h-full bg-app"><header class="border-b border-white/5 bg-night"><div class="mx-auto flex h-16 w-full max-w-[1440px] items-center justify-between gap-3 px-4 sm:px-6 lg:px-8"><a aria-label="RAGGuard home" class="shrink-0 rounded-control" href="/" data-discover="true"><span class="inline-flex items-center gap-2.5"><svg width="32" height="32" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><defs><linearGradient id="rg-Rl" x1="8" y1="3" x2="33" y2="38" gradientUnits="userSpaceOnUse"><stop stop-color="#818CF8"></stop><stop offset="0.5" stop-color="#4F46E5"></stop><stop offset="1" stop-color="#3730A3"></stop></linearGradient></defs><path d="M20 2.6 34 8.2v11c0 8.8-5.6 15.4-14 18.4C11.6 34.6 6 28 6 19.2v-11L20 2.6Z" fill="url(#rg-Rl)"></path><path d="M20 2.6 6 8.2v11c0 8.8 5.6 15.4 14 18.4V2.6Z" fill="#fff" fill-opacity=".12"></path><path d="M12.4 20.8 17.6 26l9.8-11.8" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path><circle cx="12.4" cy="20.8" r="1.9" fill="#fff"></circle><circle cx="17.6" cy="26" r="1.9" fill="#fff"></circle><circle cx="27.4" cy="14.2" r="3.2" fill="#4F46E5" stroke="#fff" stroke-width="2.2"></circle></svg><span class="font-bold leading-none tracking-[-0.02em] text-white" style="font-size:18px">RAG<span class="text-indigo-300">Guard</span></span></span></a><nav aria-label="Account" class="flex items-center gap-1 sm:gap-2"><a class="inline-flex h-10 items-center whitespace-nowrap rounded-control px-3 text-body font-medium transition-colors sm:px-4 text-slate-200 hover:bg-white/10 hover:text-white" href="/login" data-discover="true">Sign in</a><a class="inline-flex h-10 items-center whitespace-nowrap rounded-control px-3 text-body font-medium transition-colors sm:px-4 bg-brand font-semibold text-white hover:bg-brand-hover" href="/signup" data-discover="true">Get started</a></nav></div></header><main id="main" class="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8"><article class="help-prose mx-auto py-4"><h1 id="privacy-policy">Privacy Policy</h1>
+<p><em>Last updated: 15 November 2026</em></p>
+<p>This policy explains what the hosted RAGGuard service collects, why, who else handles it, how long we keep it and what you can ask us to do. RAGGuard is in beta. We wrote this policy to match what the software really does. If you find a place where it does not, tell us and we will fix the policy or the software.</p>
+<p><strong>In short</strong></p>
+<ul>
+<li>We store your email address, a scrambled (hashed) form of your password, and the settings you need to run audits.</li>
+<li>When RAGGuard checks your systems, it keeps identifiers and fingerprints: document IDs, file names, hashes and counts. It does <strong>not</strong> store the text of your documents, your vectors or your users&#x27; questions.</li>
+<li>Your connection secrets are encrypted before they are stored and are never shown again.</li>
+<li>No advertising, no analytics, no tracking, and we never sell data. The only cookie keeps you signed in.</li>
+<li>To see, correct or delete your data, email <strong><a href="mailto:kishore.knaresh07@gmail.com">kishore.knaresh07@gmail.com</a></strong>.</li>
+</ul>
+<h2 id="1-who-we-are">1. Who we are</h2>
+<p>RAGGuard (&quot;RAGGuard&quot;, &quot;we&quot;, &quot;us&quot;) runs this service. RAGGuard is an early-stage product based in India and does not yet have a registered company name. For anything about your data, write to <strong><a href="mailto:kishore.knaresh07@gmail.com">kishore.knaresh07@gmail.com</a></strong>. The same address reaches our Grievance Officer (see <a href="#10-grievance-officer">section 10</a>).</p>
+<h2 id="2-what-we-collect">2. What we collect</h2>
+<h3 id="your-account">Your account</h3>
+<ul>
+<li>Your <strong>email address</strong>.</li>
+<li>Your <strong>password</strong>, stored only as a scrypt hash with a random salt. We cannot read it.</li>
+<li>When the account was created and when you last signed in.</li>
+<li>A workspace, named after the part of your email before the <code>@</code>.</li>
+</ul>
+<p>We do not ask for your name, phone number or payment details.</p>
+<h3 id="signing-in-and-security">Signing in and security</h3>
+<ul>
+<li><strong>The sign-in cookie</strong> <code>ragi_session</code> keeps you signed in for up to 7 days. Scripts on the page cannot read it, and on the hosted service it is only sent over HTTPS. We store only a hash of its value.</li>
+<li>With each sign-in session we store your <strong>IP address</strong>, a short <strong>description of your browser</strong> (its user agent), and when the session was created and last used.</li>
+<li>To slow down password guessing, we count sign-up and sign-in attempts <strong>per IP address</strong> and per email address. In these counters the email address is stored only as part of a hash.</li>
+</ul>
+<h3 id="connection-settings">Connection settings</h3>
+<p>To audit your RAG index, you give RAGGuard read access to your systems.</p>
+<ul>
+<li><strong>Stored encrypted:</strong> S3 access keys, database connection strings (the manifest and pgvector), the Qdrant API key, the repair signing secret, the alert webhook address and the mail server password. They are encrypted before they are stored and are never shown again.</li>
+<li><strong>Stored as plain settings:</strong> the bucket name, prefix, region and endpoint; the Qdrant address and collection names; schema, table and column names and field mappings; the mail server&#x27;s host, port, user name and sender address; the repair worker&#x27;s address; and your audit and alert preferences.</li>
+<li><strong>API keys you create:</strong> we store a hash and the first few characters, so you can recognise a key. We do not store the key itself.</li>
+</ul>
+<h3 id="what-audits-read-and-keep">What audits read and keep</h3>
+<p>During an audit RAGGuard reads your source storage, your vector index and, if you connect one, your manifest table. It <strong>only reads</strong>. It never writes to these systems.</p>
+<p>It <strong>keeps</strong>, for each document and finding:</p>
+<ul>
+<li>document and tenant identifiers, file paths (for example <code>s3://bucket/folder/file.pdf</code>), content hashes, versions, sizes and chunk counts;</li>
+<li>vector point identifiers, chunk identifiers, and the names and versions of the parser, chunker and embedding model;</li>
+<li>the evidence for each finding (expected versus actual values), its status, and any note you type when you ignore one;</li>
+<li>the results of retrieval checks: ranks, scores and the identifiers of the top results;</li>
+<li>the history of audits, repair plans and notifications.</li>
+</ul>
+<p>It <strong>does not keep</strong>:</p>
+<ul>
+<li>the text of your documents or chunks, or your vector values. Connection tests read a few sample records to check field names; their content is held in memory only and then discarded. In the &quot;compute&quot; hash mode, file contents are read to calculate a fingerprint and then thrown away;</li>
+<li>the text of your users&#x27; questions. If you send a query log through the API, a question is stored only as a hash, together with the identifiers of the documents it retrieved.</li>
+</ul>
+<p>Retrieval checks search <strong>your own index</strong> with a vector that is already stored in it. RAGGuard does not use any AI or embedding service, so nothing is sent to one.</p>
+<h3 id="repairs-and-emails-you-send">Repairs and emails you send</h3>
+<ul>
+<li>When you send a repair plan, we store the plan, the delivery results and the answer your worker sends back.</li>
+<li>When you email a repair plan, we store the recipients&#x27; addresses. The email itself goes out through <strong>your own</strong> mail server.</li>
+</ul>
+<h3 id="when-you-contact-us">When you contact us</h3>
+<p>If you email us, for example with <strong>Book a free audit</strong>, we receive your email address and what you write. These emails are handled in our Gmail account.</p>
+<h2 id="3-how-we-use-it">3. How we use it</h2>
+<ul>
+<li>To create your account, sign you in and keep your workspace separate from everyone else&#x27;s.</li>
+<li>To run the audits you start or schedule, show the results and prepare repair plans.</li>
+<li>To send what you set up: alerts to your webhook, repair requests to your worker, and audit alert emails.</li>
+<li>To protect the service: stop password guessing, look into abuse and fix errors.</li>
+<li>To see how the service is used. Our admin dashboard shows each account&#x27;s email address, when it signed up and was last active, which kinds of systems it has saved (not their details), and a summary of its audits. It never shows passwords, keys, connection details or IP addresses.</li>
+<li>To answer your messages and give you the free audit you asked for.</li>
+</ul>
+<p>We do not sell your data, use it for advertising, or use your content to train AI models.</p>
+<h2 id="4-cookies-and-tracking">4. Cookies and tracking</h2>
+<p>The only cookie is the sign-in cookie <code>ragi_session</code>. There are no analytics, advertising or tracking cookies, and the pages of the app load no scripts or fonts from other companies. The one exception is the developer API documentation (<code>/docs</code> and <code>/redoc</code>), which loads scripts and fonts from jsDelivr and Google Fonts.</p>
+<h2 id="5-who-else-handles-your-data">5. Who else handles your data</h2>
+<p>We use these providers to run the service:</p>
+<div class="help-table"><table><thead><tr><th>Provider</th><th>What for</th><th>What they handle</th></tr></thead><tbody><tr><td>Vercel</td><td>Hosting the website and the application</td><td>Every request, including your IP address</td></tr><tr><td>Supabase</td><td>Our database</td><td>Everything RAGGuard stores, as described in section 2</td></tr><tr><td>Our email delivery provider, when email alerts are switched on for the service</td><td>Sending audit alert emails and test emails</td><td>Your email address and the content of the alert</td></tr><tr><td>Google (Gmail)</td><td>Our contact inbox</td><td>Emails you send us</td></tr></tbody></table></div>
+<p>When you ask it to, RAGGuard also sends data to destinations <strong>you</strong> configure:</p>
+<ul>
+<li>your own storage, database and index, to read them;</li>
+<li>your alert webhook: an audit summary with up to 25 findings, by identifier;</li>
+<li>your repair worker: document identifiers, file paths, hashes and point identifiers;</li>
+<li>your mail server, and the recipients you type in.</li>
+</ul>
+<p>We may disclose data when the law requires it, or to protect the service or other people from harm. If RAGGuard is ever sold or merged into another business, your data would move with it under this policy, and we would tell you first.</p>
+<h2 id="6-where-data-is-stored">6. Where data is stored</h2>
+<p>Our providers may store and process data outside India. Data travels between you, our providers and your systems over encrypted connections.</p>
+<h2 id="7-how-we-protect-it">7. How we protect it</h2>
+<ul>
+<li>Connection secrets are encrypted with a key that exists only in the server&#x27;s environment.</li>
+<li>Passwords, sign-in session tokens and API keys are stored only as hashes.</li>
+<li>RAGGuard only reads your systems, and it refuses addresses inside private networks.</li>
+<li>Every database query is limited to your workspace.</li>
+<li>The app is served over HTTPS with a strict content security policy.</li>
+</ul>
+<p>No system is perfectly secure. If a breach affects your data, we will tell you, and the authorities, as the law requires.</p>
+<h2 id="8-how-long-we-keep-it">8. How long we keep it</h2>
+<ul>
+<li><strong>Your account, settings and audit history:</strong> as long as your account exists. Audit history does not yet expire on its own.</li>
+<li><strong>Notifications:</strong> the newest 200 for each workspace.</li>
+<li><strong>Sign-in sessions:</strong> until you sign out or change your password, or until they expire after 7 days. Expired sessions are then removed automatically.</li>
+<li><strong>Sign-in attempt counters,</strong> which can include your IP address: kept to protect the service. They are not yet removed automatically; we delete them when you ask.</li>
+<li><strong>When we delete your account,</strong> we delete your user, your workspace, saved connections, API keys, sessions and all audit, issue, repair and notification history. Copies may stay in our database provider&#x27;s backups for a limited time.</li>
+<li><strong>Emails you send us:</strong> as long as we need them to answer you.</li>
+</ul>
+<h2 id="9-your-rights">9. Your rights</h2>
+<p>You can ask us to:</p>
+<ul>
+<li>give you a summary or a copy of your data;</li>
+<li>correct it;</li>
+<li>delete your account and your data. There is no delete button in the app yet, so email us;</li>
+<li>stop processing it, which withdraws your consent. We will then delete your account;</li>
+<li>let someone you nominate exercise these rights if you die or become unable to, as India&#x27;s Digital Personal Data Protection Act, 2023 allows.</li>
+</ul>
+<p>If the GDPR or a similar law applies to you, you also have the rights to object, to restrict processing and to data portability, and to complain to your data protection authority.</p>
+<p>We reply within 30 days. If you are not satisfied with our answer, you can complain to the Data Protection Board of India.</p>
+<h2 id="10-grievance-officer">10. Grievance Officer</h2>
+<p>For questions or complaints about how we handle personal data, write to our Grievance Officer at <strong><a href="mailto:kishore.knaresh07@gmail.com">kishore.knaresh07@gmail.com</a></strong>. We aim to reply within 7 days and to resolve complaints within 30 days.</p>
+<h2 id="11-data-in-your-systems-about-other-people">11. Data in your systems about other people</h2>
+<p>Your systems may hold identifiers or file names that relate to other people, for example your own customers. You decide what RAGGuard can read. We process it only to provide the service to you and on your instructions. You are responsible for having the right to let RAGGuard read it.</p>
+<h2 id="12-children">12. Children</h2>
+<p>RAGGuard is a tool for businesses and professionals. It is not meant for anyone under 18, and we do not knowingly collect their data.</p>
+<h2 id="13-changes-to-this-policy">13. Changes to this policy</h2>
+<p>We will post any change on this page and update the date at the top. If a change matters, we will tell you before it applies.</p>
+<h2 id="14-contact">14. Contact</h2>
+<p><strong><a href="mailto:kishore.knaresh07@gmail.com">kishore.knaresh07@gmail.com</a></strong></p>
+<p>See also our <a href="/terms" data-discover="true">Terms of Service</a>.</p></article></main></div>

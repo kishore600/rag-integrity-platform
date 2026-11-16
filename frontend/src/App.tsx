@@ -28,6 +28,8 @@ const HelpHome = lazy(() => import("@/pages/help").then((m) => ({ default: m.Hel
 const HelpChapter = lazy(() => import("@/pages/help").then((m) => ({ default: m.HelpChapter })));
 const HelpPublicLayout = lazy(() => import("@/pages/help").then((m) => ({ default: m.HelpPublicLayout })));
 const LegalPage = lazy(() => import("@/pages/legal"));
+const GuidesIndex = lazy(() => import("@/pages/guides").then((m) => ({ default: m.GuidesIndex })));
+const GuidePage = lazy(() => import("@/pages/guides").then((m) => ({ default: m.GuidePage })));
 const Admin = lazy(() => import("@/pages/admin"));
 
 function NotFound() {
@@ -89,6 +91,8 @@ export default function App() {
           <Route element={<HelpPublicLayout />}>
             <Route path="privacy" element={<LegalPage doc="privacy" />} />
             <Route path="terms" element={<LegalPage doc="terms" />} />
+            <Route path="guides" element={<GuidesIndex />} />
+            <Route path="guides/:slug" element={<GuidePage />} />
           </Route>
           <Route path="*" element={<AuthPage key="other" session={s} initialMode="login" />} />
         </Routes>
@@ -118,6 +122,8 @@ export default function App() {
         <Route path="help/:chapter" element={<HelpChapter />} />
         <Route path="privacy" element={<LegalPage doc="privacy" />} />
         <Route path="terms" element={<LegalPage doc="terms" />} />
+        <Route path="guides" element={<GuidesIndex />} />
+        <Route path="guides/:slug" element={<GuidePage />} />
         <Route path="index.html" element={<Navigate to="/" replace />} />
         {/* signed in already: the sign-in and sign-up addresses lead back into the app */}
         <Route path="login" element={<Navigate to="/" replace />} />

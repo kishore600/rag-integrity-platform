@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ragguard-cli"
+version = "0.1.0"
+description = "Check that your RAG index matches your source documents: a command line tool and an MCP server for AI assistants (RAGGuard)."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "RAGGuard" }]
+keywords = ["rag", "retrieval-augmented-generation", "vector-database", "qdrant", "pgvector", "embeddings", "mcp", "data-integrity", "llm"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Topic :: Database",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["httpx>=0.27"]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+
+[project.scripts]
+ragguard = "ragguard_cli.cli:main"
+
+[project.urls]
+Homepage = "https://rag-integrity-platform.vercel.app"
+Documentation = "https://rag-integrity-platform.vercel.app/guides/use-ragguard-from-your-ai-assistant"
+Source = "https://github.com/kishore600/rag-integrity-platform/tree/main/clients/python"
+
+[tool.setuptools]
+packages = ["ragguard_cli"]

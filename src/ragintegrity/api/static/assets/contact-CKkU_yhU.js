@@ -1,0 +1,2 @@
+const e="kishore.knaresh07@gmail.com",o="Free RAGGuard audit",n=["Hi, I would like a free RAGGuard audit.","","Where my documents are (for example Amazon S3):","Where my vectors are (Qdrant or pgvector):","Roughly how many documents:",""].join(`
+`),a=`mailto:${e}?subject=${encodeURIComponent(o)}&body=${encodeURIComponent(n)}`,t=`mailto:${e}?subject=${encodeURIComponent("RAGGuard")}`;export{a as A,t as C,e as a};

@@ -621,6 +621,19 @@ going (except `/help`, which is public, see below). Once signed in, those two ad
 faceted shield holding a check drawn as a three-node path (source, manifest and index agreeing); its source is
 `frontend/src/components/brand/logo.tsx`, with copies in `public/favicon.svg` and `docs/assets/logo.svg`.
 
+### Guides, and pages readable without JavaScript
+`/guides` lists the how-to guides in `docs/guides` (one Markdown file each: a `# ` title, a `> ` summary, a SQL check for pgvector that
+`tests/test_guides_sql.py` runs on a real pgvector, and the fix); `/guides/<slug>` shows one. They are public, like `/help`, `/privacy`
+and `/terms`, and linked from the landing page menu and footer.
+
+The interface is a single-page app, so its HTML is empty until JavaScript runs, and most AI crawlers do not run it. `npm run build`
+therefore also runs `frontend/scripts/prerender.mjs`, which renders the landing page, the guides, every Help chapter and the legal pages
+with the app's own components into `static/prerender/` (`pages.json` lists path, file, title and description). On a hosted server, a
+visitor **without a session** gets that HTML inside `<div id="root">`, with the page's own title, description and (when `RAGI_APP_URL`
+is set) canonical link; the app then replaces it as usual. Signed-in visitors and single-user servers get the plain shell. The build
+also writes `llms.txt` and `llms-full.txt` (https://llmstxt.org), served at `/llms.txt` and `/llms-full.txt` with this deployment's
+address filled in, next to `/sitemap.xml` and `/robots.txt` (single-user servers answer 404 for these and disallow all crawling).
+
 ### Help and user guide
 `/help` shows the narrated walkthrough video and the whole user guide inside the product. It is **public**: a visitor who is not signed in
 sees it with a slim header (**Sign in**, **Get started**), and a signed-in user sees it inside the normal frame. Signed-in users reach it

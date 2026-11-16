@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi import Path as FPath
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -32,6 +32,7 @@ from ..repair import RepairError
 from ..security import Vault, VaultError, scrub
 from ..service import AuditBusy, IntegrityService
 from ..workspaces import WorkspaceManager
+from .seo import PublicPages
 
 log = logging.getLogger("ragintegrity.api")
 STATIC = Path(__file__).parent / "static"
@@ -417,9 +418,53 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
             out["ready"] = state.manager.is_ready(p.workspace_id)
         return out
 
-    @app.get("/", include_in_schema=False)
-    def index() -> FileResponse:
+    # ------------------------------------------------------------------ pages readable without JavaScript (api/seo.py)
+    public = PublicPages(STATIC)
+
+    def public_base(request: Request) -> str:
+        """Absolute links in llms.txt and the sitemap: the configured address, or this request's own address on a server without one."""
+        return settings.link_base or str(request.base_url).rstrip("/")
+
+    def shell(request: Request, path: str) -> Response:
+        """The app shell. On a hosted server, a visitor without a session gets the public page's HTML already inside it."""
+        if multi and not request.cookies.get(COOKIE):
+            page = public.page(path, (STATIC / "index.html").read_text(encoding="utf-8"), settings.link_base)
+            if page is not None:
+                return HTMLResponse(page, headers={"Cache-Control": "no-store"})
         return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
+
+    def public_text(name: str, request: Request, media: str) -> Response:
+        if not multi:
+            raise HTTPException(404, "Not found")
+        text = public.text_file(name, public_base(request))
+        if text is None:
+            raise HTTPException(404, "Not found")
+        return PlainTextResponse(text, media_type=media, headers={"Cache-Control": "public, max-age=3600"})
+
+    @app.get("/llms.txt", include_in_schema=False)
+    def llms_txt(request: Request) -> Response:
+        return public_text("llms.txt", request, "text/plain; charset=utf-8")
+
+    @app.get("/llms-full.txt", include_in_schema=False)
+    def llms_full_txt(request: Request) -> Response:
+        return public_text("llms-full.txt", request, "text/plain; charset=utf-8")
+
+    @app.get("/sitemap.xml", include_in_schema=False)
+    def sitemap(request: Request) -> Response:
+        if not multi:
+            raise HTTPException(404, "Not found")
+        return PlainTextResponse(public.sitemap(public_base(request)), media_type="application/xml",
+                                 headers={"Cache-Control": "public, max-age=3600"})
+
+    @app.get("/robots.txt", include_in_schema=False)
+    def robots(request: Request) -> Response:
+        if not multi:  # a single-user server is somebody's own tool: keep crawlers out entirely
+            return PlainTextResponse("User-agent: *\nDisallow: /\n")
+        return PlainTextResponse(public.robots(public_base(request)), headers={"Cache-Control": "public, max-age=3600"})
+
+    @app.get("/", include_in_schema=False)
+    def index(request: Request) -> Response:
+        return shell(request, "/")
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
@@ -841,10 +886,10 @@ def create_app(service: IntegrityService | None = None, settings: Settings | Non
     RESERVED_EXACT = {"api", "static", "docs", "redoc", "openapi.json", "healthz"}
 
     @app.get("/{spa_path:path}", include_in_schema=False)
-    def spa_fallback(spa_path: str) -> FileResponse:
+    def spa_fallback(spa_path: str, request: Request) -> Response:
         """Client-side routes (/issues, /documents/...) are served the app shell; real API/static misses stay 404s."""
         if spa_path.startswith(RESERVED_PREFIXES) or spa_path in RESERVED_EXACT:
             raise HTTPException(404, "Not found")
-        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
+        return shell(request, spa_path)
 
     return app
