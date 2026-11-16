@@ -1,0 +1,44 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.kishore600/ragguard",
+  "title": "RAGGuard",
+  "description": "Check that your RAG index (Qdrant or pgvector) still matches your source documents.",
+  "websiteUrl": "https://rag-integrity-platform.vercel.app/guides/use-ragguard-from-your-ai-assistant",
+  "repository": {
+    "url": "https://github.com/kishore600/rag-integrity-platform",
+    "source": "github",
+    "subfolder": "clients/python"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "ragguard-cli",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "RAGGUARD_API_KEY",
+          "description": "A RAGGuard API key (create one on the Integrations page of RAGGuard)",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "RAGGUARD_URL",
+          "description": "Only for a self-hosted RAGGuard server",
+          "default": "https://rag-integrity-platform.vercel.app"
+        }
+      ]
+    }
+  ]
+}

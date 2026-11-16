@@ -6,7 +6,7 @@
     ragguard issue ISSUE_ID         one issue with its evidence and the recommended fix
     ragguard document DOCUMENT_ID   everything RAGGuard knows about one document
     ragguard report                 the full report as Markdown
-    ragguard mcp                    run the MCP server for AI assistants (needs: pip install "ragguard-cli[mcp]")
+    ragguard mcp                    run the MCP server for AI assistants (also: uvx ragguard-cli mcp)
 
 Set RAGGUARD_API_KEY (create a key on the Integrations page of RAGGuard). RAGGUARD_URL defaults to the hosted service.
 Exit codes: 0 fine, 1 open issues at or above --fail-on, 2 an error (bad key, unreachable server, failed audit).
@@ -136,7 +136,7 @@ def cmd_mcp(_rg: RagGuard | None, _args: argparse.Namespace) -> int:
     try:
         from .mcp_server import serve
     except ImportError:
-        print('The MCP server needs the "mcp" package: pip install "ragguard-cli[mcp]"', file=sys.stderr)
+        print('The MCP server needs the "mcp" package: pip install --upgrade ragguard-cli', file=sys.stderr)
         return 2
     serve()
     return 0

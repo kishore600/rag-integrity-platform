@@ -9,7 +9,7 @@ so these are drafts: copy them, adjust, and submit.
 | MCP directories | the RAGGuard MCP server | [mcp-registries.md](mcp-registries.md) | a GitHub login (after PyPI) |
 | Qdrant docs | an integration page | [qdrant.md](qdrant.md) | a GitHub account, a pull request |
 | Supabase | an integrations listing (pgvector) | [supabase.md](supabase.md) | the Supabase partner form |
-| LangChain, LlamaIndex | a page on making their pgvector and Qdrant stores checkable | [langchain-llamaindex.md](langchain-llamaindex.md) | a pull request to each project's docs |
+| LangChain, LlamaIndex | an article on making their pgvector and Qdrant stores checkable | [langchain-llamaindex.md](langchain-llamaindex.md) | a blog account (dev.to or Medium), then X and LinkedIn |
 
 Order: PyPI first (the MCP registry checks the package exists), then the MCP directories, then the rest.
 

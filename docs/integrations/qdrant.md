@@ -1,39 +1,19 @@
 # Draft: a RAGGuard page for Qdrant's documentation
 
-Qdrant's documentation has pages for tools that work with Qdrant. Open qdrant.tech/documentation, find the section that lists
-integrations or frameworks, and use "Edit this page" to see where its source lives; add a page there with a pull request. Read their
-contributing guide first and follow their format; the text below is the content.
+Qdrant's documentation has pages for tools that work with Qdrant. Its source is the GitHub repository `qdrant/landing_page`, folder
+`qdrant-landing/content/documentation/frameworks/`, next to pages such as `deepeval.md` (another tool for checking RAG).
 
----
+The page is ready in [qdrant-page.md](qdrant-page.md): copy the whole file, including the `---` block at the top (Qdrant's site
+reads the title and descriptions from it).
 
-## RAGGuard
+## Send it as a pull request (in the browser, about 15 minutes)
 
-[RAGGuard](https://rag-integrity-platform.vercel.app) checks that a Qdrant collection still matches the source documents it was
-built from. It reads your documents in Amazon S3 (or any S3-compatible store) and your collection, and reports documents that were
-never indexed, points built from an older version of a file, points whose source file was deleted but which can still be retrieved,
-half-indexed documents, duplicate points from retried ingestion, empty or all-zero vectors, and points tagged with the wrong tenant.
-
-### How it uses Qdrant
-
-RAGGuard only reads: it scrolls the collection with payloads, retrieves points, and runs queries. It never writes, deletes or
-changes your collection; fixes go to your own ingestion worker.
-
-For the full checks, give each point a payload with:
-
-| Field | Meaning |
-|---|---|
-| `document_id` | the source document the point came from |
-| `source_hash` | the SHA-256 of the source file when it was embedded |
-| `chunk_index`, `chunk_total` | the chunk's position and the number of chunks in the document |
-| `tenant_id` | the customer it belongs to, in multi-tenant collections |
-
-Your own field names work too: map them in RAGGuard. Create a keyword payload index on the document ID field, so per-document
-checks do not scan the whole collection.
-
-To check whether a deleted document can still be returned, RAGGuard runs a query using one of its leftover points as the query
-vector; no embedding model is involved.
-
-### Learn more
-
-- [Guides](https://rag-integrity-platform.vercel.app/guides): each kind of drift, with a check you can run yourself
-- [Command line tool and MCP server](https://github.com/kishore600/rag-integrity-platform/tree/main/clients/python)
+1. Sign in to GitHub as the account that owns RAGGuard.
+2. Open https://github.com/qdrant/landing_page/tree/master/qdrant-landing/content/documentation/frameworks
+3. "Add file", then "Create new file". Name it `ragguard.md` and paste the page.
+4. "Commit changes...", then "Propose changes", then "Create pull request". GitHub makes your copy (fork) of their repository for
+   you.
+5. Title: `Add RAGGuard to frameworks`. Description, in your own words: what RAGGuard checks, that it only reads the collection,
+   and that you built it.
+6. If a bot asks you to sign a contributor agreement (CLA), follow its link and sign. Answer the maintainers' comments; they may ask
+   you to add the page to a menu or change the format.

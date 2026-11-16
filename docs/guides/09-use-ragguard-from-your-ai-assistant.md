@@ -22,8 +22,10 @@ Paste this into your assistant's rules file: `AGENTS.md`, `CLAUDE.md`, `.cursorr
 ## 2. Install the command and get an API key
 
 ```bash
-pip install "ragguard-cli[mcp] @ git+https://github.com/kishore600/rag-integrity-platform#subdirectory=clients/python"
+pip install ragguard-cli
 ```
+
+The package is [ragguard-cli on PyPI](https://pypi.org/project/ragguard-cli/), and it includes the MCP server. With [uv](https://docs.astral.sh/uv/) you can skip the install: `uvx ragguard-cli status`.
 
 Create an API key in RAGGuard on the **Integrations** page, then set it where your assistant runs:
 
@@ -54,6 +56,8 @@ claude mcp add ragguard -e RAGGUARD_API_KEY=ragi_your_key_here -- ragguard mcp
   }
 }
 ```
+
+Without installing anything first, use `"command": "uvx"` and `"args": ["ragguard-cli", "mcp"]` instead.
 
 Your assistant then has these tools:
 

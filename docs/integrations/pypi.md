@@ -1,7 +1,7 @@
 # Publish `ragguard-cli` to PyPI
 
-The package lives in [clients/python](../../clients/python). Its README is the PyPI page. The name `ragguard-cli` was free on PyPI on
-16 November 2026; the name `ragguard` belongs to a different project, so do not use it.
+The package lives in [clients/python](../../clients/python). Its README is the PyPI page. Version 0.1.0 was published on
+16 November 2026: https://pypi.org/project/ragguard-cli/. The name `ragguard` belongs to a different project, so do not use it.
 
 ## Once
 
@@ -29,6 +29,7 @@ Before each new release, raise `version` in `clients/python/pyproject.toml` and 
 ## After the first upload
 
 - Check the page: https://pypi.org/project/ragguard-cli/
-- Check it installs: `pip install "ragguard-cli[mcp]"` then `ragguard --version`.
+- Check it installs: `pip install ragguard-cli` then `ragguard --version`.
 - In `docs/guides/09-use-ragguard-from-your-ai-assistant.md` and the main README, the install line can then become simply
-  `pip install "ragguard-cli[mcp]"`.
+  `pip install ragguard-cli` (the MCP server is included).
+- Then list the MCP server: [mcp-registries.md](mcp-registries.md).

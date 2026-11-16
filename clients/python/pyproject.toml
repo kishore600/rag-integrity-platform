@@ -20,13 +20,16 @@ classifiers = [
   "Topic :: Database",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["httpx>=0.27"]
+dependencies = ["httpx>=0.27", "mcp>=1.2"]
 
 [project.optional-dependencies]
+# The MCP server is part of every install now; the extra stays so older install lines ("ragguard-cli[mcp]") keep working.
 mcp = ["mcp>=1.2"]
 
 [project.scripts]
 ragguard = "ragguard_cli.cli:main"
+# Same command under the package's name, so `uvx ragguard-cli mcp` works (MCP directories start servers that way).
+ragguard-cli = "ragguard_cli.cli:main"
 
 [project.urls]
 Homepage = "https://rag-integrity-platform.vercel.app"

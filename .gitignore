@@ -5,7 +5,13 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 dist/
+dist-cli/
 build/
+
+# MCP registry publisher (docs/integrations/mcp-registries.md): the tool itself and the token files older versions wrote here
+mcp-publisher.exe
+mcp-publisher.tar.gz
+.mcpregistry*
 
 # local state and secrets - never commit
 .env

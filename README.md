@@ -28,7 +28,7 @@ checks the index underneath them.
 - **Self-hosted:** run it yourself, below.
 
 ```bash
-pip install "ragguard-cli[mcp] @ git+https://github.com/kishore600/rag-integrity-platform#subdirectory=clients/python"
+pip install ragguard-cli                # https://pypi.org/project/ragguard-cli/ (includes the MCP server)
 export RAGGUARD_API_KEY=ragi_...        # create one on the Integrations page
 ragguard check --fail-on high           # run an audit; exit code 1 if high or critical issues are open
 ```

@@ -1,8 +1,12 @@
 # Draft: making LangChain and LlamaIndex vector stores checkable
 
-A short page for the community or integrations sections of the LangChain and LlamaIndex documentation (each has a contributing guide
-for its docs). It is useful on its own: it explains which metadata to store so that any check, RAGGuard's or your own, can tell
-whether the index matches the documents.
+An article, not a docs pull request. As of November 2026 neither project takes docs pages for outside tools: LangChain lists only
+published `langchain-*` packages, and LlamaIndex no longer accepts new integrations in its repository. LangChain's co-marketing
+page asks for exactly this kind of content instead: "how to do ABC", not "how to use tool XYZ".
+
+So: publish the text below as a blog post (dev.to, Medium or Hashnode), then share the link on X and LinkedIn, tagging LangChain and
+LlamaIndex, and in their community forums. It is useful on its own: it explains which metadata to store so that any check,
+RAGGuard's or your own, can tell whether the index matches the documents.
 
 ---
 

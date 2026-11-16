@@ -17,8 +17,10 @@ This package gives you:
 ## Install
 
 ```bash
-pip install "ragguard-cli[mcp]"     # or without [mcp] if you only need the command
+pip install ragguard-cli
 ```
+
+Or run it without installing, with [uv](https://docs.astral.sh/uv/): `uvx ragguard-cli status`.
 
 Create an API key in RAGGuard on the **Integrations** page and set it:
 
@@ -73,6 +75,8 @@ claude mcp add ragguard -e RAGGUARD_API_KEY=ragi_your_key_here -- ragguard mcp
   }
 }
 ```
+
+Without installing anything first, use `"command": "uvx"` and `"args": ["ragguard-cli", "mcp"]` instead.
 
 Tools: `ragguard_status`, `ragguard_run_audit`, `ragguard_list_issues`, `ragguard_get_issue`, `ragguard_check_document`, `ragguard_report`.
 
